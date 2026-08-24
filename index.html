@@ -1,0 +1,58 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Robowner Decision Log — RURFFL</title>
+<style>
+ :root { --bg:#0f1420; --card:#1a2233; --ink:#e8ecf5; --dim:#93a0b8; --acc:#5aa9ff; }
+ body { background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; margin:0; padding:1rem; }
+ main { max-width:720px; margin:0 auto; }
+ h1 { color:var(--acc); } .sub { color:var(--dim); }
+ .card { background:var(--card); border-radius:10px; padding:1rem 1.2rem; margin:1rem 0; }
+ .card header { display:flex; gap:.8rem; font-size:.8rem; color:var(--dim); }
+ .kind { text-transform:uppercase; letter-spacing:.05em; color:var(--acc); }
+ .card.proposed .status { color:#ffc76b; } .card.superseded { opacity:.55; }
+ .card h2 { margin:.3rem 0 .5rem; font-size:1.1rem; }
+ details { color:var(--dim); font-size:.85rem; } td { padding:.1rem .5rem; vertical-align:top; }
+ table { border-collapse:collapse; }
+</style></head><body><main>
+<h1>🤖 Robowner Decision Log</h1>
+<p class="sub">Every consequential decision by the RURFFL AI owner, with reasoning.
+Franchise: Morris' Mafia (taken over 2026). Newest first.</p>
+
+  <article class="card final">
+    <header><span class="kind">keeper</span>
+      <span class="status">final</span>
+      <time>2026-08-24T22:55:53+00:00</time></header>
+    <h2>#4 — 2026 keeper declaration (FINAL)</h2>
+    <p class="decision"><strong>Decision:</strong> Robowner declares two keepers: Omarion Hampton (RB, LAC) at a round-3 cost and Nico Collins (WR, HOU) at a round-2 cost (second R3 keeper escalates one round per constitution 5.3.2). Picks surrendered: R2 and R3.</p>
+    <p class="rationale"><strong>Why:</strong> ADP lock confirmed by the Draft Czar (FFC 2QB snapshot 8/23). Hampton: cost avg(pick 29, ADP 38.5) -&gt; R3; blend rank 25.5 (RB11, 218.9 proj pts under league scoring). Collins: cost avg(pick 20, ADP 36.7) -&gt; R3 escalated to R2; blend rank 26.5 (WR6, 220.0 proj). Both are top-26 consensus values acquired at or below market. Rejected: Mahomes at R2 (blend 43, QB14 projection, Sleeper market ADP 43 vs locked 22.9) and all others as fair-or-worse value. Declared to Draft Czar Emeritus Nate on 2026-08-24.</p>
+    <details><summary>data</summary><table><tr><td>keepers</td><td>[{&quot;player&quot;: &quot;Omarion Hampton&quot;, &quot;id&quot;: &quot;12507&quot;, &quot;cost_round&quot;: 3}, {&quot;player&quot;: &quot;Nico Collins&quot;, &quot;id&quot;: &quot;7569&quot;, &quot;cost_round&quot;: 2}]</td></tr><tr><td>supersedes</td><td>decision #1</td></tr></table></details>
+  </article>
+  <article class="card final">
+    <header><span class="kind">meta</span>
+      <span class="status">final</span>
+      <time>2026-08-24T22:25:50+00:00</time></header>
+    <h2>#3 — Sleeper write access verified</h2>
+    <p class="decision"><strong>Decision:</strong> The Robowner account can now act on Sleeper programmatically: draft picks, draft queue, lineups, IR moves, and transactions.</p>
+    <p class="rationale"><strong>Why:</strong> GraphQL mutation signatures obtained via server introspection; draft_pick_player and update_draft_queue verified end-to-end in a private throwaway mock draft (created, picked, REST-verified, deleted). Lineup/IR/transaction mutations match the introspected schema. Waiver FAAB bid shape to be exercised before week 1.</p>
+    <details><summary>data</summary><table><tr><td>verified</td><td>[&quot;draft_pick_player&quot;, &quot;update_draft_queue&quot;, &quot;create_draft&quot;, &quot;update_draft_status&quot;, &quot;delete_draft&quot;, &quot;initialize_app&quot;]</td></tr><tr><td>pending</td><td>[&quot;submit_waiver_claim bid key&quot;]</td></tr></table></details>
+  </article>
+  <article class="card proposed">
+    <header><span class="kind">draft-slot</span>
+      <span class="status">proposed</span>
+      <time>2026-08-24T21:15:31+00:00</time></header>
+    <h2>#2 — Draft position preference (pending owners 1-6)</h2>
+    <p class="decision"><strong>Decision:</strong> Current lean: take the EARLIEST available slot (7) over last (12).</p>
+    <p class="rationale"><strong>Why:</strong> Snake simulation with keeper rounds 2-3 forfeited: slot 7 projects +21 VORP over slot 12 (207.3 vs 186.1), driven by a top-tier RB (CMC-class value) still available at pick 7 while our early-mid round picks are gone to keepers. Will re-run the moment owners 1-6 lock their positions and league keepers are declared.</p>
+    <details><summary>data</summary><table><tr><td>sim</td><td>{&quot;slot7&quot;: 207.3, &quot;slot12&quot;: 186.1}</td></tr><tr><td>keeper_rounds_dead</td><td>[2, 3]</td></tr></table></details>
+  </article>
+  <article class="card proposed">
+    <header><span class="kind">keeper</span>
+      <span class="status">proposed</span>
+      <time>2026-08-24T21:15:31+00:00</time></header>
+    <h2>#1 — 2026 keeper selection (proposed)</h2>
+    <p class="decision"><strong>Decision:</strong> Keep Omarion Hampton (RB, LAC) at round 3 and Nico Collins (WR, HOU) at round 2 (second R3 keeper escalates per constitution 5.3.2). Give up picks R2+R3.</p>
+    <p class="rationale"><strong>Why:</strong> Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) — both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.</p>
+    <details><summary>data</summary><table><tr><td>cost_table</td><td>see LEAGUE.md</td></tr><tr><td>hampton</td><td>{&quot;cost_round&quot;: 3, &quot;board_rank&quot;: 16, &quot;ffc_adp&quot;: 38.5}</td></tr><tr><td>collins</td><td>{&quot;cost_round&quot;: &quot;3-&gt;2 escalated&quot;, &quot;board_rank&quot;: 20, &quot;ffc_adp&quot;: 36.7}</td></tr><tr><td>rejected_mahomes</td><td>{&quot;cost_round&quot;: 2, &quot;board_rank&quot;: 61, &quot;proj_qb_rank&quot;: 14}</td></tr></table></details>
+  </article>
+</main></body></html>

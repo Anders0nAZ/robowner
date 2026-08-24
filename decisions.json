@@ -1,0 +1,94 @@
+[
+ {
+  "id": 1,
+  "ts": "2026-08-24T21:15:31+00:00",
+  "kind": "keeper",
+  "title": "2026 keeper selection (proposed)",
+  "decision": "Keep Omarion Hampton (RB, LAC) at round 3 and Nico Collins (WR, HOU) at round 2 (second R3 keeper escalates per constitution 5.3.2). Give up picks R2+R3.",
+  "rationale": "Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) \u2014 both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.",
+  "status": "proposed",
+  "data": {
+   "cost_table": "see LEAGUE.md",
+   "hampton": {
+    "cost_round": 3,
+    "board_rank": 16,
+    "ffc_adp": 38.5
+   },
+   "collins": {
+    "cost_round": "3->2 escalated",
+    "board_rank": 20,
+    "ffc_adp": 36.7
+   },
+   "rejected_mahomes": {
+    "cost_round": 2,
+    "board_rank": 61,
+    "proj_qb_rank": 14
+   }
+  }
+ },
+ {
+  "id": 2,
+  "ts": "2026-08-24T21:15:31+00:00",
+  "kind": "draft-slot",
+  "title": "Draft position preference (pending owners 1-6)",
+  "decision": "Current lean: take the EARLIEST available slot (7) over last (12).",
+  "rationale": "Snake simulation with keeper rounds 2-3 forfeited: slot 7 projects +21 VORP over slot 12 (207.3 vs 186.1), driven by a top-tier RB (CMC-class value) still available at pick 7 while our early-mid round picks are gone to keepers. Will re-run the moment owners 1-6 lock their positions and league keepers are declared.",
+  "status": "proposed",
+  "data": {
+   "sim": {
+    "slot7": 207.3,
+    "slot12": 186.1
+   },
+   "keeper_rounds_dead": [
+    2,
+    3
+   ]
+  }
+ },
+ {
+  "id": 3,
+  "ts": "2026-08-24T22:25:50+00:00",
+  "kind": "meta",
+  "title": "Sleeper write access verified",
+  "decision": "The Robowner account can now act on Sleeper programmatically: draft picks, draft queue, lineups, IR moves, and transactions.",
+  "rationale": "GraphQL mutation signatures obtained via server introspection; draft_pick_player and update_draft_queue verified end-to-end in a private throwaway mock draft (created, picked, REST-verified, deleted). Lineup/IR/transaction mutations match the introspected schema. Waiver FAAB bid shape to be exercised before week 1.",
+  "status": "final",
+  "data": {
+   "verified": [
+    "draft_pick_player",
+    "update_draft_queue",
+    "create_draft",
+    "update_draft_status",
+    "delete_draft",
+    "initialize_app"
+   ],
+   "pending": [
+    "submit_waiver_claim bid key"
+   ]
+  }
+ },
+ {
+  "id": 4,
+  "ts": "2026-08-24T22:55:53+00:00",
+  "kind": "keeper",
+  "title": "2026 keeper declaration (FINAL)",
+  "decision": "Robowner declares two keepers: Omarion Hampton (RB, LAC) at a round-3 cost and Nico Collins (WR, HOU) at a round-2 cost (second R3 keeper escalates one round per constitution 5.3.2). Picks surrendered: R2 and R3.",
+  "rationale": "ADP lock confirmed by the Draft Czar (FFC 2QB snapshot 8/23). Hampton: cost avg(pick 29, ADP 38.5) -> R3; blend rank 25.5 (RB11, 218.9 proj pts under league scoring). Collins: cost avg(pick 20, ADP 36.7) -> R3 escalated to R2; blend rank 26.5 (WR6, 220.0 proj). Both are top-26 consensus values acquired at or below market. Rejected: Mahomes at R2 (blend 43, QB14 projection, Sleeper market ADP 43 vs locked 22.9) and all others as fair-or-worse value. Declared to Draft Czar Emeritus Nate on 2026-08-24.",
+  "status": "final",
+  "data": {
+   "keepers": [
+    {
+     "player": "Omarion Hampton",
+     "id": "12507",
+     "cost_round": 3
+    },
+    {
+     "player": "Nico Collins",
+     "id": "7569",
+     "cost_round": 2
+    }
+   ],
+   "supersedes": "decision #1"
+  }
+ }
+]
