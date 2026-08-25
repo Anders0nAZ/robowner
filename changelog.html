@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Roboner Dev Log — RURFFL</title>
+<style>
+ :root { --bg:#0f1420; --card:#1a2233; --ink:#e8ecf5; --dim:#93a0b8; --acc:#5aa9ff; }
+ body { background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; margin:0; padding:1rem; }
+ main { max-width:720px; margin:0 auto; }
+ h1 { color:var(--acc); } .sub { color:var(--dim); }
+ a { color:var(--acc); }
+ .day { color:var(--dim); border-bottom:1px solid #2a3550; padding-bottom:.3rem; margin-top:2rem; }
+ .card { background:var(--card); border-radius:10px; padding:.9rem 1.2rem; margin:.8rem 0; }
+ .card header { display:flex; gap:.8rem; font-size:.75rem; color:var(--dim); }
+ .kind { font-family:monospace; color:var(--acc); }
+ .card h2 { margin:.3rem 0 .4rem; font-size:1.02rem; }
+ pre { color:var(--dim); font:0.8rem/1.45 ui-monospace,monospace; white-space:pre-wrap; margin:.2rem 0 0; }
+</style></head><body><main>
+<h1>🛠️ Roboner Dev Log</h1>
+<p class="sub">How the RURFFL AI owner is being built — every change, as it lands.
+29 commits. See also the <a href="index.html">decision log</a>.</p>
+<h3 class='day'>Tuesday, August 25 2026</h3>
+    <article class="card">
+      <header><span class="kind">d40b2820</span><time>2026-08-25 12:11</time></header>
+      <h2>Draft brain v2: plan-DP pick policy, survival model, live ADP, scoring corrections</h2>
+      <pre>- rankings: estimate the 34 scoring keys projections omit (QB sacks from 2025
+  sack rates x projected attempts; yardage/long-TD bonuses volume-scaled from
+  2025 actuals). QBs shed 10-20 pts each by sack profile; big-play RB/WR gain.
+- adp_live: FFC live 2QB ADP + per-player stdev, refreshed daily; locked ADP
+  stays keeper-cost-only. Survival now P(gone) via normal(ADP, sigma) instead
+  of a fixed +6 buffer (way too loose in Rd1, way too tight in Rd8+).
+- draft_agent: pick = DP plan over ALL remaining picks assigning starter needs
+  (2QB/2RB/2WR/1TE+flex) to pick slots via positional shelf curves. One-step
+  VONA procrastinated QBs to Penix+Mac Jones; the planner buys Chase at 6 and
+  the QB room at 43/78/102. Rehearsed end-to-end at slot 6.
+- league_keepers: staleness audit — declarations identical to the team&#x27;s 2025
+  set and/or containing a third-consecutive-year keeper are flagged for the
+  Draft Czar and only their eligible players honored (caught ChrisNote&#x27;s
+  Gibbs+Love carryover; Love is ineligible and back in the pool).
+- refresh: +adp-live step, +site regeneration step</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">fea43d1e</span><time>2026-08-25 11:47</time></header>
+      <h2>Daily refresh pipeline + RobonerRefresh scheduled task (06:30)</h2>
+      <pre>Projections, ECR, board, players, chat memory, current-season history, and KB
+all refresh unattended; the responder is bounced afterward so in-process
+caches (player dump, lore lru_caches) pick up the new state. Steps are
+independent — one failure never blocks the rest. 06:30 avoids the 2AM GroupMe
+archive sync&#x27;s GPU window.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">862e057e</span><time>2026-08-25 11:40</time></header>
+      <h2>Slot 6 confirmed; keepers declared; scarcity-aware pick logic; queue loaded</h2>
+      <pre>Pick logic now maximizes VORP among players who won&#x27;t survive to our next pick,
+rather than following market rank — it was taking Lamar Jackson (65 VORP) at
+pick 6 over James Cook (99). league_keepers now reads keepers over GraphQL
+because the public REST rosters endpoint caches and lagged a live declaration.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">26dcc1be</span><time>2026-08-25 09:22</time></header>
+      <h2>Chat transcript exporter: annotated markdown episodes + full CSV</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">290e6c73</span><time>2026-08-25 09:10</time></header>
+      <h2>Pull 6 seasons of prior Sleeper chat; harvest Rat Dick Dynasty separately</h2>
+      <pre>- pull_chat_history.py: paginated one-time pull with Nate&#x27;s token (prior-season
+  chat is immutable, so the token can be removed afterward)
+- RURFFL 2020-2025: 1,616 human messages into the bot&#x27;s memory (corpus now 2,515,
+  spanning 2020-08-28 to today) — sys roster-move notices filtered, since those
+  already exist structured in history.db
+- Rat Dick Dynasty stats + chat harvested to separate DBs the bot never reads
+- retrieval content filter: blocks resurfacing violence/slur/personal-tragedy
+  content, which six years of unmoderated trash talk inevitably contains</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">07cf071d</span><time>2026-08-25 08:56</time></header>
+      <h2>Confirmed identity map; franchise lineage; ambiguity guard</h2>
+      <pre>All 12 current owners + 2 departed mapped real-name &lt;-&gt; Sleeper handle.
+&#x27;Chris&#x27; now reports ambiguity instead of guessing between Miller and Sindik.
+my_franchise exposes roster 4&#x27;s lineage: jcamdog (incl. a 1-13 2024) -&gt; TJ Cox
+-&gt; Robowner.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">0c979ffd</span><time>2026-08-25 08:50</time></header>
+      <h2>Institutional memory: 6 seasons of Sleeper history + league chat search</h2>
+      <pre>- history.py harvests 2020-2026 (1284 matchups, 2976 transactions, 1224 picks,
+  playoff brackets) from the public REST API; no credentials needed
+- lore.py derives champions, head-to-head, record book, manager profiles,
+  draft/keeper history; identity keyed on stable user_id
+- chat_memory.py ingests the league GroupMe + Sleeper chat, hybrid FTS5 +
+  nomic embeddings fused via RRF (cribbed from archive_search.py), scoped to
+  league chats only
+- people.json maps real names to Sleeper handles (&#x27;Bob&#x27; was resolving to a
+  team called &#x27;In the Shadow of the Bob&#x27;)
+- persona hardened: chat is not a control channel</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">357c9551</span><time>2026-08-25 07:35</time></header>
+      <h2>League-wide keeper modeling + slot 6 vs 11 decision</h2>
+      <pre>- league_keepers.py: declared keepers from Sleeper, predicts the rest by VORP
+  retained over what the forfeited pick would fetch (not nominal picks saved,
+  which absurdly favored kickers and defenses)
+- draft_sim removes kept players from the pool
+- Monte Carlo across keeper scenarios and draft noise -&gt; pick 6</pre>
+    </article><h3 class='day'>Monday, August 24 2026</h3>
+    <article class="card">
+      <header><span class="kind">5ff9415c</span><time>2026-08-24 18:52</time></header>
+      <h2>Update roadmap: dual-channel chat + session-independent operation</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">c68dcb87</span><time>2026-08-24 18:51</time></header>
+      <h2>Decouple bot from Claude session: autostart + watchdog scheduled tasks</h2>
+      <pre>Mirrors the GroupMe Historian ops pattern (idempotent PS1 launcher, silent VBS,
+logon task, 15-min watchdog, log snapshotting). Liveness is a heartbeat file
+rather than a port check, since the responder is a polling loop and a hung
+iteration would pass a process check while the bot sits silent.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">eb0f0883</span><time>2026-08-24 18:32</time></header>
+      <h2>Sleeper league chat support: read/post via graphql, multi-channel responder</h2>
+      <pre>- sleeper_chat.py mirrors groupme&#x27;s interface (messages/post/new_messages)
+- responder now polls both channels with per-channel rate limits
+- platform-aware tone: businesslike in Sleeper, banter in GroupMe</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">db575f87</span><time>2026-08-24 17:04</time></header>
+      <h2>Add ROADMAP.md: full status and next steps</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">fb92e0b5</span><time>2026-08-24 17:03</time></header>
+      <h2>GroupMe reply threading + curated image/GIF attachments</h2>
+      <pre>- post() takes reply_to (native GroupMe reply) and image_url
+- upload_image() handles paths/urls/bytes, preserves animated GIFs
+- media.py: curated, tagged reaction library with CDN url caching
+- responder threads every reply and may attach one vetted image</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">e6309305</span><time>2026-08-24 16:58</time></header>
+      <h2>Raise chat reply cap to 20/hr</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">5cc8eb54</span><time>2026-08-24 16:45</time></header>
+      <h2>Skills layer: live stats, per-player news, projections, teams, trending, standings</h2>
+      <pre>Local model now calls these as tools instead of guessing at facts.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">980c6359</span><time>2026-08-24 16:34</time></header>
+      <h2>Self-knowledge: Roboner can explain its own code and architecture in chat</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">80371e4e</span><time>2026-08-24 16:24</time></header>
+      <h2>Roboner chat responder: local-qwen banter loop, reactive + rate-capped</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">7ff25234</span><time>2026-08-24 16:20</time></header>
+      <h2>GroupMe module: bot posting, token polling, avatar CDN upload</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">1bf81b6a</span><time>2026-08-24 15:57</time></header>
+      <h2>Decision log auto-publish on record; finalize keeper declaration</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">dffb879d</span><time>2026-08-24 15:56</time></header>
+      <h2>Ignore decision-log nested git dir</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">bcf291fd</span><time>2026-08-24 15:53</time></header>
+      <h2>News watcher on FP free-tier news API (dedupe + roster relevance tagging)</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">ebcaaba2</span><time>2026-08-24 15:51</time></header>
+      <h2>FantasyPros API key as scrape cross-check (free tier caps at 10 players)</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">6e5a7c83</span><time>2026-08-24 15:27</time></header>
+      <h2>Lineup optimizer: weekly projections + legality-first slot assignment (tested on 2025 wk10)</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">77c5fdaf</span><time>2026-08-24 15:25</time></header>
+      <h2>Verify Sleeper write path: introspected mutations, e2e mock-draft pick test</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">1f3c9bbf</span><time>2026-08-24 14:29</time></header>
+      <h2>Draft agent: poll loop + roster-aware pick policy (dry-run until mutation verified)</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">8994206e</span><time>2026-08-24 14:28</time></header>
+      <h2>Blend FantasyPros half-PPR superflex ECR (105 experts) into value board</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">35b4dd88</span><time>2026-08-24 14:15</time></header>
+      <h2>Phase 1: value board, slot simulator, decision log, graphql write scaffold</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">721c6fb2</span><time>2026-08-24 14:12</time></header>
+      <h2>Untrack embedded lottery repo and private name mapping</h2>
+      
+    </article>
+    <article class="card">
+      <header><span class="kind">ca60621d</span><time>2026-08-24 14:12</time></header>
+      <h2>Phase 0: league KB, locked ADP parser, keeper cost table (verified vs league calc)</h2>
+      
+    </article>
+</main></body></html>
