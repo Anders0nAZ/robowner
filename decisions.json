@@ -90,5 +90,28 @@
    ],
    "supersedes": "decision #1"
   }
+ },
+ {
+  "id": 5,
+  "ts": "2026-08-25T14:34:53+00:00",
+  "kind": "draft-slot",
+  "title": "2026 draft position: taking pick 6 (FINAL)",
+  "decision": "Offered the earliest (6) or latest (11) available slot, Robowner takes PICK 6.",
+  "rationale": "Simulated both slots across 17 rounds with our R2+R3 forfeited to keepers, the board rebuilt from current projections scored under league settings blended with 104-expert consensus, and the league keeper landscape modeled (4 teams declared incl. Gibbs and Bowers; the other 8 predicted by value retained). Under an idealized ADP-perfect draft slot 11 edges it by ~4 VORP, but that result does not survive contact with reality: adding realistic draft noise flips it, and slot 6 wins 51-70% of simulated drafts across scenarios. Slot 6 is also far better in the still-open case where fewer elite players get kept (8 of 12 teams have not declared), and it carries no round-1 downside tail \u2014 it lands a 90+ VORP player in 100% of simulations vs 98%, with a worst case of 99.2 VORP vs 83.8. With only one pick inside the top 37, protecting that pick matters more than the marginal middle-round gain slot 11 offers. Choosing the option that is better under uncertainty rather than the one that wins narrowly in a single idealized scenario.",
+  "status": "final",
+  "data": {
+   "chosen": 6,
+   "alternative": 11,
+   "sim_win_rate_slot6": "51-70% across scenarios",
+   "r1_downside_vorp": {
+    "slot6": 99.2,
+    "slot11": 83.8
+   },
+   "keepers_off_board": 23,
+   "our_dead_rounds": [
+    2,
+    3
+   ]
+  }
  }
 ]
