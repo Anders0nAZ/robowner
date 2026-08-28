@@ -16,9 +16,41 @@
  pre { color:var(--dim); font:0.8rem/1.45 ui-monospace,monospace; white-space:pre-wrap; margin:.2rem 0 0; }
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
-<p class="sub">How the RURFFL AI owner is being built — every change, as it lands.
-32 commits. See also the <a href="index.html">decision log</a>.</p>
-<h3 class='day'>Tuesday, August 25 2026</h3>
+<p class="sub">How the RURFFL AI owner is being built — the fixes, the architecture,
+and the features, as they land. 23 entries.
+See also the <a href="index.html">decision log</a>.</p>
+<h3 class='day'>Thursday, August 27 2026</h3>
+    <article class="card">
+      <header><span class="kind">4817f43c</span><time>2026-08-27 18:26</time></header>
+      <h2>Fix the bot going silent: GPU loss, dropped messages, dead refresh</h2>
+      <pre>Roboner stopped answering the GroupMe for about an hour on 27 Aug. Three
+separate faults, none of which showed up as &quot;down&quot; — the process was alive,
+the port answered, the heartbeat was green.
+
+Ollama auto-upgraded itself while `ollama serve` was running, so the live
+server kept its old binary against swapped-out CUDA libraries, silently lost
+the GPU, and reloaded every model onto the CPU. A reply went from ~6s to over
+the 240s timeout. Restarting Ollama restored it.
+
+Worse, the missed messages were gone for good: the chat cursor was advanced
+when messages were FETCHED, before any reply was attempted, so a failure
+mid-reply buried them permanently instead of retrying. The cursor is now
+staged on fetch and only committed once the batch is handled, with a
+three-strike skip so one bad batch can&#x27;t wedge the loop.
+
+The daily refresh had also been failing since 25 Aug: its scheduled-task
+wrapper redirected into the same refresh.log the pipeline writes itself, and
+cmd&#x27;s &gt;&gt; takes a non-sharing handle, so every run died with PermissionError
+on its first log line while still reporting success. Output now goes to
+refresh.err.log.
+
+Added RobonerGpu.ps1, asserting that Ollama actually holds the GPU rather
+than merely answering. Both the start script and the watchdog now check
+placement, and the watchdog checks it on every run — this failure keeps the
+heartbeat green, so a liveness check structurally cannot see it. Also pinned
+keep_alive per-request, since the machine-wide 30s setting was unloading the
+17GB model between every reply.</pre>
+    </article><h3 class='day'>Tuesday, August 25 2026</h3>
     <article class="card">
       <header><span class="kind">3f71ba7e</span><time>2026-08-25 16:17</time></header>
       <h2>Fix broken GIF posts, and stop the bot denying its own capabilities</h2>
@@ -92,18 +124,6 @@ redirected, which any Run button or pipe does. Replaced with a fully
 qualified ping delay that never reads stdin.</pre>
     </article>
     <article class="card">
-      <header><span class="kind">aba8d558</span><time>2026-08-25 13:25</time></header>
-      <h2>Docs: project CLAUDE.md, rewritten ROADMAP with next builds</h2>
-      <pre>CLAUDE.md captures IDs, architecture, ops, and the gotchas that cost real time
-this session (REST /rosters caching, keeper staleness carryovers, projections
-covering only 23/57 scoring keys, chat-is-not-a-control-channel, responder
-restart requirement).
-
-ROADMAP now carries pitches 2-4 ported from the GroupMe Archive as queued
-builds: scoped read-only SQL tool, vision on screenshots, and the three cheap
-ops wins (live-reread config, query log, citation tracking).</pre>
-    </article>
-    <article class="card">
       <header><span class="kind">d40b2820</span><time>2026-08-25 12:11</time></header>
       <h2>Draft brain v2: plan-DP pick policy, survival model, live ADP, scoring corrections</h2>
       <pre>- rankings: estimate the 34 scoring keys projections omit (QB sacks from 2025
@@ -140,31 +160,6 @@ pick 6 over James Cook (99). league_keepers now reads keepers over GraphQL
 because the public REST rosters endpoint caches and lagged a live declaration.</pre>
     </article>
     <article class="card">
-      <header><span class="kind">26dcc1be</span><time>2026-08-25 09:22</time></header>
-      <h2>Chat transcript exporter: annotated markdown episodes + full CSV</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">290e6c73</span><time>2026-08-25 09:10</time></header>
-      <h2>Pull 6 seasons of prior Sleeper chat; harvest Rat Dick Dynasty separately</h2>
-      <pre>- pull_chat_history.py: paginated one-time pull with Nate&#x27;s token (prior-season
-  chat is immutable, so the token can be removed afterward)
-- RURFFL 2020-2025: 1,616 human messages into the bot&#x27;s memory (corpus now 2,515,
-  spanning 2020-08-28 to today) — sys roster-move notices filtered, since those
-  already exist structured in history.db
-- Rat Dick Dynasty stats + chat harvested to separate DBs the bot never reads
-- retrieval content filter: blocks resurfacing violence/slur/personal-tragedy
-  content, which six years of unmoderated trash talk inevitably contains</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">07cf071d</span><time>2026-08-25 08:56</time></header>
-      <h2>Confirmed identity map; franchise lineage; ambiguity guard</h2>
-      <pre>All 12 current owners + 2 departed mapped real-name &lt;-&gt; Sleeper handle.
-&#x27;Chris&#x27; now reports ambiguity instead of guessing between Miller and Sindik.
-my_franchise exposes roster 4&#x27;s lineage: jcamdog (incl. a 1-13 2024) -&gt; TJ Cox
--&gt; Robowner.</pre>
-    </article>
-    <article class="card">
       <header><span class="kind">0c979ffd</span><time>2026-08-25 08:50</time></header>
       <h2>Institutional memory: 6 seasons of Sleeper history + league chat search</h2>
       <pre>- history.py harvests 2020-2026 (1284 matchups, 2976 transactions, 1224 picks,
@@ -188,11 +183,6 @@ my_franchise exposes roster 4&#x27;s lineage: jcamdog (incl. a 1-13 2024) -&gt; 
 - Monte Carlo across keeper scenarios and draft noise -&gt; pick 6</pre>
     </article><h3 class='day'>Monday, August 24 2026</h3>
     <article class="card">
-      <header><span class="kind">5ff9415c</span><time>2026-08-24 18:52</time></header>
-      <h2>Update roadmap: dual-channel chat + session-independent operation</h2>
-      
-    </article>
-    <article class="card">
       <header><span class="kind">c68dcb87</span><time>2026-08-24 18:51</time></header>
       <h2>Decouple bot from Claude session: autostart + watchdog scheduled tasks</h2>
       <pre>Mirrors the GroupMe Historian ops pattern (idempotent PS1 launcher, silent VBS,
@@ -208,22 +198,12 @@ iteration would pass a process check while the bot sits silent.</pre>
 - platform-aware tone: businesslike in Sleeper, banter in GroupMe</pre>
     </article>
     <article class="card">
-      <header><span class="kind">db575f87</span><time>2026-08-24 17:04</time></header>
-      <h2>Add ROADMAP.md: full status and next steps</h2>
-      
-    </article>
-    <article class="card">
       <header><span class="kind">fb92e0b5</span><time>2026-08-24 17:03</time></header>
       <h2>GroupMe reply threading + curated image/GIF attachments</h2>
       <pre>- post() takes reply_to (native GroupMe reply) and image_url
 - upload_image() handles paths/urls/bytes, preserves animated GIFs
 - media.py: curated, tagged reaction library with CDN url caching
 - responder threads every reply and may attach one vetted image</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">e6309305</span><time>2026-08-24 16:58</time></header>
-      <h2>Raise chat reply cap to 20/hr</h2>
-      
     </article>
     <article class="card">
       <header><span class="kind">5cc8eb54</span><time>2026-08-24 16:45</time></header>
@@ -251,18 +231,8 @@ iteration would pass a process check while the bot sits silent.</pre>
       
     </article>
     <article class="card">
-      <header><span class="kind">dffb879d</span><time>2026-08-24 15:56</time></header>
-      <h2>Ignore decision-log nested git dir</h2>
-      
-    </article>
-    <article class="card">
       <header><span class="kind">bcf291fd</span><time>2026-08-24 15:53</time></header>
       <h2>News watcher on FP free-tier news API (dedupe + roster relevance tagging)</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">ebcaaba2</span><time>2026-08-24 15:51</time></header>
-      <h2>FantasyPros API key as scrape cross-check (free tier caps at 10 players)</h2>
       
     </article>
     <article class="card">
@@ -288,11 +258,6 @@ iteration would pass a process check while the bot sits silent.</pre>
     <article class="card">
       <header><span class="kind">35b4dd88</span><time>2026-08-24 14:15</time></header>
       <h2>Phase 1: value board, slot simulator, decision log, graphql write scaffold</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">721c6fb2</span><time>2026-08-24 14:12</time></header>
-      <h2>Untrack embedded lottery repo and private name mapping</h2>
       
     </article>
     <article class="card">
