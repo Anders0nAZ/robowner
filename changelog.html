@@ -4,504 +4,169 @@
 <title>Roboner Dev Log — RURFFL</title>
 <style>
  :root { --bg:#0f1420; --card:#1a2233; --ink:#e8ecf5; --dim:#93a0b8; --acc:#5aa9ff; }
- body { background:var(--bg); color:var(--ink); font:16px/1.5 system-ui,sans-serif; margin:0; padding:1rem; }
- main { max-width:720px; margin:0 auto; }
- h1 { color:var(--acc); } .sub { color:var(--dim); }
+ body { background:var(--bg); color:var(--ink); font:16px/1.6 system-ui,sans-serif; margin:0; padding:1rem; }
+ main { max-width:680px; margin:0 auto; }
+ h1 { color:var(--acc); margin-bottom:.2rem; } .sub { color:var(--dim); margin-top:0; }
  a { color:var(--acc); }
- .day { color:var(--dim); border-bottom:1px solid #2a3550; padding-bottom:.3rem; margin-top:2rem; }
- .card { background:var(--card); border-radius:10px; padding:.9rem 1.2rem; margin:.8rem 0; }
- .card header { display:flex; gap:.8rem; font-size:.75rem; color:var(--dim); }
- .kind { font-family:monospace; color:var(--acc); }
- .card h2 { margin:.3rem 0 .4rem; font-size:1.02rem; }
- pre { color:var(--dim); font:0.8rem/1.45 ui-monospace,monospace; white-space:pre-wrap; margin:.2rem 0 0; }
+ .day { color:var(--dim); font-size:.9rem; letter-spacing:.04em; text-transform:uppercase;
+         border-bottom:1px solid #2a3550; padding-bottom:.4rem; margin-top:2.2rem; }
+ .card { background:var(--card); border-radius:10px; padding:1rem 1.2rem; margin:.7rem 0; }
+ .card h2 { margin:.35rem 0 .4rem; font-size:1.05rem; color:var(--ink); }
+ .kind { display:inline-block; font-size:.66rem; letter-spacing:.08em; text-transform:uppercase;
+          padding:.15rem .5rem; border-radius:99px; font-weight:600; }
+ .k-new { background:#12351f; color:#5ad48a; }
+ .k-enhancement { background:#13293f; color:#5aa9ff; }
+ .k-fix { background:#3a2412; color:#f0a35a; }
+ .card p { margin:0; color:var(--dim); }
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
-<p class="sub">How the RURFFL AI owner is being built — the fixes, the architecture,
-and the features, as they land. 33 entries.
+<p class="sub">What the RURFFL AI owner can do, and when it learned to do it.
+19 new features, 6 enhancements, 4 bug fixes.
 See also the <a href="index.html">decision log</a>.</p>
 <h3 class='day'>Friday, August 28 2026</h3>
     <article class="card">
-      <header><span class="kind">e8805729</span><time>2026-08-28 06:20</time></header>
-      <h2>Draft agent: survive a rejected pick, and never log a mock publicly</h2>
-      <pre>Findings from a full live mock draft on Sleeper, which is the first time any of
-this ran against a real draft rather than a simulation. Three real bugs, none
-of which the mock harness could have found.
-
-A rejected pick killed the agent. draft_pick_player raises on refusal and
-nothing caught it, so the process died on its first bad pick and handed the
-remaining rounds to autopick. It now logs the rejection and re-evaluates next
-poll, which is right because the usual cause -- the clock ran out while we were
-deciding, and autopick took the slot -- is fixed by looking at the board again.
-
-Worse: the agent published its MOCK picks to the league&#x27;s public decision log.
-record() commits and pushes, so a test wrote three fake first-round picks to
-GitHub Pages where the league could read them. Public logging is now gated to
-the real draft id. The bogus entries have been removed and the site republished.
-
-Also added --draft-id so the live path can be exercised against a throwaway
-mock at all, with a guard: submitting into the real 2026 draft needs --i-mean-it
-as well as the absence of --dry-run. A test run that quietly picks in the league
-draft is the one mistake with no undo.
-
-The periodic injury refresh no longer blocks a pick. It re-pulls a 16MB dump,
-and doing that while on the clock spends the pick timer on a download.</pre>
+      <span class="kind k-fix">bug fix</span>
+      <h2>The draft queue was quietly making every pick</h2>
+      <p>A queue set in the draft room makes Sleeper autopick the moment the clock opens and reject the pick the bot submits a second later, so the fallback was drafting in place of the real pick logic. It is now cleared while the bot is drafting, and armed only if the bot stops.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-new">new feature</span>
+      <h2>Roboner talks in the draft room</h2>
+      <p>The bot now reads and replies in the Sleeper draft room, from half an hour before the first pick until half an hour after the last, and will explain any of its own picks if asked. It keeps replies to a line in there, since everyone is drafting.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>Same bot on Sleeper as in GroupMe</h2>
+      <p>Sleeper was running a quieter, image-less version of Roboner on the assumption that Sleeper could not attach pictures. It can, so the reaction images and GIFs work there now and the personality is identical across all three chats.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>The scout re-reads only what changed</h2>
+      <p>Every verdict records a fingerprint of that player&#x27;s news, so a later run judges only players with a genuinely new story and reuses the rest. That makes it cheap enough to cover every draftable player rather than just the backups, and to re-run an hour before the draft.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-new">new feature</span>
+      <h2>Scout: the bot reads the news itself</h2>
+      <p>Roboner now pulls RotoWire and RotoBaller reporting for every draftable player, plus training-camp coverage from a verified beat writer for each of the 32 teams, and forms its own trust verdict on each player. Those verdicts adjust what it will pay for a bench pick, capped so reporting informs the board rather than overrides it.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-new">new feature</span>
+      <h2>The 32-team beat writer log</h2>
+      <p>Each team has two named local writers whose camp reporting the scout searches, and the list is re-verified against live sources before it is used because beat writers change jobs. The first verification pass caught one who had left his beat two years ago.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-fix">bug fix</span>
+      <h2>Nobody picks players for the bot</h2>
+      <p>A mechanism for a human to name players to favour or avoid was built and removed the same day, because an owner that drafts from someone else&#x27;s list is not an owner. Where a signal is weak, Roboner holds lower confidence rather than taking instructions.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-new">new feature</span>
+      <h2>Draft day runs unattended</h2>
+      <p>A guard starts the draft agent when the draft opens, restarts it within two minutes if it dies or silently stops picking, and disables itself once the draft completes. If a pick is ever made without the agent, it says so in the draft room, the league chat and GroupMe.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-new">new feature</span>
+      <h2>Autopick fallback</h2>
+      <p>If the agent stops picking and cannot be restarted, Sleeper drafts from a queue roughly 200 deep that Roboner builds from its own pick policy, instead of from Sleeper&#x27;s rankings. It is ordered so even a frozen copy assembles a legal roster, with the kicker and defence unreachable until the last two rounds.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>Bench picks are insurance and lottery tickets</h2>
+      <p>A bench player is now valued by the chance he inherits a real role and what that role is worth, split between covering our own starters and holding other teams&#x27; backups. Ranking the bench by projected points instead had it drafting a third quarterback it would never start.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-fix">bug fix</span>
+      <h2>Chat replies were being silently dropped</h2>
+      <p>Any Sleeper message containing an em dash failed to post, which the local model writes constantly, so real replies were vanishing while the same message landed fine on GroupMe. Message text is now sent as a parameter rather than embedded in the query.</p>
     </article><h3 class='day'>Thursday, August 27 2026</h3>
     <article class="card">
-      <header><span class="kind">3042dbd9</span><time>2026-08-27 23:38</time></header>
-      <h2>Mock draft: --gone, for running the plan after it breaks</h2>
-      <pre>Every mock so far assumed the board comes to us. --gone marks players as
-already drafted before our first pick, so the interesting question is
-answerable: what does the team look like if Jordan Love does not last to 43, or
-if three quarterbacks go before we take one.
-
-Name resolution raises on a miss rather than warning. Silently drafting the
-player you meant to rule out is the one outcome that makes a contingency run
-worse than not running it.</pre>
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>The draft board is the keeper truth</h2>
+      <p>Once keepers are assigned to pick numbers, Roboner reads that board rather than each team&#x27;s declared keeper list, which goes stale in both directions. It reports the disagreements instead of silently picking a side, which is how it spotted a quarterback returning to the draft pool.</p>
     </article>
     <article class="card">
-      <header><span class="kind">1457360d</span><time>2026-08-27 23:27</time></header>
-      <h2>Draft day: live injury status, and a bench with a shape</h2>
-      <pre>Two unrelated jobs, both aimed at Sunday.
-
-The one that matters: the agent now re-pulls injury status every ten minutes
-during the draft and prints what changed at startup. The board freezes
-injury_status when it is built and sleeper_read caches the player dump for 24
-hours, so a knee blown out on Saturday night was invisible at a Sunday 3pm
-draft -- and unlike every other failure in this system, that one cannot be
-undone afterwards. Live status overrides the board&#x27;s frozen copy, Doubtful now
-counts as undraftable, and a failed refresh says so loudly instead of quietly
-using stale data.
-
-The other: the bench maths was locally sensible and globally bland, filling
-seven slots with whatever scored best in isolation. It now has targets -- a
-third QB, two lottery tickets, a first-year back the market has actually
-noticed -- applied as pressure that grows as picks run out, so a gap is filled
-mid-draft at a fair price instead of forced in the last round at any price,
-which is how the earlier MIN_AT_POS attempt produced a -130 quarterback. A
-player who already owns a small role is discounted: he is worth having and
-worth less than the same points of upside.
-
-Measured over 30 boards, honestly: most of the shape was already there from the
-insurance/ticket work, and the quotas add less than expected. QB3 goes from 80%
-to 100% of drafts, and &quot;singles hitters&quot; halve, 2 to 1. Tickets were already at
-4 and buzzed rookie backs at 93% before any quota existed. Starting lineup is
-unchanged at 1864.
-
-A quota also has a value floor, added after the first version bought the LABEL:
-a &quot;ticket&quot; behind a starter whose role projects to nothing scores p x 0, and
-the bonus alone was enough to roster him.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Mock drafts run the real pick policy</h2>
+      <p>Mocks now use the same decision engine that will be on the clock, over the real keeper board, and can jitter the rest of the league by each player&#x27;s published ADP spread to show robustness rather than one lucky result. Contingencies are runnable too: what the draft looks like if a specific player is gone.</p>
     </article>
     <article class="card">
-      <header><span class="kind">38221c59</span><time>2026-08-27 23:17</time></header>
-      <h2>Bench: read the market, because depth charts and ADP lag camp news</h2>
-      <pre>The bench valuation leaned on Sleeper&#x27;s depth_chart_order, which is a roster
-formality that says nothing about a position battle. ADP is no better: measured
-today, the median player moved 0.6 picks between our locked FFC snapshot and the
-live feed, and exactly one of 229 moved more than fifteen. Meanwhile MarShawn
-Lloyd took 264,987 Sleeper adds in a single day and his ADP moved 3.8 picks.
-Beat reporters and position coaches know things in August that the consensus
-prices in September, and trending adds are the fastest free proxy for it.
-
-robo/buzz.py pulls trending adds net of drops over 72h, caches to data/buzz.json,
-and refreshes daily ahead of the board rebuild. It is used two ways. The
-automated one is deliberately small: a capped lift to P(opportunity), applied
-only to a player who is ALREADY a listed backup with a real projection, which
-moves 7 of 175 bench slots across 25 boards. The raw feed is noisy enough to put
-a kicker, a team defence and an unrostered QB in its top twenty, so it adjusts a
-case the depth chart already supports rather than inventing one.
-
-The more valuable half is for a human: `python -m robo.buzz` prints where the
-crowd and our board disagree. Every one of the current top 25 is late,
-unpriced, or absent from our board entirely. That list is worth reading before
-Sunday, because it is the one place the bot can show what it does not know.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Market signal</h2>
+      <p>Depth charts and ADP lag training camp by weeks, so Roboner also reads Sleeper&#x27;s trending adds and drops as a fast proxy for news the consensus has not priced yet. It only ever adjusts a case the depth chart already supports.</p>
     </article>
     <article class="card">
-      <header><span class="kind">207fc2e6</span><time>2026-08-27 22:45</time></header>
-      <h2>Bench picks: insurance and lottery tickets, not expected points</h2>
-      <pre>A bench player scores us nothing in the ordinary case, so ranking bench
-candidates by their own expected production answers a question nobody asked.
-Raw points drafted a QB3 we would never start; VORP, which replaced it, drafted
-no backups at all -- measured over 40 boards the bench carried literally zero
-conditional value, because every genuine backup grades terribly on VORP by
-construction. Both were optimising the wrong thing.
-
-robo/bench.py values a bench pick the way the roster actually uses one:
-P(opportunity) x what the role is worth, less what we would otherwise field.
-That splits by whose starter he stands behind -- insurance on ours, a ticket on
-someone else&#x27;s -- with INSURANCE_WEIGHT as the dial between them, plus bye
-coverage as a separate schedule term. Depth charts come from Sleeper&#x27;s
-depth_chart_order, ~93% covered on our board.
-
-Over 40 boards: insurance 0.0 -&gt; 11.7 points of cover, lottery 0.0 -&gt; 72.8
-points of upside, bye holes 2.0 -&gt; 1.0, starting lineup unchanged at 1861 vs
-1864. Reaching went DOWN, -10.6 -&gt; -6.7 picks past market, because bench value
-is now multiplied by the chance we actually lose the player: a handcuff going
-at ADP 263 is free in five rounds and is no longer taken in round 8.
-
-Three things had to be fixed after they measured badly rather than before.
-Without the scarcity term it reached ~170 picks past market and drafted an
-undrafted quarterback. Bye coverage at 12 points a hole was not a tiebreaker
-but the driver, taking players with no path to a role. Counting bye holes at
-positions we had not drafted yet double-charged the DP&#x27;s own starter needs.
-
-Every rate in bench.py is a stated assumption, not a fitted number. The current
-mix runs about 6:1 toward lottery over insurance, which suits a team that is
-not the favourite; INSURANCE_WEIGHT moves it.</pre>
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>Injury status refreshes during the draft</h2>
+      <p>The board freezes a player&#x27;s injury status when it is built, hours before a draft, so the agent re-pulls live status every ten minutes while drafting. A knee blown out on Saturday night is now visible on Sunday afternoon.</p>
     </article>
     <article class="card">
-      <header><span class="kind">84e6a74e</span><time>2026-08-27 22:23</time></header>
-      <h2>Draft agent: stop calling the highest-scoring QB &quot;bench depth&quot;</h2>
-      <pre>choose_pick valued the bench branch with a flat 0.30 discount, which was fine,
-and then selected the player with max(pool, key=proj_pts) over a pool spanning
-every position, which was not. Under 2QB scoring the eight highest-scoring
-players on the board are all quarterbacks, so that was a standing order to
-draft one -- Cam Ward, -51 VORP, arriving as &quot;bench depth&quot; ahead of startable
-backs. A bench pick fills no lineup slot, so the question it poses is whether
-the player beats what we could get free later, and that is VORP. Starter
-branches keep ranking on raw points, which is correct rather than merely
-conventional: a QB in the superflex slot really does outscore any WR there by
-about 110 points.
-
-Measured over 50 boards: mean bench VORP -11.0 -&gt; -9.4, and quarterbacks fall
-from 14% of our bench to none. Starting lineups are untouched -- median 1865,
-min 1800, max 1905 before and after -- which is the point, since a bench player
-does not start.
-
-Two fixes were tried first and are recorded here because both looked obviously
-right and measured worse. Scoring the whole DP on VORP drafts only two QBs and
-force-picks a -130 backup in round 15, because VORP cannot see that the
-superflex slot wants a quarterback. Weighting the bench by START_WEIGHT swapped
-Bryce Young for a worse Geno Smith and left the QB share at 14%.
-
-Consequence worth stating: we now roster exactly two quarterbacks in every
-simulated draft, so a bye or an injury means starting a waiver QB in a slot
-that cannot be left empty. Forcing a third via MIN_AT_POS was measured too and
-is worse -- the floor only binds in the last rounds, when the worst pick of the
-draft falls from -37.5 to -118.9. If we want QB insurance it has to be bought
-mid-draft as a real need, not backstopped at the end.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">48dce1fc</span><time>2026-08-27 22:08</time></header>
-      <h2>Mock draft: --detail prints every pick of every run</h2>
-      <pre>--runs only ever emitted aggregates, so there was no way to read an individual
-mock as a draft. Also sorts the pick log by pick number for display: our two
-keepers are logged first but sit at rounds 2 and 3, so the round column used to
-open R2, R3, R1.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">69fa9f20</span><time>2026-08-27 22:03</time></header>
-      <h2>Mock draft: give the other 11 teams their own keepers and needs</h2>
-      <pre>The mock ran the rest of the league as a single ADP countdown with stdev
-jitter -- no team identity, no roster needs, every non-our pick just the next
-name off one shared list. That looked indefensible with these keepers, since 10
-of the 24 are quarterbacks: two teams have both their starters already while
-four, us included, kept none and need two apiece. Redraft ADP prices a league
-where all 12 teams need two QBs, which this is not.
-
---opponents needs gives each rival its own keepers and has it draft to its own
-starters before taking bench darts. Measured against the old model over 50
-boards, it barely matters: QBs off the board by our round-4 pick is 9 either
-way, roster shape is unchanged, and it costs about 15 projected starter points,
-under 1%. The two errors cancel. That is worth having established rather than
-assumed, and worth keeping runnable for next season when the keeper mix differs.
-
-Both models stay. Neither claims rivals draft well -- the needs model still ends
-every team at exactly 3 QBs, because once its starters are set it falls through
-to best-available and in 2QB ADP that is usually another quarterback. The
-per-team position counts are returned so that stays checkable.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">46515d00</span><time>2026-08-27 21:44</time></header>
-      <h2>Mock drafts now run the policy that will actually be on the clock</h2>
-      <pre>There were two pick engines and only the wrong one could be run as a mock.
-draft_sim picks by best blend_rank with no notion of roster construction, which
-in a 2QB league drafts zero quarterbacks -- fine for the question it was built
-for (which slot is worth more, now settled) and badly misleading as a preview.
-The policy that actually drafts, choose_pick&#x27;s DP over our remaining picks, had
-no offline path at all. mock_draft.py gives it one, over the frozen keeper
-board, with --runs to jitter the rest of the league by each player&#x27;s published
-ADP stdev. Over 50 boards it takes 3 QBs every single time and lands a starting
-lineup in a 1813-1915 point band.
-
-Building it surfaced a worse bug than the one it was meant to answer: the policy
-was not deterministic. It chose its plan branch by iterating a set of strings,
-and Python randomises string hashing per process, so on an exact tie the same
-board produced a different pick from one run to the next. That makes any mock
-unreproducible and would have had the bot publish reasoning it could not
-reproduce. Ties now resolve in a fixed order: a named starter need beats FLEX,
-which leftovers can fill later, and both beat bench depth.
-
-Also caches the DP&#x27;s positional shelf lookup. It is a pure function of position
-and pick number within a call, so the cache cannot change behaviour -- verified
-identical picks -- and it takes choose_pick from 0.54s to 0.01s, which is what
-makes 50-board runs practical.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">93e6305a</span><time>2026-08-27 20:58</time></header>
-      <h2>Draft board is now the keeper source of truth</h2>
-      <pre>The commissioner filled the 2026 board and assigned every team&#x27;s keepers to
-their pick numbers, which makes the board a better source than the roster
-&quot;keepers&quot; field it used to read. The field had already drifted: one team still
-claimed Jordan Love whose board pick is James Cook, and another was blank with
-two keepers on the board. league_keepers now prefers the board, freezes it to
-data/keepers_2026.json, and reports the disagreements instead of silently
-picking a side -- a keeper the board releases is a real asset back in the pool,
-and Love goes straight into the plan at our round-4 pick.
-
-Also fixes a bug that would have wrecked draft day: the agent computed the pick
-on the clock as len(picks) + 1. Keeper assignments occupy their pick numbers
-before the draft opens, so that ran 24 picks ahead from the start and never
-reconverged -- and it is the number submitted with the pick. It now takes the
-lowest unfilled pick, and derives the picks we own from the board rather than a
-hardcoded list of forfeited rounds.
-
-The slot simulator was burning all 204 picks against a pool already 24 players
-short, double-counting every keeper and making the late rounds look barrener
-than they will be. Keeper picks now consume no one.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">4817f43c</span><time>2026-08-27 18:26</time></header>
-      <h2>Fix the bot going silent: GPU loss, dropped messages, dead refresh</h2>
-      <pre>Roboner stopped answering the GroupMe for about an hour on 27 Aug. Three
-separate faults, none of which showed up as &quot;down&quot; — the process was alive,
-the port answered, the heartbeat was green.
-
-Ollama auto-upgraded itself while `ollama serve` was running, so the live
-server kept its old binary against swapped-out CUDA libraries, silently lost
-the GPU, and reloaded every model onto the CPU. A reply went from ~6s to over
-the 240s timeout. Restarting Ollama restored it.
-
-Worse, the missed messages were gone for good: the chat cursor was advanced
-when messages were FETCHED, before any reply was attempted, so a failure
-mid-reply buried them permanently instead of retrying. The cursor is now
-staged on fetch and only committed once the batch is handled, with a
-three-strike skip so one bad batch can&#x27;t wedge the loop.
-
-The daily refresh had also been failing since 25 Aug: its scheduled-task
-wrapper redirected into the same refresh.log the pipeline writes itself, and
-cmd&#x27;s &gt;&gt; takes a non-sharing handle, so every run died with PermissionError
-on its first log line while still reporting success. Output now goes to
-refresh.err.log.
-
-Added RobonerGpu.ps1, asserting that Ollama actually holds the GPU rather
-than merely answering. Both the start script and the watchdog now check
-placement, and the watchdog checks it on every run — this failure keeps the
-heartbeat green, so a liveness check structurally cannot see it. Also pinned
-keep_alive per-request, since the machine-wide 30s setting was unloading the
-17GB model between every reply.</pre>
+      <span class="kind k-fix">bug fix</span>
+      <h2>The bot going quiet, three ways</h2>
+      <p>Ollama can lose the GPU and keep answering twelve times slower, chat messages could be lost if a reply failed mid-batch, and the daily refresh had been dying silently for two days. All three are now detected rather than hidden behind a healthy-looking heartbeat.</p>
     </article><h3 class='day'>Tuesday, August 25 2026</h3>
     <article class="card">
-      <header><span class="kind">3f71ba7e</span><time>2026-08-25 16:17</time></header>
-      <h2>Fix broken GIF posts, and stop the bot denying its own capabilities</h2>
-      <pre>Two bugs from the same live interaction: the bot attached an image that
-rendered broken, and told the chat it doesn&#x27;t post GIFs while doing so.
-
-Dead urls. sync() copied the i.groupme.com urls recorded in the archive and
-cached them as postable. GroupMe expires those — 6 of 8 sampled returned 403
-AccessDenied, including the one that shipped. Now the archived url is never
-trusted: every image is re-uploaded from its local copy on first use and only
-our own url is cached. Cleared 122 stale entries; spot checks return 200.
-
-- cdn_for() never raises. A missing image must not take down a reply.
-- Four pool rows have paths that were never extracted under media/ and exist
-  only inside exports/*.zip (searched all 93,255 files under media/ by message
-  id and by hash — no copy). Read from the folder first, fall back to the zip,
-  so all 176 rows resolve.
-- New `verify` command spot-checks hosted urls, since our own could rot the
-  same way and the only symptom is a broken image in the chat.
-
-Capability denial. Asked &quot;do you post gifs now?&quot;, it replied &quot;No gifs. I run
-on text and cold calculation&quot; — and attached a gif. The question matched none
-of CODE_QUESTION_HINTS, so selfdoc never loaded and the model answered from
-persona alone and made something up.
-
-- Hints now cover capability phrasings (&quot;do you post&quot;, &quot;can you send&quot;, &quot;are
-  you able&quot;, &quot;what can you&quot;). Ordinary chatter still doesn&#x27;t trigger it.
-- Persona rule against misstating what it can do in either direction, naming
-  the &quot;just text and cold calculation&quot; move specifically.
-- selfdoc&#x27;s ARCHITECTURE never mentioned media at all, so even a loaded digest
-  had no answer. Added media/archive_media/chat_memory/selfdoc, and routed
-  image questions to archive_media in relevant_modules().
-- That blurb also claimed &quot;~63KB across 15 modules&quot; against an actual 188KB
-  and 29. Measured at render time now so it cannot drift again.
-
-Verified against the real model: it answers accurately and attaches a working
-gif.</pre>
+      <span class="kind k-enhancement">enhancement</span>
+      <h2>Draft brain v2</h2>
+      <p>The pick policy now plans across every remaining pick rather than one at a time, assigning starter needs to future picks using each player&#x27;s chance of surviving until then. It corrects for the 34 scoring rules Sleeper&#x27;s projections leave out of our league&#x27;s settings.</p>
     </article>
     <article class="card">
-      <header><span class="kind">b9db1927</span><time>2026-08-25 14:27</time></header>
-      <h2>Reaction images: whitelisted pool from the GroupMe Archive</h2>
-      <pre>The bot had exactly one usable image, because media.py requires a
-hand-written description per file before anything becomes visible to the
-model. The Archive already captions and embeds every synced image nightly,
-so borrow that instead of rebuilding it.
-
-- archive_media.py: read-only pull of a WHITELISTED subset of the Archive
-  into data/media_pool.db, mirroring how chat_memory.py borrows the league
-  group. Two sources, both vetted: every image ever posted in the league
-  GroupMe (44), and a keyword cut of &#x27;robot&#x27; GIFs (132). Allowlist, not
-  blocklist — the same database holds quarantined groups.
-- Selection is a query, not a snapshot, so the Archive&#x27;s nightly captioning
-  feeds the pool with no new process. refresh.py gains a media-pool step.
-- Hybrid FTS5 + nomic-embedding search with RRF fusion, same shape as
-  chat_memory. chat_memory._BLOCK filters captions on the way IN.
-- Separate PICK_CUTOFF (0.32) for posting, much tighter than the 0.5 browse
-  cutoff: measured on this pool, real matches land at 0.22-0.29 and nonsense
-  at 0.37+. Keyword-only hits are rejected outright — FTS ORs its terms, so
-  &quot;a giraffe eating spaghetti&quot; was returning a gif of someone eating
-  pancakes. Ollama down means no images, which is the correct failure.
-- chat_responder: the model now writes [img: a sad cartoon robot] and the
-  pool resolves it, instead of receiving a catalog of every image. Bare
-  [img:slug] still hits the curated manifest, which stays as the vetted tier.
-- Posting reuses the original GroupMe CDN url; m.groupme.com uploads are
-  re-hosted to i.groupme.com lazily and cached, same as media.py.
-
-Also fix Start/StopRoboner.bat, which exited nonzero and skipped their final
-line. `timeout` was unqualified, so Git Bash&#x27;s coreutils build shadowed the
-Windows one; and Windows timeout.exe itself fails whenever stdin is
-redirected, which any Run button or pipe does. Replaced with a fully
-qualified ping delay that never reads stdin.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Daily refresh</h2>
+      <p>Projections, live ADP, expert consensus rankings and the value board rebuild themselves every morning, and again in the hours before a draft. Every source is validated before it overwrites the last good copy.</p>
     </article>
     <article class="card">
-      <header><span class="kind">d40b2820</span><time>2026-08-25 12:11</time></header>
-      <h2>Draft brain v2: plan-DP pick policy, survival model, live ADP, scoring corrections</h2>
-      <pre>- rankings: estimate the 34 scoring keys projections omit (QB sacks from 2025
-  sack rates x projected attempts; yardage/long-TD bonuses volume-scaled from
-  2025 actuals). QBs shed 10-20 pts each by sack profile; big-play RB/WR gain.
-- adp_live: FFC live 2QB ADP + per-player stdev, refreshed daily; locked ADP
-  stays keeper-cost-only. Survival now P(gone) via normal(ADP, sigma) instead
-  of a fixed +6 buffer (way too loose in Rd1, way too tight in Rd8+).
-- draft_agent: pick = DP plan over ALL remaining picks assigning starter needs
-  (2QB/2RB/2WR/1TE+flex) to pick slots via positional shelf curves. One-step
-  VONA procrastinated QBs to Penix+Mac Jones; the planner buys Chase at 6 and
-  the QB room at 43/78/102. Rehearsed end-to-end at slot 6.
-- league_keepers: staleness audit — declarations identical to the team&#x27;s 2025
-  set and/or containing a third-consecutive-year keeper are flagged for the
-  Draft Czar and only their eligible players honored (caught ChrisNote&#x27;s
-  Gibbs+Love carryover; Love is ineligible and back in the pool).
-- refresh: +adp-live step, +site regeneration step</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Institutional memory</h2>
+      <p>Roboner has six seasons of league history — champions, head-to-head records, every draft and trade — plus searchable league chat going back years. It uses this to answer questions about the league rather than to make decisions.</p>
     </article>
     <article class="card">
-      <header><span class="kind">fea43d1e</span><time>2026-08-25 11:47</time></header>
-      <h2>Daily refresh pipeline + RobonerRefresh scheduled task (06:30)</h2>
-      <pre>Projections, ECR, board, players, chat memory, current-season history, and KB
-all refresh unattended; the responder is bounced afterward so in-process
-caches (player dump, lore lru_caches) pick up the new state. Steps are
-independent — one failure never blocks the rest. 06:30 avoids the 2AM GroupMe
-archive sync&#x27;s GPU window.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>League-wide keeper modelling</h2>
+      <p>Before the keeper deadline the bot modelled every team&#x27;s likely keepers, not just its own, to work out which players would actually reach the draft. That analysis chose draft slot 6.</p>
     </article>
     <article class="card">
-      <header><span class="kind">862e057e</span><time>2026-08-25 11:40</time></header>
-      <h2>Slot 6 confirmed; keepers declared; scarcity-aware pick logic; queue loaded</h2>
-      <pre>Pick logic now maximizes VORP among players who won&#x27;t survive to our next pick,
-rather than following market rank — it was taking Lamar Jackson (65 VORP) at
-pick 6 over James Cook (99). league_keepers now reads keepers over GraphQL
-because the public REST rosters endpoint caches and lagged a live declaration.</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">0c979ffd</span><time>2026-08-25 08:50</time></header>
-      <h2>Institutional memory: 6 seasons of Sleeper history + league chat search</h2>
-      <pre>- history.py harvests 2020-2026 (1284 matchups, 2976 transactions, 1224 picks,
-  playoff brackets) from the public REST API; no credentials needed
-- lore.py derives champions, head-to-head, record book, manager profiles,
-  draft/keeper history; identity keyed on stable user_id
-- chat_memory.py ingests the league GroupMe + Sleeper chat, hybrid FTS5 +
-  nomic embeddings fused via RRF (cribbed from archive_search.py), scoped to
-  league chats only
-- people.json maps real names to Sleeper handles (&#x27;Bob&#x27; was resolving to a
-  team called &#x27;In the Shadow of the Bob&#x27;)
-- persona hardened: chat is not a control channel</pre>
-    </article>
-    <article class="card">
-      <header><span class="kind">357c9551</span><time>2026-08-25 07:35</time></header>
-      <h2>League-wide keeper modeling + slot 6 vs 11 decision</h2>
-      <pre>- league_keepers.py: declared keepers from Sleeper, predicts the rest by VORP
-  retained over what the forfeited pick would fetch (not nominal picks saved,
-  which absurdly favored kickers and defenses)
-- draft_sim removes kept players from the pool
-- Monte Carlo across keeper scenarios and draft noise -&gt; pick 6</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Reaction images</h2>
+      <p>The bot can attach images and GIFs from a whitelisted pool drawn from the league&#x27;s own GroupMe archive.</p>
     </article><h3 class='day'>Monday, August 24 2026</h3>
     <article class="card">
-      <header><span class="kind">c68dcb87</span><time>2026-08-24 18:51</time></header>
-      <h2>Decouple bot from Claude session: autostart + watchdog scheduled tasks</h2>
-      <pre>Mirrors the GroupMe Historian ops pattern (idempotent PS1 launcher, silent VBS,
-logon task, 15-min watchdog, log snapshotting). Liveness is a heartbeat file
-rather than a port check, since the responder is a polling loop and a hung
-iteration would pass a process check while the bot sits silent.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>The value board</h2>
+      <p>Every player is scored under this league&#x27;s exact settings, ranked by points above a replacement-level starter in a two-quarterback format, and blended with the consensus of 105 FantasyPros experts. This board is what every draft decision is built on.</p>
     </article>
     <article class="card">
-      <header><span class="kind">eb0f0883</span><time>2026-08-24 18:32</time></header>
-      <h2>Sleeper league chat support: read/post via graphql, multi-channel responder</h2>
-      <pre>- sleeper_chat.py mirrors groupme&#x27;s interface (messages/post/new_messages)
-- responder now polls both channels with per-channel rate limits
-- platform-aware tone: businesslike in Sleeper, banter in GroupMe</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Keeper cost model</h2>
+      <p>Roboner computes what each player would cost to keep under the league&#x27;s escalation rules, verified against the league&#x27;s own calculator.</p>
     </article>
     <article class="card">
-      <header><span class="kind">fb92e0b5</span><time>2026-08-24 17:03</time></header>
-      <h2>GroupMe reply threading + curated image/GIF attachments</h2>
-      <pre>- post() takes reply_to (native GroupMe reply) and image_url
-- upload_image() handles paths/urls/bytes, preserves animated GIFs
-- media.py: curated, tagged reaction library with CDN url caching
-- responder threads every reply and may attach one vetted image</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Public decision log</h2>
+      <p>Every consequential action Roboner takes is written up and published here automatically, with its reasoning, at the moment it happens.</p>
     </article>
     <article class="card">
-      <header><span class="kind">5cc8eb54</span><time>2026-08-24 16:45</time></header>
-      <h2>Skills layer: live stats, per-player news, projections, teams, trending, standings</h2>
-      <pre>Local model now calls these as tools instead of guessing at facts.</pre>
+      <span class="kind k-new">new feature</span>
+      <h2>Sleeper write access</h2>
+      <p>The bot can set lineups, make transactions, manage its draft queue and submit draft picks, all verified end to end against a live mock draft rather than assumed to work.</p>
     </article>
     <article class="card">
-      <header><span class="kind">980c6359</span><time>2026-08-24 16:34</time></header>
-      <h2>Self-knowledge: Roboner can explain its own code and architecture in chat</h2>
-      
+      <span class="kind k-new">new feature</span>
+      <h2>Lineup optimizer</h2>
+      <p>Weekly lineups are chosen by projected points under a legality-first slot assignment, tested against a real 2025 week.</p>
     </article>
     <article class="card">
-      <header><span class="kind">80371e4e</span><time>2026-08-24 16:24</time></header>
-      <h2>Roboner chat responder: local-qwen banter loop, reactive + rate-capped</h2>
-      
+      <span class="kind k-new">new feature</span>
+      <h2>The bot talks in both chats</h2>
+      <p>Roboner reads and replies in GroupMe and Sleeper league chat, running on a local model so conversation costs nothing, with a rate cap so it stays a teammate rather than a nuisance. It can look up live stats, news, projections, standings and trending players mid-conversation.</p>
     </article>
     <article class="card">
-      <header><span class="kind">7ff25234</span><time>2026-08-24 16:20</time></header>
-      <h2>GroupMe module: bot posting, token polling, avatar CDN upload</h2>
-      
+      <span class="kind k-new">new feature</span>
+      <h2>It can explain itself</h2>
+      <p>Ask Roboner how it makes a decision and it reads its own source to answer, rather than guessing from a description of itself.</p>
     </article>
     <article class="card">
-      <header><span class="kind">1bf81b6a</span><time>2026-08-24 15:57</time></header>
-      <h2>Decision log auto-publish on record; finalize keeper declaration</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">bcf291fd</span><time>2026-08-24 15:53</time></header>
-      <h2>News watcher on FP free-tier news API (dedupe + roster relevance tagging)</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">6e5a7c83</span><time>2026-08-24 15:27</time></header>
-      <h2>Lineup optimizer: weekly projections + legality-first slot assignment (tested on 2025 wk10)</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">77c5fdaf</span><time>2026-08-24 15:25</time></header>
-      <h2>Verify Sleeper write path: introspected mutations, e2e mock-draft pick test</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">1f3c9bbf</span><time>2026-08-24 14:29</time></header>
-      <h2>Draft agent: poll loop + roster-aware pick policy (dry-run until mutation verified)</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">8994206e</span><time>2026-08-24 14:28</time></header>
-      <h2>Blend FantasyPros half-PPR superflex ECR (105 experts) into value board</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">35b4dd88</span><time>2026-08-24 14:15</time></header>
-      <h2>Phase 1: value board, slot simulator, decision log, graphql write scaffold</h2>
-      
-    </article>
-    <article class="card">
-      <header><span class="kind">ca60621d</span><time>2026-08-24 14:12</time></header>
-      <h2>Phase 0: league KB, locked ADP parser, keeper cost table (verified vs league calc)</h2>
-      
+      <span class="kind k-new">new feature</span>
+      <h2>It runs without supervision</h2>
+      <p>The bot runs as a background service on its own machine, starts itself at logon, and is restarted by a watchdog if it stops or wedges. Nothing about its day-to-day operation depends on a person being at the keyboard.</p>
     </article>
 </main></body></html>
