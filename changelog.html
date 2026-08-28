@@ -17,9 +17,35 @@
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
 <p class="sub">How the RURFFL AI owner is being built — the fixes, the architecture,
-and the features, as they land. 32 entries.
+and the features, as they land. 33 entries.
 See also the <a href="index.html">decision log</a>.</p>
-<h3 class='day'>Thursday, August 27 2026</h3>
+<h3 class='day'>Friday, August 28 2026</h3>
+    <article class="card">
+      <header><span class="kind">e8805729</span><time>2026-08-28 06:20</time></header>
+      <h2>Draft agent: survive a rejected pick, and never log a mock publicly</h2>
+      <pre>Findings from a full live mock draft on Sleeper, which is the first time any of
+this ran against a real draft rather than a simulation. Three real bugs, none
+of which the mock harness could have found.
+
+A rejected pick killed the agent. draft_pick_player raises on refusal and
+nothing caught it, so the process died on its first bad pick and handed the
+remaining rounds to autopick. It now logs the rejection and re-evaluates next
+poll, which is right because the usual cause -- the clock ran out while we were
+deciding, and autopick took the slot -- is fixed by looking at the board again.
+
+Worse: the agent published its MOCK picks to the league&#x27;s public decision log.
+record() commits and pushes, so a test wrote three fake first-round picks to
+GitHub Pages where the league could read them. Public logging is now gated to
+the real draft id. The bogus entries have been removed and the site republished.
+
+Also added --draft-id so the live path can be exercised against a throwaway
+mock at all, with a guard: submitting into the real 2026 draft needs --i-mean-it
+as well as the absence of --dry-run. A test run that quietly picks in the league
+draft is the one mistake with no undo.
+
+The periodic injury refresh no longer blocks a pick. It re-pulls a 16MB dump,
+and doing that while on the clock spends the pick timer on a download.</pre>
+    </article><h3 class='day'>Thursday, August 27 2026</h3>
     <article class="card">
       <header><span class="kind">3042dbd9</span><time>2026-08-27 23:38</time></header>
       <h2>Mock draft: --gone, for running the plan after it breaks</h2>
