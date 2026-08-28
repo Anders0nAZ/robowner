@@ -239,5 +239,35 @@
     "blend_rank": 19.0
    }
   }
+ },
+ {
+  "id": 10,
+  "ts": "2026-08-28T13:19:28+00:00",
+  "kind": "draft-pick",
+  "title": "Round 4 pick",
+  "decision": "pick 43: Brock Purdy (QB) \u2014 fills QB; plan value 1561 over picks [43, 54, 67, 78, 91]...; adp 19\u00b13",
+  "rationale": "fills QB; plan value 1561 over picks [43, 54, 67, 78, 91]...; adp 19\u00b13",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "8183",
+    "name": "Brock Purdy",
+    "pos": "QB",
+    "team": "SF",
+    "proj_pts": 349.6,
+    "adp_ffc": 18.5,
+    "bye": 8,
+    "adp_sleeper_2qb": 53.5,
+    "adp_live": 19.2,
+    "adp_stdev": 3.4,
+    "injury_status": null,
+    "pos_rank": 7,
+    "vorp": 54.5,
+    "value_rank": 30,
+    "ecr": 21,
+    "tier": 3,
+    "blend_rank": 25.5
+   }
+  }
  }
 ]
