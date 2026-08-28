@@ -17,9 +17,222 @@
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
 <p class="sub">How the RURFFL AI owner is being built — the fixes, the architecture,
-and the features, as they land. 23 entries.
+and the features, as they land. 32 entries.
 See also the <a href="index.html">decision log</a>.</p>
 <h3 class='day'>Thursday, August 27 2026</h3>
+    <article class="card">
+      <header><span class="kind">3042dbd9</span><time>2026-08-27 23:38</time></header>
+      <h2>Mock draft: --gone, for running the plan after it breaks</h2>
+      <pre>Every mock so far assumed the board comes to us. --gone marks players as
+already drafted before our first pick, so the interesting question is
+answerable: what does the team look like if Jordan Love does not last to 43, or
+if three quarterbacks go before we take one.
+
+Name resolution raises on a miss rather than warning. Silently drafting the
+player you meant to rule out is the one outcome that makes a contingency run
+worse than not running it.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">1457360d</span><time>2026-08-27 23:27</time></header>
+      <h2>Draft day: live injury status, and a bench with a shape</h2>
+      <pre>Two unrelated jobs, both aimed at Sunday.
+
+The one that matters: the agent now re-pulls injury status every ten minutes
+during the draft and prints what changed at startup. The board freezes
+injury_status when it is built and sleeper_read caches the player dump for 24
+hours, so a knee blown out on Saturday night was invisible at a Sunday 3pm
+draft -- and unlike every other failure in this system, that one cannot be
+undone afterwards. Live status overrides the board&#x27;s frozen copy, Doubtful now
+counts as undraftable, and a failed refresh says so loudly instead of quietly
+using stale data.
+
+The other: the bench maths was locally sensible and globally bland, filling
+seven slots with whatever scored best in isolation. It now has targets -- a
+third QB, two lottery tickets, a first-year back the market has actually
+noticed -- applied as pressure that grows as picks run out, so a gap is filled
+mid-draft at a fair price instead of forced in the last round at any price,
+which is how the earlier MIN_AT_POS attempt produced a -130 quarterback. A
+player who already owns a small role is discounted: he is worth having and
+worth less than the same points of upside.
+
+Measured over 30 boards, honestly: most of the shape was already there from the
+insurance/ticket work, and the quotas add less than expected. QB3 goes from 80%
+to 100% of drafts, and &quot;singles hitters&quot; halve, 2 to 1. Tickets were already at
+4 and buzzed rookie backs at 93% before any quota existed. Starting lineup is
+unchanged at 1864.
+
+A quota also has a value floor, added after the first version bought the LABEL:
+a &quot;ticket&quot; behind a starter whose role projects to nothing scores p x 0, and
+the bonus alone was enough to roster him.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">38221c59</span><time>2026-08-27 23:17</time></header>
+      <h2>Bench: read the market, because depth charts and ADP lag camp news</h2>
+      <pre>The bench valuation leaned on Sleeper&#x27;s depth_chart_order, which is a roster
+formality that says nothing about a position battle. ADP is no better: measured
+today, the median player moved 0.6 picks between our locked FFC snapshot and the
+live feed, and exactly one of 229 moved more than fifteen. Meanwhile MarShawn
+Lloyd took 264,987 Sleeper adds in a single day and his ADP moved 3.8 picks.
+Beat reporters and position coaches know things in August that the consensus
+prices in September, and trending adds are the fastest free proxy for it.
+
+robo/buzz.py pulls trending adds net of drops over 72h, caches to data/buzz.json,
+and refreshes daily ahead of the board rebuild. It is used two ways. The
+automated one is deliberately small: a capped lift to P(opportunity), applied
+only to a player who is ALREADY a listed backup with a real projection, which
+moves 7 of 175 bench slots across 25 boards. The raw feed is noisy enough to put
+a kicker, a team defence and an unrostered QB in its top twenty, so it adjusts a
+case the depth chart already supports rather than inventing one.
+
+The more valuable half is for a human: `python -m robo.buzz` prints where the
+crowd and our board disagree. Every one of the current top 25 is late,
+unpriced, or absent from our board entirely. That list is worth reading before
+Sunday, because it is the one place the bot can show what it does not know.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">207fc2e6</span><time>2026-08-27 22:45</time></header>
+      <h2>Bench picks: insurance and lottery tickets, not expected points</h2>
+      <pre>A bench player scores us nothing in the ordinary case, so ranking bench
+candidates by their own expected production answers a question nobody asked.
+Raw points drafted a QB3 we would never start; VORP, which replaced it, drafted
+no backups at all -- measured over 40 boards the bench carried literally zero
+conditional value, because every genuine backup grades terribly on VORP by
+construction. Both were optimising the wrong thing.
+
+robo/bench.py values a bench pick the way the roster actually uses one:
+P(opportunity) x what the role is worth, less what we would otherwise field.
+That splits by whose starter he stands behind -- insurance on ours, a ticket on
+someone else&#x27;s -- with INSURANCE_WEIGHT as the dial between them, plus bye
+coverage as a separate schedule term. Depth charts come from Sleeper&#x27;s
+depth_chart_order, ~93% covered on our board.
+
+Over 40 boards: insurance 0.0 -&gt; 11.7 points of cover, lottery 0.0 -&gt; 72.8
+points of upside, bye holes 2.0 -&gt; 1.0, starting lineup unchanged at 1861 vs
+1864. Reaching went DOWN, -10.6 -&gt; -6.7 picks past market, because bench value
+is now multiplied by the chance we actually lose the player: a handcuff going
+at ADP 263 is free in five rounds and is no longer taken in round 8.
+
+Three things had to be fixed after they measured badly rather than before.
+Without the scarcity term it reached ~170 picks past market and drafted an
+undrafted quarterback. Bye coverage at 12 points a hole was not a tiebreaker
+but the driver, taking players with no path to a role. Counting bye holes at
+positions we had not drafted yet double-charged the DP&#x27;s own starter needs.
+
+Every rate in bench.py is a stated assumption, not a fitted number. The current
+mix runs about 6:1 toward lottery over insurance, which suits a team that is
+not the favourite; INSURANCE_WEIGHT moves it.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">84e6a74e</span><time>2026-08-27 22:23</time></header>
+      <h2>Draft agent: stop calling the highest-scoring QB &quot;bench depth&quot;</h2>
+      <pre>choose_pick valued the bench branch with a flat 0.30 discount, which was fine,
+and then selected the player with max(pool, key=proj_pts) over a pool spanning
+every position, which was not. Under 2QB scoring the eight highest-scoring
+players on the board are all quarterbacks, so that was a standing order to
+draft one -- Cam Ward, -51 VORP, arriving as &quot;bench depth&quot; ahead of startable
+backs. A bench pick fills no lineup slot, so the question it poses is whether
+the player beats what we could get free later, and that is VORP. Starter
+branches keep ranking on raw points, which is correct rather than merely
+conventional: a QB in the superflex slot really does outscore any WR there by
+about 110 points.
+
+Measured over 50 boards: mean bench VORP -11.0 -&gt; -9.4, and quarterbacks fall
+from 14% of our bench to none. Starting lineups are untouched -- median 1865,
+min 1800, max 1905 before and after -- which is the point, since a bench player
+does not start.
+
+Two fixes were tried first and are recorded here because both looked obviously
+right and measured worse. Scoring the whole DP on VORP drafts only two QBs and
+force-picks a -130 backup in round 15, because VORP cannot see that the
+superflex slot wants a quarterback. Weighting the bench by START_WEIGHT swapped
+Bryce Young for a worse Geno Smith and left the QB share at 14%.
+
+Consequence worth stating: we now roster exactly two quarterbacks in every
+simulated draft, so a bye or an injury means starting a waiver QB in a slot
+that cannot be left empty. Forcing a third via MIN_AT_POS was measured too and
+is worse -- the floor only binds in the last rounds, when the worst pick of the
+draft falls from -37.5 to -118.9. If we want QB insurance it has to be bought
+mid-draft as a real need, not backstopped at the end.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">48dce1fc</span><time>2026-08-27 22:08</time></header>
+      <h2>Mock draft: --detail prints every pick of every run</h2>
+      <pre>--runs only ever emitted aggregates, so there was no way to read an individual
+mock as a draft. Also sorts the pick log by pick number for display: our two
+keepers are logged first but sit at rounds 2 and 3, so the round column used to
+open R2, R3, R1.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">69fa9f20</span><time>2026-08-27 22:03</time></header>
+      <h2>Mock draft: give the other 11 teams their own keepers and needs</h2>
+      <pre>The mock ran the rest of the league as a single ADP countdown with stdev
+jitter -- no team identity, no roster needs, every non-our pick just the next
+name off one shared list. That looked indefensible with these keepers, since 10
+of the 24 are quarterbacks: two teams have both their starters already while
+four, us included, kept none and need two apiece. Redraft ADP prices a league
+where all 12 teams need two QBs, which this is not.
+
+--opponents needs gives each rival its own keepers and has it draft to its own
+starters before taking bench darts. Measured against the old model over 50
+boards, it barely matters: QBs off the board by our round-4 pick is 9 either
+way, roster shape is unchanged, and it costs about 15 projected starter points,
+under 1%. The two errors cancel. That is worth having established rather than
+assumed, and worth keeping runnable for next season when the keeper mix differs.
+
+Both models stay. Neither claims rivals draft well -- the needs model still ends
+every team at exactly 3 QBs, because once its starters are set it falls through
+to best-available and in 2QB ADP that is usually another quarterback. The
+per-team position counts are returned so that stays checkable.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">46515d00</span><time>2026-08-27 21:44</time></header>
+      <h2>Mock drafts now run the policy that will actually be on the clock</h2>
+      <pre>There were two pick engines and only the wrong one could be run as a mock.
+draft_sim picks by best blend_rank with no notion of roster construction, which
+in a 2QB league drafts zero quarterbacks -- fine for the question it was built
+for (which slot is worth more, now settled) and badly misleading as a preview.
+The policy that actually drafts, choose_pick&#x27;s DP over our remaining picks, had
+no offline path at all. mock_draft.py gives it one, over the frozen keeper
+board, with --runs to jitter the rest of the league by each player&#x27;s published
+ADP stdev. Over 50 boards it takes 3 QBs every single time and lands a starting
+lineup in a 1813-1915 point band.
+
+Building it surfaced a worse bug than the one it was meant to answer: the policy
+was not deterministic. It chose its plan branch by iterating a set of strings,
+and Python randomises string hashing per process, so on an exact tie the same
+board produced a different pick from one run to the next. That makes any mock
+unreproducible and would have had the bot publish reasoning it could not
+reproduce. Ties now resolve in a fixed order: a named starter need beats FLEX,
+which leftovers can fill later, and both beat bench depth.
+
+Also caches the DP&#x27;s positional shelf lookup. It is a pure function of position
+and pick number within a call, so the cache cannot change behaviour -- verified
+identical picks -- and it takes choose_pick from 0.54s to 0.01s, which is what
+makes 50-board runs practical.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">93e6305a</span><time>2026-08-27 20:58</time></header>
+      <h2>Draft board is now the keeper source of truth</h2>
+      <pre>The commissioner filled the 2026 board and assigned every team&#x27;s keepers to
+their pick numbers, which makes the board a better source than the roster
+&quot;keepers&quot; field it used to read. The field had already drifted: one team still
+claimed Jordan Love whose board pick is James Cook, and another was blank with
+two keepers on the board. league_keepers now prefers the board, freezes it to
+data/keepers_2026.json, and reports the disagreements instead of silently
+picking a side -- a keeper the board releases is a real asset back in the pool,
+and Love goes straight into the plan at our round-4 pick.
+
+Also fixes a bug that would have wrecked draft day: the agent computed the pick
+on the clock as len(picks) + 1. Keeper assignments occupy their pick numbers
+before the draft opens, so that ran 24 picks ahead from the start and never
+reconverged -- and it is the number submitted with the pick. It now takes the
+lowest unfilled pick, and derives the picks we own from the board rather than a
+hardcoded list of forfeited rounds.
+
+The slot simulator was burning all 204 picks against a pool already 24 players
+short, double-counting every keeper and making the late rounds look barrener
+than they will be. Keeper picks now consume no one.</pre>
+    </article>
     <article class="card">
       <header><span class="kind">4817f43c</span><time>2026-08-27 18:26</time></header>
       <h2>Fix the bot going silent: GPU loss, dropped messages, dead refresh</h2>

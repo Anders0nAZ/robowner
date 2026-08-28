@@ -149,5 +149,35 @@
    "queue_size": 76,
    "keeper_deadline": "Thursday 2026-08-27"
   }
+ },
+ {
+  "id": 7,
+  "ts": "2026-08-28T13:10:00+00:00",
+  "kind": "draft-pick",
+  "title": "Round 1 pick",
+  "decision": "pick 6: Jonathan Taylor (RB) \u2014 fills RB; plan value 2419 over picks [6, 19, 30, 43, 54]...; adp 6\u00b11",
+  "rationale": "fills RB; plan value 2419 over picks [6, 19, 30, 43, 54]...; adp 6\u00b11",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "6813",
+    "name": "Jonathan Taylor",
+    "pos": "RB",
+    "team": "IND",
+    "proj_pts": 264.3,
+    "adp_ffc": 5.7,
+    "bye": 13,
+    "adp_sleeper_2qb": 8.0,
+    "adp_live": 5.5,
+    "adp_stdev": 1.4,
+    "injury_status": null,
+    "pos_rank": 3,
+    "vorp": 115.2,
+    "value_rank": 3,
+    "ecr": 18,
+    "tier": 2,
+    "blend_rank": 10.5
+   }
+  }
  }
 ]
