@@ -209,5 +209,35 @@
     "blend_rank": 23.0
    }
   }
+ },
+ {
+  "id": 9,
+  "ts": "2026-08-28T13:16:06+00:00",
+  "kind": "draft-pick",
+  "title": "Round 3 pick",
+  "decision": "pick 30: Dak Prescott (QB) \u2014 fills QB; plan value 1901 over picks [30, 43, 54, 67, 78]...; adp 14\u00b13",
+  "rationale": "fills QB; plan value 1901 over picks [30, 43, 54, 67, 78]...; adp 14\u00b13",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "3294",
+    "name": "Dak Prescott",
+    "pos": "QB",
+    "team": "DAL",
+    "proj_pts": 357.4,
+    "adp_ffc": 13.0,
+    "bye": 14,
+    "adp_sleeper_2qb": 37.7,
+    "adp_live": 13.6,
+    "adp_stdev": 2.8,
+    "injury_status": null,
+    "pos_rank": 3,
+    "vorp": 62.3,
+    "value_rank": 22,
+    "ecr": 16,
+    "tier": 2,
+    "blend_rank": 19.0
+   }
+  }
  }
 ]
