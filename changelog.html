@@ -17,8 +17,80 @@
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
 <p class="sub">How the RURFFL AI owner is being built — every change, as it lands.
-30 commits. See also the <a href="index.html">decision log</a>.</p>
+32 commits. See also the <a href="index.html">decision log</a>.</p>
 <h3 class='day'>Tuesday, August 25 2026</h3>
+    <article class="card">
+      <header><span class="kind">3f71ba7e</span><time>2026-08-25 16:17</time></header>
+      <h2>Fix broken GIF posts, and stop the bot denying its own capabilities</h2>
+      <pre>Two bugs from the same live interaction: the bot attached an image that
+rendered broken, and told the chat it doesn&#x27;t post GIFs while doing so.
+
+Dead urls. sync() copied the i.groupme.com urls recorded in the archive and
+cached them as postable. GroupMe expires those — 6 of 8 sampled returned 403
+AccessDenied, including the one that shipped. Now the archived url is never
+trusted: every image is re-uploaded from its local copy on first use and only
+our own url is cached. Cleared 122 stale entries; spot checks return 200.
+
+- cdn_for() never raises. A missing image must not take down a reply.
+- Four pool rows have paths that were never extracted under media/ and exist
+  only inside exports/*.zip (searched all 93,255 files under media/ by message
+  id and by hash — no copy). Read from the folder first, fall back to the zip,
+  so all 176 rows resolve.
+- New `verify` command spot-checks hosted urls, since our own could rot the
+  same way and the only symptom is a broken image in the chat.
+
+Capability denial. Asked &quot;do you post gifs now?&quot;, it replied &quot;No gifs. I run
+on text and cold calculation&quot; — and attached a gif. The question matched none
+of CODE_QUESTION_HINTS, so selfdoc never loaded and the model answered from
+persona alone and made something up.
+
+- Hints now cover capability phrasings (&quot;do you post&quot;, &quot;can you send&quot;, &quot;are
+  you able&quot;, &quot;what can you&quot;). Ordinary chatter still doesn&#x27;t trigger it.
+- Persona rule against misstating what it can do in either direction, naming
+  the &quot;just text and cold calculation&quot; move specifically.
+- selfdoc&#x27;s ARCHITECTURE never mentioned media at all, so even a loaded digest
+  had no answer. Added media/archive_media/chat_memory/selfdoc, and routed
+  image questions to archive_media in relevant_modules().
+- That blurb also claimed &quot;~63KB across 15 modules&quot; against an actual 188KB
+  and 29. Measured at render time now so it cannot drift again.
+
+Verified against the real model: it answers accurately and attaches a working
+gif.</pre>
+    </article>
+    <article class="card">
+      <header><span class="kind">b9db1927</span><time>2026-08-25 14:27</time></header>
+      <h2>Reaction images: whitelisted pool from the GroupMe Archive</h2>
+      <pre>The bot had exactly one usable image, because media.py requires a
+hand-written description per file before anything becomes visible to the
+model. The Archive already captions and embeds every synced image nightly,
+so borrow that instead of rebuilding it.
+
+- archive_media.py: read-only pull of a WHITELISTED subset of the Archive
+  into data/media_pool.db, mirroring how chat_memory.py borrows the league
+  group. Two sources, both vetted: every image ever posted in the league
+  GroupMe (44), and a keyword cut of &#x27;robot&#x27; GIFs (132). Allowlist, not
+  blocklist — the same database holds quarantined groups.
+- Selection is a query, not a snapshot, so the Archive&#x27;s nightly captioning
+  feeds the pool with no new process. refresh.py gains a media-pool step.
+- Hybrid FTS5 + nomic-embedding search with RRF fusion, same shape as
+  chat_memory. chat_memory._BLOCK filters captions on the way IN.
+- Separate PICK_CUTOFF (0.32) for posting, much tighter than the 0.5 browse
+  cutoff: measured on this pool, real matches land at 0.22-0.29 and nonsense
+  at 0.37+. Keyword-only hits are rejected outright — FTS ORs its terms, so
+  &quot;a giraffe eating spaghetti&quot; was returning a gif of someone eating
+  pancakes. Ollama down means no images, which is the correct failure.
+- chat_responder: the model now writes [img: a sad cartoon robot] and the
+  pool resolves it, instead of receiving a catalog of every image. Bare
+  [img:slug] still hits the curated manifest, which stays as the vetted tier.
+- Posting reuses the original GroupMe CDN url; m.groupme.com uploads are
+  re-hosted to i.groupme.com lazily and cached, same as media.py.
+
+Also fix Start/StopRoboner.bat, which exited nonzero and skipped their final
+line. `timeout` was unqualified, so Git Bash&#x27;s coreutils build shadowed the
+Windows one; and Windows timeout.exe itself fails whenever stdin is
+redirected, which any Run button or pipe does. Replaced with a fully
+qualified ping delay that never reads stdin.</pre>
+    </article>
     <article class="card">
       <header><span class="kind">aba8d558</span><time>2026-08-25 13:25</time></header>
       <h2>Docs: project CLAUDE.md, rewritten ROADMAP with next builds</h2>
