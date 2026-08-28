@@ -179,5 +179,35 @@
     "blend_rank": 10.5
    }
   }
+ },
+ {
+  "id": 8,
+  "ts": "2026-08-28T13:13:17+00:00",
+  "kind": "draft-pick",
+  "title": "Round 2 pick",
+  "decision": "pick 19: Derrick Henry (RB) \u2014 fills RB; plan value 2163 over picks [19, 30, 43, 54, 67]...; adp 11\u00b13",
+  "rationale": "fills RB; plan value 2163 over picks [19, 30, 43, 54, 67]...; adp 11\u00b13",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "3198",
+    "name": "Derrick Henry",
+    "pos": "RB",
+    "team": "BAL",
+    "proj_pts": 247.7,
+    "adp_ffc": 11.0,
+    "bye": 13,
+    "adp_sleeper_2qb": 30.3,
+    "adp_live": 10.6,
+    "adp_stdev": 2.6,
+    "injury_status": null,
+    "pos_rank": 6,
+    "vorp": 98.6,
+    "value_rank": 9,
+    "ecr": 37,
+    "tier": 3,
+    "blend_rank": 23.0
+   }
+  }
  }
 ]
