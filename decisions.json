@@ -149,5 +149,37 @@
    "queue_size": 76,
    "keeper_deadline": "Thursday 2026-08-27"
   }
+ },
+ {
+  "id": 7,
+  "ts": "2026-08-30T22:17:50+00:00",
+  "kind": "draft-pick",
+  "title": "Round 1, pick 6",
+  "decision": "Drafted Jonathan Taylor, RB, IND.",
+  "rationale": "Fills a starting RB slot, projected 264 points, 24 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 6.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "6813",
+    "name": "Jonathan Taylor",
+    "pos": "RB",
+    "team": "IND",
+    "proj_pts": 264.3,
+    "adp_ffc": 5.7,
+    "bye": 13,
+    "adp_sleeper_2qb": 7.8,
+    "adp_live": 5.5,
+    "adp_stdev": 1.4,
+    "injury_status": null,
+    "pos_rank": 3,
+    "vorp": 115.2,
+    "value_rank": 4,
+    "ecr": 18,
+    "tier": 2,
+    "blend_rank": 11.0,
+    "expert_pts": 259.3,
+    "blend_pts": 261.8
+   }
+  }
  }
 ]
