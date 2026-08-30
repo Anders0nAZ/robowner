@@ -501,5 +501,37 @@
     "blend_pts": 54.0
    }
   }
+ },
+ {
+  "id": 18,
+  "ts": "2026-08-30T23:28:50+00:00",
+  "kind": "draft-pick",
+  "title": "Round 14, pick 163",
+  "decision": "Drafted Brenton Strange, TE, JAX.",
+  "rationale": "Roster requirement: we still need DEF, K, TE, WR and have only 4 picks left, so this slot has to be filled now rather than taken on merit.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "9480",
+    "name": "Brenton Strange",
+    "pos": "TE",
+    "team": "JAX",
+    "proj_pts": 129.5,
+    "adp_ffc": 138.1,
+    "bye": 7,
+    "adp_sleeper_2qb": 142.2,
+    "adp_live": null,
+    "adp_stdev": null,
+    "injury_status": null,
+    "pos_rank": 13,
+    "vorp": 0.0,
+    "value_rank": 121,
+    "ecr": 160,
+    "tier": 8,
+    "blend_rank": 140.5,
+    "expert_pts": 114.7,
+    "blend_pts": 122.1
+   }
+  }
  }
 ]
