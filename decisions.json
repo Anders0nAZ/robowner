@@ -405,5 +405,37 @@
     "blend_pts": 44.0
    }
   }
+ },
+ {
+  "id": 15,
+  "ts": "2026-08-30T23:11:27+00:00",
+  "kind": "draft-pick",
+  "title": "Round 11, pick 126",
+  "decision": "Drafted MarShawn Lloyd, RB, GB.",
+  "rationale": "Bench: a lottery ticket behind Josh Jacobs -- a 55% chance that job opens, and the market has been adding him hard, worth about 89 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket bench slot; roughly a 39% chance he is gone by our next pick. The market usually takes him around pick 146.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "11581",
+    "name": "MarShawn Lloyd",
+    "pos": "RB",
+    "team": "GB",
+    "proj_pts": 48.3,
+    "adp_ffc": 167.9,
+    "bye": 11,
+    "adp_sleeper_2qb": 177.5,
+    "adp_live": 146.4,
+    "adp_stdev": 25.9,
+    "injury_status": null,
+    "pos_rank": 69,
+    "vorp": -100.8,
+    "value_rank": 334,
+    "ecr": 102,
+    "tier": 6,
+    "blend_rank": 218.0,
+    "expert_pts": 145.0,
+    "blend_pts": 96.7
+   }
+  }
  }
 ]
