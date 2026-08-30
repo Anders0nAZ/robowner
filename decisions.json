@@ -277,5 +277,37 @@
     "blend_pts": 189.0
    }
   }
+ },
+ {
+  "id": 11,
+  "ts": "2026-08-30T22:46:28+00:00",
+  "kind": "draft-pick",
+  "title": "Round 7, pick 78",
+  "decision": "Drafted Terry McLaurin, WR, WAS.",
+  "rationale": "Fills our flex slot, taking the best of the remaining running backs, receivers and tight ends, projected 180 points, 6 clear of the next man up for it. The market usually takes him around pick 64.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "5927",
+    "name": "Terry McLaurin",
+    "pos": "WR",
+    "team": "WAS",
+    "proj_pts": 180.3,
+    "adp_ffc": 63.8,
+    "bye": 7,
+    "adp_sleeper_2qb": 68.0,
+    "adp_live": 64.2,
+    "adp_stdev": 6.1,
+    "injury_status": null,
+    "pos_rank": 26,
+    "vorp": 24.0,
+    "value_rank": 80,
+    "ecr": 64,
+    "tier": 5,
+    "blend_rank": 72.0,
+    "expert_pts": 184.5,
+    "blend_pts": 182.4
+   }
+  }
  }
 ]
