@@ -437,5 +437,37 @@
     "blend_pts": 96.7
    }
   }
+ },
+ {
+  "id": 16,
+  "ts": "2026-08-30T23:16:53+00:00",
+  "kind": "draft-pick",
+  "title": "Round 12, pick 139",
+  "decision": "Drafted Isaiah Likely, TE, NYG.",
+  "rationale": "Fills a starting TE slot, projected 126 points. The market usually takes him around pick 140.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "8131",
+    "name": "Isaiah Likely",
+    "pos": "TE",
+    "team": "NYG",
+    "proj_pts": 126.3,
+    "adp_ffc": 140.9,
+    "bye": 8,
+    "adp_sleeper_2qb": 113.6,
+    "adp_live": 139.7,
+    "adp_stdev": 16.8,
+    "injury_status": null,
+    "pos_rank": 14,
+    "vorp": -3.2,
+    "value_rank": 132,
+    "ecr": 130,
+    "tier": 7,
+    "blend_rank": 131.0,
+    "expert_pts": 129.5,
+    "blend_pts": 127.9
+   }
+  }
  }
 ]
