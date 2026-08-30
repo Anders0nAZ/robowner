@@ -597,5 +597,37 @@
     "blend_pts": 152.0
    }
   }
+ },
+ {
+  "id": 21,
+  "ts": "2026-08-30T23:41:40+00:00",
+  "kind": "draft-pick",
+  "title": "Round 17, pick 198",
+  "decision": "Drafted Will Reichard, K, MIN.",
+  "rationale": "Roster requirement: we still need K and have only 1 pick left, so this slot has to be filled now rather than taken on merit.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "11792",
+    "name": "Will Reichard",
+    "pos": "K",
+    "team": "MIN",
+    "proj_pts": 109.0,
+    "adp_ffc": 155.1,
+    "bye": 6,
+    "adp_sleeper_2qb": 238.2,
+    "adp_live": 155.4,
+    "adp_stdev": 13.4,
+    "injury_status": null,
+    "pos_rank": 5,
+    "vorp": 4.0,
+    "value_rank": 108,
+    "ecr": null,
+    "tier": null,
+    "blend_rank": 133,
+    "expert_pts": 109.0,
+    "blend_pts": 109.0
+   }
+  }
  }
 ]
