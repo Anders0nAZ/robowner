@@ -373,5 +373,37 @@
     "blend_pts": 146.9
    }
   }
+ },
+ {
+  "id": 14,
+  "ts": "2026-08-30T23:07:30+00:00",
+  "kind": "draft-pick",
+  "title": "Round 10, pick 115",
+  "decision": "Drafted Kaelon Black, RB, SF.",
+  "rationale": "Bench: a lottery ticket behind Christian McCaffrey -- a 58% chance that job opens, and the market has been adding him hard, worth about 143 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket and rookie RB bench slots; roughly a 28% chance he is gone by our next pick. The market usually takes him around pick 139.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "13414",
+    "name": "Kaelon Black",
+    "pos": "RB",
+    "team": "SF",
+    "proj_pts": 39.3,
+    "adp_ffc": null,
+    "bye": null,
+    "adp_sleeper_2qb": 203.2,
+    "adp_live": 139.3,
+    "adp_stdev": 22.8,
+    "injury_status": null,
+    "pos_rank": 75,
+    "vorp": -109.8,
+    "value_rank": 381,
+    "ecr": 209,
+    "tier": 9,
+    "blend_rank": 295.0,
+    "expert_pts": 48.6,
+    "blend_pts": 44.0
+   }
+  }
  }
 ]
