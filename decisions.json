@@ -469,5 +469,37 @@
     "blend_pts": 127.9
    }
   }
+ },
+ {
+  "id": 17,
+  "ts": "2026-08-30T23:19:46+00:00",
+  "kind": "draft-pick",
+  "title": "Round 13, pick 150",
+  "decision": "Drafted Carson Beck, QB, ARI.",
+  "rationale": "Bench: a lottery ticket behind Jacoby Brissett -- a 15% chance that job opens, though the role itself is not worth much; recent reporting on him is a concern; also fills our third-quarterback bench slot; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 143.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "13272",
+    "name": "Carson Beck",
+    "pos": "QB",
+    "team": "ARI",
+    "proj_pts": 59.7,
+    "adp_ffc": 142.5,
+    "bye": 14,
+    "adp_sleeper_2qb": 225.3,
+    "adp_live": 142.7,
+    "adp_stdev": 7.2,
+    "injury_status": "Questionable",
+    "pos_rank": 35,
+    "vorp": -191.3,
+    "value_rank": 589,
+    "ecr": 319,
+    "tier": 11,
+    "blend_rank": 454.0,
+    "expert_pts": 48.3,
+    "blend_pts": 54.0
+   }
+  }
  }
 ]
