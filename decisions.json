@@ -245,5 +245,37 @@
     "blend_pts": 317.8
    }
   }
+ },
+ {
+  "id": 10,
+  "ts": "2026-08-30T22:42:33+00:00",
+  "kind": "draft-pick",
+  "title": "Round 6, pick 67",
+  "decision": "Drafted Emeka Egbuka, WR, TB.",
+  "rationale": "Fills a starting WR slot, projected 191 points. The market usually takes him around pick 51.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "12514",
+    "name": "Emeka Egbuka",
+    "pos": "WR",
+    "team": "TB",
+    "proj_pts": 191.0,
+    "adp_ffc": 50.7,
+    "bye": 10,
+    "adp_sleeper_2qb": 57.0,
+    "adp_live": 50.7,
+    "adp_stdev": 5.5,
+    "injury_status": "Questionable",
+    "pos_rank": 16,
+    "vorp": 34.7,
+    "value_rank": 62,
+    "ecr": 61,
+    "tier": 5,
+    "blend_rank": 61.5,
+    "expert_pts": 187.0,
+    "blend_pts": 189.0
+   }
+  }
  }
 ]
