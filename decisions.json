@@ -533,5 +533,37 @@
     "blend_pts": 122.1
    }
   }
+ },
+ {
+  "id": 19,
+  "ts": "2026-08-30T23:33:48+00:00",
+  "kind": "draft-pick",
+  "title": "Round 15, pick 174",
+  "decision": "Drafted Denzel Boston, WR, CLE.",
+  "rationale": "Roster requirement: we still need DEF, K, WR and have only 3 picks left, so this slot has to be filled now rather than taken on merit.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "13346",
+    "name": "Denzel Boston",
+    "pos": "WR",
+    "team": "CLE",
+    "proj_pts": 108.2,
+    "adp_ffc": 158.0,
+    "bye": 11,
+    "adp_sleeper_2qb": 157.6,
+    "adp_live": 158.0,
+    "adp_stdev": 13.6,
+    "injury_status": null,
+    "pos_rank": 57,
+    "vorp": -48.1,
+    "value_rank": 223,
+    "ecr": 165,
+    "tier": 8,
+    "blend_rank": 194.0,
+    "expert_pts": 105.8,
+    "blend_pts": 107.0
+   }
+  }
  }
 ]
