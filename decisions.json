@@ -341,5 +341,37 @@
     "blend_pts": 152.8
    }
   }
+ },
+ {
+  "id": 13,
+  "ts": "2026-08-30T22:58:40+00:00",
+  "kind": "draft-pick",
+  "title": "Round 9, pick 102",
+  "decision": "Drafted J.K. Dobbins, RB, DEN.",
+  "rationale": "Bench: RB depth -- he starts elsewhere, and is worth about 97 points more than the wire in the weeks one of ours is out; and he would almost certainly be gone by our next pick. The market usually takes him around pick 95.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "6806",
+    "name": "J.K. Dobbins",
+    "pos": "RB",
+    "team": "DEN",
+    "proj_pts": 149.1,
+    "adp_ffc": 96.0,
+    "bye": 10,
+    "adp_sleeper_2qb": 108.2,
+    "adp_live": 94.8,
+    "adp_stdev": 10.1,
+    "injury_status": null,
+    "pos_rank": 30,
+    "vorp": 0.0,
+    "value_rank": 119,
+    "ecr": 105,
+    "tier": 6,
+    "blend_rank": 112.0,
+    "expert_pts": 144.8,
+    "blend_pts": 146.9
+   }
+  }
  }
 ]
