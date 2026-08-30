@@ -309,5 +309,37 @@
     "blend_pts": 182.4
    }
   }
+ },
+ {
+  "id": 12,
+  "ts": "2026-08-30T22:54:16+00:00",
+  "kind": "draft-pick",
+  "title": "Round 8, pick 91",
+  "decision": "Drafted Tony Pollard, RB, TEN.",
+  "rationale": "Bench: RB depth -- he starts elsewhere, and is worth about 98 points more than the wire in the weeks one of ours is out; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 83.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "5967",
+    "name": "Tony Pollard",
+    "pos": "RB",
+    "team": "TEN",
+    "proj_pts": 149.8,
+    "adp_ffc": 82.5,
+    "bye": 9,
+    "adp_sleeper_2qb": 97.3,
+    "adp_live": 82.9,
+    "adp_stdev": 6.6,
+    "injury_status": null,
+    "pos_rank": 29,
+    "vorp": 0.7,
+    "value_rank": 117,
+    "ecr": 91,
+    "tier": 6,
+    "blend_rank": 104.0,
+    "expert_pts": 155.8,
+    "blend_pts": 152.8
+   }
+  }
  }
 ]
