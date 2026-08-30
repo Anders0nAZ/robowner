@@ -181,5 +181,37 @@
     "blend_pts": 261.8
    }
   }
+ },
+ {
+  "id": 8,
+  "ts": "2026-08-30T22:31:51+00:00",
+  "kind": "draft-pick",
+  "title": "Round 4, pick 43",
+  "decision": "Drafted Brock Purdy, QB, SF.",
+  "rationale": "Fills a starting QB slot, projected 350 points, 18 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 20.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "8183",
+    "name": "Brock Purdy",
+    "pos": "QB",
+    "team": "SF",
+    "proj_pts": 349.6,
+    "adp_ffc": 18.5,
+    "bye": 8,
+    "adp_sleeper_2qb": 54.7,
+    "adp_live": 19.7,
+    "adp_stdev": 3.3,
+    "injury_status": null,
+    "pos_rank": 7,
+    "vorp": 98.6,
+    "value_rank": 15,
+    "ecr": 21,
+    "tier": 3,
+    "blend_rank": 18.0,
+    "expert_pts": 338.1,
+    "blend_pts": 343.9
+   }
+  }
  }
 ]
