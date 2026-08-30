@@ -565,5 +565,37 @@
     "blend_pts": 107.0
    }
   }
+ },
+ {
+  "id": 20,
+  "ts": "2026-08-30T23:39:17+00:00",
+  "kind": "draft-pick",
+  "title": "Round 16, pick 187",
+  "decision": "Drafted New England Patriots, DEF, NE.",
+  "rationale": "Roster requirement: we still need DEF, K and have only 2 picks left, so this slot has to be filled now rather than taken on merit.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "NE",
+    "name": "New England Patriots",
+    "pos": "DEF",
+    "team": "NE",
+    "proj_pts": 152.0,
+    "adp_ffc": 138.4,
+    "bye": 11,
+    "adp_sleeper_2qb": 170.7,
+    "adp_live": 138.5,
+    "adp_stdev": 9.0,
+    "injury_status": null,
+    "pos_rank": 6,
+    "vorp": 12.0,
+    "value_rank": 90,
+    "ecr": null,
+    "tier": null,
+    "blend_rank": 115,
+    "expert_pts": 152.0,
+    "blend_pts": 152.0
+   }
+  }
  }
 ]
