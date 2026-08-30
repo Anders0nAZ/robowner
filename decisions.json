@@ -213,5 +213,37 @@
     "blend_pts": 343.9
    }
   }
+ },
+ {
+  "id": 9,
+  "ts": "2026-08-30T22:35:31+00:00",
+  "kind": "draft-pick",
+  "title": "Round 5, pick 54",
+  "decision": "Drafted Jordan Love, QB, GB.",
+  "rationale": "Fills a starting QB slot, projected 328 points, 19 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 60.",
+  "status": "final",
+  "data": {
+   "board_row": {
+    "player_id": "6804",
+    "name": "Jordan Love",
+    "pos": "QB",
+    "team": "GB",
+    "proj_pts": 328.4,
+    "adp_ffc": 57.9,
+    "bye": 11,
+    "adp_sleeper_2qb": 70.1,
+    "adp_live": 60.1,
+    "adp_stdev": 11.0,
+    "injury_status": null,
+    "pos_rank": 14,
+    "vorp": 77.4,
+    "value_rank": 27,
+    "ecr": 45,
+    "tier": 4,
+    "blend_rank": 36.0,
+    "expert_pts": 307.2,
+    "blend_pts": 317.8
+   }
+  }
  }
 ]
