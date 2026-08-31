@@ -629,5 +629,42 @@
     "blend_pts": 109.0
    }
   }
+ },
+ {
+  "id": 22,
+  "ts": "2026-08-31T03:49:00+00:00",
+  "kind": "lineup",
+  "title": "Week 1 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots",
+  "rationale": "Projected 131.6 points under league scoring, +1.0 versus the lineup as it stood. Bye-week and injured-out players are benched.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "5927",
+    "8131",
+    "11581",
+    "6804",
+    "11792",
+    "NE"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "12514",
+    "9480",
+    "5927",
+    "6804",
+    "11792",
+    "NE"
+   ],
+   "projected": 131.6,
+   "week": 1
+  }
  }
 ]
