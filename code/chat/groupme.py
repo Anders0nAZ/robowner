@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from robo import DATA, ROOT, AVATAR_URL  # noqa: F401  (re-exported)
+from robo import DATA, ROOT
 
 API = "https://api.groupme.com/v3"
 STATE = DATA / "groupme_last_seen.json"
@@ -197,17 +197,19 @@ def commit_seen() -> None:
         STATE.write_text(json.dumps({"last_id": state["pending_id"]}))
 
 
-def set_avatar() -> None:
-    """Update the bot's avatar to the hosted art (re-uploads via GroupMe CDN)."""
-    img = requests.get(AVATAR_URL, timeout=30)
-    img.raise_for_status()
-    up = requests.post("https://image.groupme.com/pictures",
-                       data=img.content,
-                       headers={"Content-Type": "image/png",
-                                "X-Access-Token": _env("GROUPME_TOKEN")},
-                       timeout=60)
-    up.raise_for_status()
-    cdn_url = up.json()["payload"]["url"]
+AVATAR_ART = DATA / "media" / "jersey.png"
+
+
+def set_avatar(source=None) -> None:
+    """Re-upload the bot's avatar art to GroupMe's CDN and print the new url.
+
+    Reads the art off disk. It used to fetch a copy published to the site over
+    HTTP, which meant a 1.9MB duplicate of a file already sitting in data/media
+    lived in the public repo and made up most of its bytes -- for a command run
+    roughly once. GroupMe keeps its own copy on i.groupme.com once set, so
+    nothing external was ever pulling from that URL.
+    """
+    cdn_url = upload_image(str(source or AVATAR_ART))
     print("GroupMe CDN url:", cdn_url)
     print("NOTE: bots API has no avatar-update endpoint; paste this URL into the "
           "bot's Avatar field at dev.groupme.com/bots (or it can be set at creation).")

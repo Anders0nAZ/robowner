@@ -27,7 +27,6 @@ DRAFT_ID_2024 = "1124837824776925185"
 SITE_OWNER = "Anders0nAZ"
 SITE_REPO = "robowner"
 SITE_URL = f"https://{SITE_OWNER.lower()}.github.io/{SITE_REPO}/"
-AVATAR_URL = f"https://raw.githubusercontent.com/{SITE_OWNER}/{SITE_REPO}/main/avatar.png"
 
 # The franchise name as it stands on Sleeper. Inherited as "Morris' Mafia"
 # and renamed; the public decision log said the old one for a day after the
