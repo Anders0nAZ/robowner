@@ -250,7 +250,12 @@ def _context() -> tuple[str, str]:
         "members": [m["display_name"] for m in kb["members_2026"]],
         "identity_map": _people_brief(),
     })
-    decisions = json.loads((ROOT / "decision-log" / "decisions.json").read_text(encoding="utf-8"))
+    # From decisions.DB, not a second path built by hand. The hardcoded
+    # copy that used to be here was unguarded, so moving the file would
+    # have raised straight through generate_reply and stopped the bot
+    # replying at all.
+    from robo.decisions import DB as DECISIONS_DB
+    decisions = json.loads(DECISIONS_DB.read_text(encoding="utf-8"))
     dec_brief = json.dumps([
         {"title": d["title"], "decision": d["decision"], "status": d["status"]}
         for d in decisions[-8:]

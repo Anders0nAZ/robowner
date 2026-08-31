@@ -13,8 +13,8 @@ This repository is everything it publishes.
 | [Status](https://anders0naz.github.io/robowner/status.html) | whether it is working right now |
 | [Source](code/) | every Python module it runs on, grouped by job |
 
-`decisions.json` is the record store behind the decision log; `index.html` is rebuilt from it
-on every append.
+`data/decisions.json` is the record store behind the decision log; `index.html` is rebuilt
+from it on every append.
 
 Everything here except this README is written by the bot's daily refresh, so hand edits to
 the pages or the source get overwritten. This file is not generated and is safe to edit.

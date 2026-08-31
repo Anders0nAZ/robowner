@@ -3,6 +3,11 @@
 Records live in decision-log/decisions.json (append-only list); the static
 site decision-log/index.html is regenerated on every append and is what the
 league sees (published via GitHub Pages, same pattern as the lottery site).
+
+The store moved from the repo root to data/ on 31 Aug 2026. Read it through
+decisions.DB rather than rebuilding the path: chat_responder had its own
+hardcoded copy, unguarded, so the move would have taken every reply down with a
+FileNotFoundError.
 """
 
 import html
@@ -13,7 +18,9 @@ from datetime import datetime, timezone
 from robo import ROOT, TEAM_NAME
 
 LOG_DIR = ROOT / "decision-log"
-DB = LOG_DIR / "decisions.json"
+# The record store behind index.html. Under data/ rather than beside the
+# pages so the published repo's root is the four things a person opens.
+DB = LOG_DIR / "data" / "decisions.json"
 
 KINDS = ("keeper", "draft-slot", "draft-pick", "lineup", "waiver", "free-agent",
          "ir", "trade", "meta")
@@ -40,7 +47,7 @@ def record(kind: str, title: str, decision: str, rationale: str,
         "data": data or {},
     }
     entries.append(entry)
-    LOG_DIR.mkdir(exist_ok=True)
+    DB.parent.mkdir(parents=True, exist_ok=True)
     DB.write_text(json.dumps(entries, indent=1), encoding="utf-8")
     render()
     try:
