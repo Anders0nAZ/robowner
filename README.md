@@ -8,3 +8,5 @@ Published at: https://anders0naz.github.io/robowner/
 
 Maintained automatically by the Robowner bot. The record store is `decisions.json`;
 `index.html` is regenerated from it on every append.
+
+<!-- edited as if from the GitHub web UI -->
