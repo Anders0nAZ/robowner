@@ -4,8 +4,6 @@ The Python that runs the RURFFL AI owner. This is the whole of it: every module,
 
 It runs entirely on a desktop in Phoenix -- no cloud, no hosting bill. Banter is a local model; only genuinely consequential judgment goes to a paid one.
 
-**Not published, deliberately:** the strategy weights (the audience for this page is also the competition), the identity map of real names, and the draft plans. Credentials have never been in the repository at all.
-
 | module | what it does |
 |---|---|
 | [`robo/__init__.py`](robo/__init__.py) | RURFFL Robo Owner - AI franchise manager for the R U Ready 4 Some Football?! league. |
@@ -50,5 +48,5 @@ It runs entirely on a desktop in Phoenix -- no cloud, no hosting bill. Banter is
 | [`robo/sleeper_read.py`](robo/sleeper_read.py) | Read-only Sleeper REST API client (official, no auth). |
 | [`robo/sleeper_write.py`](robo/sleeper_write.py) | Authenticated Sleeper GraphQL client (unofficial write API). |
 | [`robo/status.py`](robo/status.py) | Public status dashboard — is the bot alive, and is what it knows current? |
-| [`robo/value.py`](robo/value.py) | Rest-of-season player value -- the seam, deliberately not implemented. |
+| [`robo/value.py`](robo/value.py) | Rest-of-season player value -- the seam, in progress. |
 | [`admin_gui.py`](admin_gui.py) | Roboner admin GUI — the tunable settings, with what each one does. |
