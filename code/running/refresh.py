@@ -191,7 +191,11 @@ def publish_devlog():
     from robo import devlog, decisions
     devlog.render()
     decisions.render()
-    decisions.publish("daily refresh: regenerate site")
+    # Report what actually happened. This used to return "...and pushed"
+    # unconditionally while discarding publish()'s result, so a rejected push
+    # left the public site frozen and the refresh log green.
+    if not decisions.publish("daily refresh: regenerate site"):
+        raise RuntimeError("site regenerated locally but the push did not land")
     return "changelog + index regenerated and pushed"
 
 

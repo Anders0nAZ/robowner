@@ -59,10 +59,35 @@ def publish(message: str) -> bool:
     try:
         subprocess.run(["git", "add", "-A"], cwd=LOG_DIR, check=True, capture_output=True)
         diff = subprocess.run(["git", "diff", "--cached", "--quiet"], cwd=LOG_DIR)
-        if diff.returncode == 0:
-            return True  # nothing new
-        subprocess.run(["git", "commit", "-q", "-m", message], cwd=LOG_DIR,
-                       check=True, capture_output=True)
+        if diff.returncode != 0:
+            subprocess.run(["git", "commit", "-q", "-m", message], cwd=LOG_DIR,
+                           check=True, capture_output=True)
+
+        # Take anything that landed on the remote, EVEN WHEN WE HAVE NOTHING TO
+        # SEND. Editing a file through GitHub's web UI puts a commit there that
+        # we do not have; without this the local copy drifts quietly behind,
+        # every later automated push is rejected with "fetch first", and the
+        # site stops updating while the refresh log still reports success. That
+        # happened on 31 Aug 2026 after a README edit. Syncing before the
+        # nothing-to-do exit also means the next regeneration starts from what
+        # is actually published rather than from a stale base.
+        subprocess.run(["git", "fetch", "-q", "origin"], cwd=LOG_DIR,
+                       capture_output=True, timeout=60)
+        rb = subprocess.run(["git", "rebase", "-q", "origin/main"], cwd=LOG_DIR,
+                            capture_output=True, timeout=60)
+        if rb.returncode != 0:
+            # A real conflict: someone edited by hand the same file we generate.
+            # Abort rather than guess whose version wins -- a half-finished
+            # rebase would wedge every future publish, which is far worse than
+            # one skipped push.
+            subprocess.run(["git", "rebase", "--abort"], cwd=LOG_DIR,
+                           capture_output=True)
+            print("decision log: remote and local both changed the same file; "
+                  "rebase aborted, nothing pushed. Resolve by hand in "
+                  "decision-log/ -- generated files should take the LOCAL copy, "
+                  "README.md the remote one.")
+            return False
+
         push = subprocess.run(["git", "push"], cwd=LOG_DIR, capture_output=True, timeout=60)
         if push.returncode != 0:
             print(f"decision log push failed (will retry next publish): "
