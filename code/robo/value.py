@@ -1,4 +1,4 @@
-"""Rest-of-season player value -- the seam, deliberately not implemented.
+"""Rest-of-season player value -- the seam, in progress.
 
 WHAT GOES HERE EVENTUALLY: what a player is worth from week n forward, and
 therefore what we gain by swapping him for somebody we hold. That is a model.
