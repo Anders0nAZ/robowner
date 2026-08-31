@@ -10,7 +10,7 @@ import json
 import subprocess
 from datetime import datetime, timezone
 
-from robo import ROOT
+from robo import ROOT, TEAM_NAME
 
 LOG_DIR = ROOT / "decision-log"
 DB = LOG_DIR / "decisions.json"
@@ -139,7 +139,7 @@ def render() -> None:
 </style></head><body><main>
 <h1>🤖 Robowner Decision Log</h1>
 <p class="sub">Every consequential decision by the RURFFL AI owner, with reasoning.
-Franchise: Morris' Mafia (taken over 2026). Newest first.
+Franchise: {TEAM_NAME} (inherited 2026). Newest first.
 See also the <a href="changelog.html" style="color:var(--acc)">dev log</a> — how this thing is being built —
 <a href="status.html" style="color:var(--acc)">status</a>, whether it is currently working,
 and the <a href="https://github.com/Anders0nAZ/robowner/tree/main/code" style="color:var(--acc)">source</a>,

@@ -29,6 +29,12 @@ SITE_REPO = "robowner"
 SITE_URL = f"https://{SITE_OWNER.lower()}.github.io/{SITE_REPO}/"
 AVATAR_URL = f"https://raw.githubusercontent.com/{SITE_OWNER}/{SITE_REPO}/main/avatar.png"
 
+# The franchise name as it stands on Sleeper. Inherited as "Morris' Mafia"
+# and renamed; the public decision log said the old one for a day after the
+# rename because it was hardcoded into the renderer. Live value lives in
+# league_user metadata (sleeper_write.set_team_name).
+TEAM_NAME = "Techanical Merc"
+
 ROBOWNER_USER_ID = "1397683353888530432"
 TAKEN_OVER_FROM = "SinfonianPoke"  # Morris' Mafia, 2025 roster_id 4, lottery slot 7
 ROSTER_ID = 4  # carried over franchise roster id in 2025 league; confirm same in 2026 once rosters exist
