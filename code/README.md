@@ -1,54 +1,95 @@
 # Roboner source
 
-The Python that runs the RURFFL AI owner. This is the whole of it: every module, published automatically alongside the [decision log](../index.html) and the [dev log](../changelog.html).
+The Python that runs the RURFFL AI owner. This is the whole of it, published automatically alongside the [decision log](../index.html) and the [dev log](../changelog.html).
 
 It runs entirely on a desktop in Phoenix -- no cloud, no hosting bill. Banter is a local model; only genuinely consequential judgment goes to a paid one.
 
+> These folders group the modules by the job they do, for reading. The package itself is flat: every file below lives at `robo/<name>.py` and the imports inside them say so.
+
+## Reading the world
+
+Everything the bot knows comes in through here. All free, all public except Sleeper's write API, which uses its own account.
+
 | module | what it does |
 |---|---|
-| [`robo/__init__.py`](robo/__init__.py) | RURFFL Robo Owner - AI franchise manager for the R U Ready 4 Some Football?! league. |
-| [`robo/adp.py`](robo/adp.py) | Parse the locked FFC 2QB ADP PDF snapshot into data/adp_2026.csv. |
-| [`robo/adp_live.py`](robo/adp_live.py) | Live FFC 2QB ADP — the market model for draft-day survival odds. |
-| [`robo/alerts.py`](robo/alerts.py) | Shout across every channel at once, for the things a human must not miss. |
-| [`robo/archive_media.py`](robo/archive_media.py) | Roboner's reaction-image pool, sourced from the personal GroupMe Archive. |
-| [`robo/bench.py`](robo/bench.py) | What a bench pick is actually worth: insurance and lottery tickets. |
-| [`robo/buzz.py`](robo/buzz.py) | What the market is doing RIGHT NOW, because ADP and depth charts lag. |
-| [`robo/chat_memory.py`](robo/chat_memory.py) | League chat memory — the RUReady GroupMe plus Sleeper league chat, searchable. |
-| [`robo/chat_responder.py`](robo/chat_responder.py) | Roboner chat responder: polls the league GroupMe, replies when addressed. |
-| [`robo/curate_media.py`](robo/curate_media.py) | Human curation pass over the reaction-image pool. |
-| [`robo/decisions.py`](robo/decisions.py) | Public decision log: every consequential Robowner action gets a record. |
-| [`robo/devlog.py`](robo/devlog.py) | Public dev log — what the bot can do, published with the decision log. |
-| [`robo/draft_agent.py`](robo/draft_agent.py) | Live draft agent: poll the Sleeper draft, pick on our turn. |
-| [`robo/draft_chat.py`](robo/draft_chat.py) | The draft room as a chat channel, so the bot can talk while it drafts. |
-| [`robo/draft_sim.py`](robo/draft_sim.py) | Earliest-vs-latest draft slot comparison (constitution §4.3.4.1). |
-| [`robo/export_chat.py`](robo/export_chat.py) | Export league chat transcripts for human reading. |
-| [`robo/fantasypros.py`](robo/fantasypros.py) | FantasyPros half-PPR superflex expert consensus rankings (ECR). |
-| [`robo/groupme.py`](robo/groupme.py) | GroupMe integration for the Roboner bot. |
-| [`robo/history.py`](robo/history.py) | Harvest the league's full Sleeper history into data/history.db. |
-| [`robo/ir.py`](robo/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |
-| [`robo/kb.py`](robo/kb.py) | Build the league knowledge base: data/league_kb.json + LEAGUE.md. |
-| [`robo/keeper.py`](robo/keeper.py) | Keeper eligibility + draft-cost formula (constitution §5). |
-| [`robo/league_keepers.py`](robo/league_keepers.py) | Model the whole league's keeper landscape, so draft sims know who's really available. |
-| [`robo/lineup.py`](robo/lineup.py) | Weekly lineup optimizer. |
-| [`robo/lore.py`](robo/lore.py) | League lore — derived narrative facts from data/history.db. |
-| [`robo/media.py`](robo/media.py) | Roboner's reaction-image library. |
-| [`robo/mock_draft.py`](robo/mock_draft.py) | Mock the 2026 draft with the REAL pick policy, over the real keeper board. |
-| [`robo/moves.py`](robo/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
-| [`robo/publish_code.py`](robo/publish_code.py) | Publish the bot's Python source to the public site, on an allowlist. |
-| [`robo/pull_chat_history.py`](robo/pull_chat_history.py) | One-time pull of prior-season Sleeper league chat. |
-| [`robo/rankings.py`](robo/rankings.py) | Build the 2026 draft value board: data/board_2026.csv. |
-| [`robo/refresh.py`](robo/refresh.py) | Daily data refresh — keeps the AI owner's world current without a human. |
-| [`robo/scout.py`](robo/scout.py) | Pre-draft gut check: read what the writers say, decide who to trust. |
-| [`robo/season.py`](robo/season.py) | Live in-season league state -- what is true right now, not what the board froze. |
-| [`robo/selfdoc.py`](robo/selfdoc.py) | Self-knowledge: let Roboner explain its own code and architecture. |
-| [`robo/settings.py`](robo/settings.py) | Tunable settings: one registry, a JSON override file, and a revert checkpoint. |
-| [`robo/skills.py`](robo/skills.py) | Roboner's live-data skills — the tools the chat bot can call to look things up. |
-| [`robo/sleeper_chat.py`](robo/sleeper_chat.py) | Sleeper league chat — read and post as Robowner. |
-| [`robo/sleeper_read.py`](robo/sleeper_read.py) | Read-only Sleeper REST API client (official, no auth). |
-| [`robo/sleeper_write.py`](robo/sleeper_write.py) | Authenticated Sleeper GraphQL client (unofficial write API). |
-| [`robo/status.py`](robo/status.py) | Public status dashboard — is the bot alive, and is what it knows current? |
-| [`robo/value.py`](robo/value.py) | Rest-of-season player value -- the seam, in progress. |
-| [`admin_gui.py`](admin_gui.py) | Roboner admin GUI — the tunable settings, with what each one does. |
+| [`sleeper_read.py`](data/sleeper_read.py) | Read-only Sleeper REST API client (official, no auth). |
+| [`sleeper_write.py`](data/sleeper_write.py) | Authenticated Sleeper GraphQL client (unofficial write API). |
+| [`adp.py`](data/adp.py) | Parse the locked FFC 2QB ADP PDF snapshot into data/adp_2026.csv. |
+| [`adp_live.py`](data/adp_live.py) | Live FFC 2QB ADP — the market model for draft-day survival odds. |
+| [`fantasypros.py`](data/fantasypros.py) | FantasyPros half-PPR superflex expert consensus rankings (ECR). |
+| [`buzz.py`](data/buzz.py) | What the market is doing RIGHT NOW, because ADP and depth charts lag. |
+| [`scout.py`](data/scout.py) | Pre-draft gut check: read what the writers say, decide who to trust. |
+| [`history.py`](data/history.py) | Harvest the league's full Sleeper history into data/history.db. |
+
+## The draft
+
+Valuing players, pricing keepers, and the agent that actually sat on the clock and submitted picks.
+
+| module | what it does |
+|---|---|
+| [`rankings.py`](draft/rankings.py) | Build the 2026 draft value board: data/board_2026.csv. |
+| [`keeper.py`](draft/keeper.py) | Keeper eligibility + draft-cost formula (constitution §5). |
+| [`league_keepers.py`](draft/league_keepers.py) | Model the whole league's keeper landscape, so draft sims know who's really available. |
+| [`bench.py`](draft/bench.py) | What a bench pick is actually worth: insurance and lottery tickets. |
+| [`draft_agent.py`](draft/draft_agent.py) | Live draft agent: poll the Sleeper draft, pick on our turn. |
+| [`draft_sim.py`](draft/draft_sim.py) | Earliest-vs-latest draft slot comparison (constitution §4.3.4.1). |
+| [`mock_draft.py`](draft/mock_draft.py) | Mock the 2026 draft with the REAL pick policy, over the real keeper board. |
+| [`draft_chat.py`](draft/draft_chat.py) | The draft room as a chat channel, so the bot can talk while it drafts. |
+
+## In season
+
+Weekly lineups, injured reserve, and the add/drop and waiver machinery.
+
+| module | what it does |
+|---|---|
+| [`season.py`](in-season/season.py) | Live in-season league state -- what is true right now, not what the board froze. |
+| [`lineup.py`](in-season/lineup.py) | Weekly lineup optimizer. |
+| [`ir.py`](in-season/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |
+| [`value.py`](in-season/value.py) | Rest-of-season player value -- the seam, in progress. |
+| [`moves.py`](in-season/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
+
+## Talking
+
+The bot's voice in the league chats, the tools it calls to look things up mid-conversation, and its memory of what has been said.
+
+| module | what it does |
+|---|---|
+| [`chat_responder.py`](chat/chat_responder.py) | Roboner chat responder: polls the league GroupMe, replies when addressed. |
+| [`skills.py`](chat/skills.py) | Roboner's live-data skills — the tools the chat bot can call to look things up. |
+| [`selfdoc.py`](chat/selfdoc.py) | Self-knowledge: let Roboner explain its own code and architecture. |
+| [`chat_memory.py`](chat/chat_memory.py) | League chat memory — the RUReady GroupMe plus Sleeper league chat, searchable. |
+| [`lore.py`](chat/lore.py) | League lore — derived narrative facts from data/history.db. |
+| [`kb.py`](chat/kb.py) | Build the league knowledge base: data/league_kb.json + LEAGUE.md. |
+| [`groupme.py`](chat/groupme.py) | GroupMe integration for the Roboner bot. |
+| [`sleeper_chat.py`](chat/sleeper_chat.py) | Sleeper league chat — read and post as Robowner. |
+| [`alerts.py`](chat/alerts.py) | Shout across every channel at once, for the things a human must not miss. |
+| [`media.py`](chat/media.py) | Roboner's reaction-image library. |
+| [`archive_media.py`](chat/archive_media.py) | Roboner's reaction-image pool, sourced from the personal GroupMe Archive. |
+| [`curate_media.py`](chat/curate_media.py) | Human curation pass over the reaction-image pool. |
+| [`export_chat.py`](chat/export_chat.py) | Export league chat transcripts for human reading. |
+| [`pull_chat_history.py`](chat/pull_chat_history.py) | One-time pull of prior-season Sleeper league chat. |
+
+## Showing its work
+
+The three public pages and this publisher. Every consequential action writes a record before anyone asks for one.
+
+| module | what it does |
+|---|---|
+| [`decisions.py`](published/decisions.py) | Public decision log: every consequential Robowner action gets a record. |
+| [`devlog.py`](published/devlog.py) | Public dev log — what the bot can do, published with the decision log. |
+| [`status.py`](published/status.py) | Public status dashboard — is the bot alive, and is what it knows current? |
+| [`publish_code.py`](published/publish_code.py) | Publish the bot's Python source to the public site, on an allowlist. |
+
+## Keeping it running
+
+The daily pipeline, the tunable settings behind it, and the local admin app that edits them.
+
+| module | what it does |
+|---|---|
+| [`__init__.py`](running/__init__.py) | RURFFL Robo Owner - AI franchise manager for the R U Ready 4 Some Football?! league. |
+| [`refresh.py`](running/refresh.py) | Daily data refresh — keeps the AI owner's world current without a human. |
+| [`settings.py`](running/settings.py) | Tunable settings: one registry, a JSON override file, and a revert checkpoint. |
+| [`admin_gui.py`](running/admin_gui.py) | Roboner admin GUI — the tunable settings, with what each one does. |
 
 <!-- Generated by robo/publish_code.py from each module's docstring and
      rewritten on every daily refresh. Editing this file on GitHub will
