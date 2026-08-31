@@ -20,8 +20,9 @@ PUBLIC MEANS PUBLIC. Two rules follow:
   * Machine load (VRAM, model residency, GPU placement) is Nate's business, not
     the league's. llm() is collected for the terminal report and never reaches
     the page beyond a bare reachable/not-reachable line.
-Also never published: reply text, real names, scout verdict reasons (only their
-magnitude is ever public), and anything from the draft board.
+The page carries operational state only -- is it up, is its data current, is it
+ready. Anything a collector returns that is not already public stays in the
+terminal report; when in doubt, it does not go on the page.
 
 python -m robo.status              # full report to the terminal (unredacted)
 python -m robo.status --render     # write the page

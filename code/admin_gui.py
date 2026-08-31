@@ -16,8 +16,9 @@ executing someone else's draft and the whole premise is gone. Where a signal is
 weak the honest answer is to lower the value and widen the uncertainty, not to
 open a channel for a person to decide instead.
 
-Nothing here is published. The decision log is the bot's decisions; these are the
-operator's tuning, and publishing them would hand eleven opponents our weights.
+Nothing here is published. The decision log records what the bot decided; this is
+how the operator tunes it, which is a different thing and not part of the public
+record.
 """
 
 import json

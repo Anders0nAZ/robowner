@@ -55,10 +55,9 @@ _settings.apply(__name__, globals())
 def _group_id() -> str:
     """The league's GroupMe group id, from .env like everywhere else.
 
-    It used to be inlined into the WHERE fragment below. Not a credential -- it
-    is useless without a token -- but it was the one place in the package that
-    hardcoded a value the rest of the code reads from .env, and it meant the
-    source could not be published without publishing the id with it.
+    It was inlined into the WHERE fragment below until 31 Aug 2026, the one
+    place in the package that hardcoded a value the rest of the code reads from
+    the environment.
     """
     import os
     gid = os.environ.get("GROUPME_GROUP_ID")

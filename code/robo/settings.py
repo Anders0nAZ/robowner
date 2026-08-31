@@ -29,9 +29,9 @@ and deleted on the same day (28 Aug 2026) because it made the bot a tool
 executing someone else's draft. The registry is a fixed list of named constants
 precisely so there is no free-text field a player name could be typed into.
 
-Settings are also never published. The decision log is the bot's decisions;
-these are the operator's tuning, and publishing them would hand eleven opponents
-our weights.
+Settings stay local. The decision log records what the bot decided; this file
+is how the operator tunes it, which is a different thing and not part of the
+public record.
 
 python -m robo.settings            # show every setting, default vs current
 python -m robo.settings --json     # the same, machine-readable
