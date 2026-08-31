@@ -326,12 +326,20 @@ def llm() -> dict:
 SOURCES = [
     ("players",     "Sleeper player dump",  26 * 3600, "RobonerRefresh"),
     ("projections", "Sleeper projections",  26 * 3600, "RobonerRefresh"),
-    ("adp-live",    "FFC live ADP",         26 * 3600, "RobonerRefresh"),
-    ("ecr",         "FantasyPros ECR",      26 * 3600, "RobonerRefresh"),
     ("buzz",        "Trending adds/drops",  26 * 3600, "RobonerRefresh"),
     ("board",       "Ranking board",        26 * 3600, "RobonerRefresh"),
     ("chat-memory", "League chat index",    26 * 3600, "RobonerRefresh"),
     ("media-pool",  "Reaction image pool",  26 * 3600, "RobonerRefresh"),
+    # ADP and ECR are deliberately absent, for the same reason and with the same
+    # restore condition as scout below.
+    #   adp-live is average DRAFT position. It has no in-season consumer at all
+    #     -- nothing in skills, lineup, moves, season, bench or ir reads it --
+    #     and the daily fetch that fed it has been dropped from the pipeline.
+    #   ecr is still fetched, because the board blends it into blend_pts and the
+    #     chat tools read the board. But FantasyPros publishes DRAFT rankings,
+    #     which stop moving once the season starts, so a 26-hour budget would
+    #     have gone amber within days of week 1 for a file that is behaving
+    #     exactly as expected.
     # Scout is deliberately absent. Its verdicts feed the DRAFT board's bench
     # valuation, nothing reads them now, and RobonerScout was unregistered with
     # the rest of the draft-day tasks -- so a 72-hour freshness budget would
@@ -379,7 +387,7 @@ def _refresh_log() -> dict:
 # means the file itself is gone -- a hard failure, not a reason to consult the
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
-MARKED_STEPS = {"players", "projections", "adp-live", "ecr", "buzz", "board"}
+MARKED_STEPS = {"players", "projections", "buzz", "board"}
 
 
 def _source_marker(step: str):
@@ -724,9 +732,10 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
 
     by_step = {r["step"]: r for r in ing}
     sources = [("board", "Ranking board built"),
-               ("adp-live", "Live ADP current"),
-               ("ecr", "Expert rankings current"),
                ("buzz", "Market buzz current")]
+    if not done:
+        sources += [("adp-live", "Live ADP current"),
+                    ("ecr", "Expert rankings current")]
     if not done:
         # Scout's verdicts feed the DRAFT board's bench valuation and nothing
         # else yet. With the draft over, nothing reads them and nothing runs

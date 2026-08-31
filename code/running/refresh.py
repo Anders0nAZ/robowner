@@ -5,8 +5,11 @@ draft). Steps are independent; one failing never blocks the rest. After the
 data refresh, the chat responder is restarted so its in-process caches (player
 dump, lore lru_caches) pick up the new state.
 
-What stays static on purpose: the locked FFC ADP (keeper-cost source of truth)
-and prior-season chat (immutable history).
+What stays static on purpose: the locked FFC ADP (keeper-cost source of truth),
+prior-season chat (immutable history), and — since the draft finished — the LIVE
+FFC ADP too. refresh_adp_live() is still here and still works; it is simply not
+in the daily list, because average draft position has no meaning or consumer
+once the board is full. Put it back with the draft-prep tasks next August.
 
 python -m robo.refresh            # full daily refresh
 python -m robo.refresh --no-restart   # data only, leave responder alone
@@ -85,7 +88,16 @@ def refresh_ecr():
 @step("buzz")
 def refresh_buzz():
     """Trending adds/drops. Runs BEFORE the board so bench valuation sees today's
-    market: ADP moves ~0.6 picks a week in August, trending moves in hours."""
+    market: ADP moves ~0.6 picks a week in August, trending moves in hours.
+
+    This step was written, documented in CLAUDE.md, and asserted on by the status
+    page with a 26-hour budget -- and never actually added to main()'s list, from
+    the day it was written until 31 Aug 2026. It stayed fresh by accident: any
+    call to buzz.signal() refetches a cache older than STALE_AFTER, and the draft
+    tooling called it constantly. With the draft over nothing does, so the file
+    would have frozen and the page would have blamed RobonerRefresh for skipping
+    a step it had never been asked to run. Trending adds are the fastest signal
+    the bot has and the one that matters most on a waiver wire."""
     from robo import buzz
     net = buzz.load(refresh=True)
     top = max(net.values(), default=0)
@@ -219,7 +231,12 @@ def main():
     ap.add_argument("--no-restart", action="store_true")
     args = ap.parse_args()
     _log("=== refresh start ===")
-    ok = [refresh_players(), refresh_projections(), refresh_adp_live(), refresh_ecr(), rebuild_board(),
+    # refresh_adp_live() is NOT in this list. Average draft position stopped
+    # meaning anything the moment the board filled, and nothing in season reads
+    # it. Put it back with the draft-prep tasks next August; data/adp_live.json
+    # simply holds its last pre-draft values until then.
+    ok = [refresh_players(), refresh_projections(), refresh_ecr(),
+          refresh_buzz(), rebuild_board(),
           ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
           refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
     if not args.no_restart:
