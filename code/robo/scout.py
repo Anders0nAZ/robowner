@@ -8,9 +8,10 @@ WHERE THE NEWS COMES FROM. Sleeper's authed GraphQL carries RotoWire and
 RotoBaller per-player items -- title, description, and the analyst's `analysis`
 -- via get_player_news. That is the same wire the paid sites sell, free, on a
 token we already hold, and it pulls the whole 85-player pool in about thirteen
-seconds. (FantasyPros' free tier, which robo/news.py uses, hard-caps at the ten
-most recent items league-wide and ignores limit/offset/page entirely; it is
-useless as a corpus and was very nearly the basis of this module.)
+seconds. (FantasyPros' free tier hard-caps at the ten most recent items
+league-wide and ignores limit/offset/page entirely; it is useless as a corpus
+and was very nearly the basis of this module. A robo/news.py built on it was
+deleted 31 Aug 2026, unused.)
 
 Beat writers are the second source and work differently. X has no usable free
 read tier, so data/beat_reporters.json is not a feed -- it steers the web search

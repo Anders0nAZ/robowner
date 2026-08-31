@@ -34,7 +34,6 @@ It runs entirely on a desktop in Phoenix -- no cloud, no hosting bill. Banter is
 | [`robo/media.py`](robo/media.py) | Roboner's reaction-image library. |
 | [`robo/mock_draft.py`](robo/mock_draft.py) | Mock the 2026 draft with the REAL pick policy, over the real keeper board. |
 | [`robo/moves.py`](robo/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
-| [`robo/news.py`](robo/news.py) | NOT IN USE. Superseded by scout.py — nothing imports this module. |
 | [`robo/publish_code.py`](robo/publish_code.py) | Publish the bot's Python source to the public site, on an allowlist. |
 | [`robo/pull_chat_history.py`](robo/pull_chat_history.py) | One-time pull of prior-season Sleeper league chat. |
 | [`robo/rankings.py`](robo/rankings.py) | Build the 2026 draft value board: data/board_2026.csv. |
