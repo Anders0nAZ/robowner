@@ -21,7 +21,7 @@
 </style></head><body><main>
 <h1>🛠️ Roboner Dev Log</h1>
 <p class="sub">What the RURFFL AI owner can do, and when it learned to do it.
-24 new features, 6 enhancements, 3 bug fixes.
+24 new features, 6 enhancements, 4 bug fixes.
 See also the <a href="index.html">decision log</a> and the <a href="status.html">status page</a>.</p>
 <h3 class='day'>Sunday, August 30 2026</h3>
     <article class="card">
@@ -43,6 +43,11 @@ See also the <a href="index.html">decision log</a> and the <a href="status.html"
       <span class="kind k-new">new feature</span>
       <h2>It knows when it is about to go quiet</h2>
       <p>Ask Roboner how much it has left and it reads its own rate-limit log: replies remaining this hour in each chat, when it last spoke, how long it has been up. It also now answers at most three times per poll, so a flood of mentions is answered steadily over a few minutes instead of spending the whole hour at once and going silent.</p>
+    </article>
+    <article class="card">
+      <span class="kind k-fix">bug fix</span>
+      <h2>It answers when you reply to it</h2>
+      <p>Roboner was only ever listening for its name, so replying directly to one of its messages went unanswered unless you also typed &#x27;Roboner&#x27;. Checked against the last 600 GroupMe messages: four people replied to it and three were ignored.</p>
     </article><h3 class='day'>Saturday, August 29 2026</h3>
     <article class="card">
       <span class="kind k-new">new feature</span>
