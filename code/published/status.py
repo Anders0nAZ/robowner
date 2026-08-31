@@ -4,7 +4,7 @@ Renders decision-log/status.html, the third page of the public site alongside th
 decision log and the dev log. Nate checks this from a phone, so it answers the
 questions you cannot answer from a phone today: is the responder up, how close is
 it to its hourly cap in each chat, when did each data source last land, when does
-it next run, and is the draft engine ready.
+it next run, and is it keeping up with the season.
 
 GitHub Pages is static, so this page is a SNAPSHOT. That is its main design
 hazard: a frozen page reading ALL GREEN is worse than no page. It therefore
@@ -332,7 +332,12 @@ SOURCES = [
     ("board",       "Ranking board",        26 * 3600, "RobonerRefresh"),
     ("chat-memory", "League chat index",    26 * 3600, "RobonerRefresh"),
     ("media-pool",  "Reaction image pool",  26 * 3600, "RobonerRefresh"),
-    ("scout",       "Player news scout",    72 * 3600, "RobonerScout"),
+    # Scout is deliberately absent. Its verdicts feed the DRAFT board's bench
+    # valuation, nothing reads them now, and RobonerScout was unregistered with
+    # the rest of the draft-day tasks -- so a 72-hour freshness budget would
+    # have taken the page amber in three days and red in six, blaming a job that
+    # was removed on purpose. Put this row back the moment robo/value.py starts
+    # consuming verdicts, and schedule the task again in the same change.
 ]
 
 _LOGLINE = re.compile(
@@ -374,7 +379,7 @@ def _refresh_log() -> dict:
 # means the file itself is gone -- a hard failure, not a reason to consult the
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
-MARKED_STEPS = {"players", "projections", "adp-live", "ecr", "buzz", "board", "scout"}
+MARKED_STEPS = {"players", "projections", "adp-live", "ecr", "buzz", "board"}
 
 
 def _source_marker(step: str):
@@ -575,6 +580,19 @@ def draft() -> dict:
             "cpu_autopick": st.get("cpu_autopick"), "teams": st.get("teams"),
             "type": d.get("type"),
         })
+    out["complete"] = out.get("state") == "complete"
+    if out["complete"]:
+        # Once the board is full none of what follows can change again for
+        # eleven months: there is no agent to be alive, no stray practice
+        # process to find, and no keeper board still being frozen. Collecting it
+        # every fifteen minutes forever costs a process scan for an answer that
+        # is now a historical fact.
+        out["agent"] = {"for_this_draft": False}
+        out["agents_running"] = out["agents_stray"] = 0
+        out["keepers_frozen"] = 24
+        out["status"] = OK
+        return out
+
     hb = _read_json(DATA / "draft_heartbeat.json", {}) or {}
     # Only a heartbeat for THE draft counts. The guard applies the same test,
     # because a completed mock leaves a green-looking stamp behind.
@@ -681,7 +699,12 @@ def inseason() -> dict:
 
 
 def preflight(resp, ing, tsk, slp, drf, brain) -> list:
-    """Is the draft engine ready. Each row is an assertion, not a description."""
+    """Is the engine ready. Each row is an assertion, not a description.
+
+    Before the draft this asserts draft readiness; afterwards those rows stand
+    down and the in-season jobs take their place. Asserting on a draft guard
+    that correctly disabled itself painted the page red all season.
+    """
     rows = []
 
     def add(label, ok, detail, warn=False):
@@ -697,12 +720,21 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
         ("token valid for %d more days" % days) if days is not None else "token check failed",
         warn=slp.get("graphql") == WARN)
 
+    done = drf.get("state") == "complete"
+
     by_step = {r["step"]: r for r in ing}
-    for step, label in (("board", "Ranking board built"),
-                        ("adp-live", "Live ADP current"),
-                        ("ecr", "Expert rankings current"),
-                        ("buzz", "Market buzz current"),
-                        ("scout", "Player news judged")):
+    sources = [("board", "Ranking board built"),
+               ("adp-live", "Live ADP current"),
+               ("ecr", "Expert rankings current"),
+               ("buzz", "Market buzz current")]
+    if not done:
+        # Scout's verdicts feed the DRAFT board's bench valuation and nothing
+        # else yet. With the draft over, nothing reads them and nothing runs
+        # scout, so asserting their freshness would age to red and stay there --
+        # a red light for data no longer being used. It comes back when the
+        # rest-of-season valuation starts consuming verdicts (robo/value.py).
+        sources.append(("scout", "Player news judged"))
+    for step, label in sources:
         r = by_step.get(step, {})
         add(label, r.get("status") == OK,
             "%s / %s" % (r.get("detail", ""), _ago(r.get("ts"))),
@@ -716,7 +748,6 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # finishes -- and the one-time pre-draft refreshes are supposed to have
     # fired and gone. Left in, they painted the whole page red all season for
     # doing exactly what they were built to do.
-    done = drf.get("state") == "complete"
     if not done:
         add("Keeper board frozen", drf.get("keepers_frozen", 0) == 24,
             "%d of 24 keeper picks assigned" % drf.get("keepers_frozen", 0))
@@ -740,11 +771,13 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
                 bool(t and str(t.get("state", "")).lower() == "ready"),
                 ("next run %s" % _clock((t or {}).get("next"))) if t else "task not found")
 
-    # In-season jobs. RobonerScout spans both: player news matters more once
-    # games are being played than it ever did in August.
-    inseason_tasks = ["RobonerScout"]
-    if done:
-        inseason_tasks += ["RobonerLineup", "RobonerRoster", "RobonerWaivers"]
+    # The jobs that are supposed to exist right now. RobonerScout is NOT among
+    # them: it was a one-time pre-draft run and was unregistered with the rest
+    # of the draft-day tasks, so asserting on it would be the same false alarm
+    # as the guard. Run it by hand, or schedule it again when something in
+    # season actually consumes its verdicts.
+    inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers"]
+                      if done else ["RobonerScout"])
     for name in inseason_tasks:
         t = by_name.get(name)
         add("%s scheduled" % name,
@@ -1011,6 +1044,17 @@ def _inseason_html(ins) -> str:
 
 def _draft_html(drf) -> str:
     start = drf.get("start_ts")
+    if drf.get("complete"):
+        # Historical. A countdown to a date in the past and a line reading
+        # "draft agent: idle" are not status, they are a page that has not
+        # noticed the season started.
+        return _card("2026 draft", (
+            _row("status", "complete")
+            + _row("held", _clock(start))
+            + _row("format", "%s, %s rounds, %s teams" % (
+                drf.get("type", "?"), drf.get("rounds", "?"), drf.get("teams", "?")))
+        ), OK)
+
     agent = drf.get("agent", {})
     if agent.get("for_this_draft"):
         agent_line = "running, %s (%s picks in)" % (_ago(agent.get("ts")), agent.get("picks"))
@@ -1099,7 +1143,7 @@ def render(snap=None) -> str:
         '<body><main>\n'
         '<h1>\U0001f4e1 Roboner Status</h1>\n'
         '<p class="sub">Whether the RURFFL AI owner is awake, what it has been told lately, '
-        'and whether it is ready to draft. See also the '
+        'and whether it is on top of this week. See also the '
         '<a href="index.html">decision log</a> and the <a href="changelog.html">dev log</a>.</p>\n'
         '<div class="banner ' + overall + '" id="banner" data-base="' + overall + '">'
         '<span class="pill" id="verdict">' + VERDICT[s["overall"]] + '</span>'
