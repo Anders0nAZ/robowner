@@ -19,10 +19,6 @@ from robo import sleeper_read as api
 
 DB = DATA / "history.db"
 MAX_WEEK = 18
-# Rat Dick Dynasty is harvested to its own DB purely so Nate can search it.
-# The bot's memory is scoped to the RURFFL DB and must never read this one.
-RATDICK_START = "1378089137722130432"
-RATDICK_DB = DATA / "ratdick.db"
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS seasons (
@@ -64,9 +60,8 @@ def conn(db=None) -> sqlite3.Connection:
 def league_chain(start: str = LEAGUE_ID_2026) -> list[dict]:
     """Walk previous_league_id back to the beginning.
 
-    Stops on a 404: some chains point at leagues that have since been deleted
-    (Rat Dick Dynasty's 2020 entry references one), which is the end of the
-    recoverable history, not an error.
+    Stops on a 404: a chain can point at a league that has since been deleted,
+    which is the end of the recoverable history, not an error.
     """
     out, lid = [], start
     while lid and len(out) < 25:
@@ -192,8 +187,5 @@ if __name__ == "__main__":
     if cmd == "harvest":
         harvest()
         stats()
-    elif cmd == "ratdick":
-        harvest(start=RATDICK_START, db=RATDICK_DB)
-        stats(RATDICK_DB)
     else:
         stats()

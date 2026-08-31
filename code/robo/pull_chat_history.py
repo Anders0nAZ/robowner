@@ -5,9 +5,8 @@ need Nate's own token. Set NATE_SLEEPER_TOKEN in .env, run this once, then
 delete the line — prior-season chat is immutable history and never needs
 re-fetching.
 
-Destinations are deliberately separate:
-  RURFFL  -> data/chat_memory.db   (the bot's institutional memory)
-  RatDick -> data/ratdick_chat.db  (Nate's search only; the bot never reads it)
+Everything it pulls goes to data/chat_memory.db, the bot's institutional
+memory, and is scoped to this league only.
 
 python -m robo.pull_chat_history
 """
@@ -23,16 +22,11 @@ from robo import DATA, ROOT
 from robo.chat_memory import DB as MEMORY_DB, SCHEMA
 
 GRAPHQL = "https://sleeper.com/graphql"
-RATDICK_CHAT_DB = DATA / "ratdick_chat.db"
 PAGE_GUARD = 80
 
 RURFFL = {"2025": "1255710645953773568", "2024": "1124837824776925184",
           "2023": "988838358723915776", "2022": "832130025401712640",
           "2021": "668937148136759296", "2020": "585571735181504512"}
-RATDICK = {"2026": "1378089137722130432", "2025": "1254270636365201408",
-           "2024": "1094777600100143104", "2023": "921115614771564544",
-           "2022": "816032322930458624", "2021": "668937384200597504",
-           "2020": "584815212532637696"}
 
 
 def _token() -> str:
@@ -121,6 +115,3 @@ if __name__ == "__main__":
     if only in ("all", "rurffl"):
         print("RURFFL -> chat_memory.db (bot memory)")
         print(f"  total new: {harvest(RURFFL, MEMORY_DB, 'RURFFL', token)}")
-    if only in ("all", "ratdick"):
-        print("Rat Dick Dynasty -> ratdick_chat.db (search only, NOT bot memory)")
-        print(f"  total new: {harvest(RATDICK, RATDICK_CHAT_DB, 'RDD', token)}")
