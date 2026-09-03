@@ -61,7 +61,7 @@ CATEGORIES = [
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",
      ["chat_responder", "skills", "selfdoc", "chat_memory", "lore", "kb",
-      "groupme", "sleeper_chat", "alerts", "media", "archive_media",
+      "groupme", "sleeper_chat", "chat_cursor", "alerts", "media", "archive_media",
       "curate_media", "export_chat", "pull_chat_history"]),
     ("published", "Showing its work",
      "The three public pages and this publisher. Every consequential action "

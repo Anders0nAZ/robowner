@@ -16,7 +16,7 @@ from pathlib import Path
 
 import requests
 
-from robo import DATA, ROOT
+from robo import chat_cursor, DATA, ROOT
 
 API = "https://api.groupme.com/v3"
 STATE = DATA / "groupme_last_seen.json"
@@ -173,11 +173,17 @@ def new_messages(commit: bool = True) -> list[dict]:
     reply (an Ollama timeout, say) retries the messages next cycle instead of
     silently burying them — advancing on fetch used to drop them for good.
     """
-    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    state = chat_cursor.read(STATE)
     last = state.get("last_id")
     msgs = messages(limit=100, since_id=last)
     if msgs:
         newest = msgs[0]["id"]
+        if last is None:
+            # No usable cursor -- adopt the present and answer nothing.
+            # See robo/chat_cursor.py: replaying the backlog would
+            # burst-reply to every recent message instead of recovering.
+            chat_cursor.adopt(STATE, newest)
+            return []
         STATE.write_text(json.dumps({"last_id": newest} if commit
                                     else {"last_id": last, "pending_id": newest}))
     bot_id = bot_sender_id(msgs)
@@ -190,11 +196,7 @@ def new_messages(commit: bool = True) -> list[dict]:
 
 def commit_seen() -> None:
     """Promote a staged cursor — call once a batch is fully handled."""
-    if not STATE.exists():
-        return
-    state = json.loads(STATE.read_text())
-    if state.get("pending_id"):
-        STATE.write_text(json.dumps({"last_id": state["pending_id"]}))
+    chat_cursor.commit(STATE)
 
 
 AVATAR_ART = DATA / "media" / "jersey.png"

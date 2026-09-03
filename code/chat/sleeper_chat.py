@@ -13,7 +13,7 @@ python -m robo.sleeper_chat post "msg"   # post as Robowner
 import json
 import sys
 
-from robo import DATA, LEAGUE_ID_2026, ROBOWNER_USER_ID as ROBOWNER
+from robo import chat_cursor, DATA, LEAGUE_ID_2026, ROBOWNER_USER_ID as ROBOWNER
 from robo.sleeper_write import gql
 
 STATE = DATA / "sleeper_chat_last_seen.json"
@@ -108,12 +108,18 @@ def new_messages(league_id: str = LEAGUE_ID_2026,
     commit=False stages the cursor instead of advancing it; see
     groupme.new_messages() for why the responder wants that.
     """
-    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    state = chat_cursor.read(STATE)
     last = state.get("last_id")
     msgs = messages(limit=50, league_id=league_id)
     if not msgs:
         return []
     newest = msgs[0]["id"]
+    if last is None:
+        # No usable cursor -- adopt the present and answer nothing.
+        # See robo/chat_cursor.py: replaying the backlog would
+        # burst-reply to every recent message instead of recovering.
+        chat_cursor.adopt(STATE, newest)
+        return []
     STATE.write_text(json.dumps({"last_id": newest} if commit
                                 else {"last_id": last, "pending_id": newest}))
     fresh = []
@@ -129,11 +135,7 @@ def new_messages(league_id: str = LEAGUE_ID_2026,
 
 def commit_seen() -> None:
     """Promote a staged cursor — call once a batch is fully handled."""
-    if not STATE.exists():
-        return
-    state = json.loads(STATE.read_text())
-    if state.get("pending_id"):
-        STATE.write_text(json.dumps({"last_id": state["pending_id"]}))
+    chat_cursor.commit(STATE)
 
 
 if __name__ == "__main__":

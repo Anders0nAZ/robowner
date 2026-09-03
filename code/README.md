@@ -63,6 +63,7 @@ The bot's voice in the league chats, the tools it calls to look things up mid-co
 | [`kb.py`](chat/kb.py) | Build the league knowledge base: data/league_kb.json + LEAGUE.md. |
 | [`groupme.py`](chat/groupme.py) | GroupMe integration for the Roboner bot. |
 | [`sleeper_chat.py`](chat/sleeper_chat.py) | Sleeper league chat — read and post as Robowner. |
+| [`chat_cursor.py`](chat/chat_cursor.py) | Where each chat channel got to -- the "already answered this" marker. |
 | [`alerts.py`](chat/alerts.py) | Shout across every channel at once, for the things a human must not miss. |
 | [`media.py`](chat/media.py) | Roboner's reaction-image library. |
 | [`archive_media.py`](chat/archive_media.py) | Roboner's reaction-image pool, sourced from the personal GroupMe Archive. |

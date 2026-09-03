@@ -14,7 +14,7 @@ python -m robo.draft_chat            # show recent draft-room messages
 
 import json
 
-from robo import DATA, DRAFT_ID_2026, ROBOWNER_USER_ID as ROBOWNER
+from robo import chat_cursor, DATA, DRAFT_ID_2026, ROBOWNER_USER_ID as ROBOWNER
 from robo import sleeper_chat
 from robo.sleeper_write import gql
 
@@ -102,11 +102,17 @@ def new_messages(draft_id: str = DRAFT_ID_2026, commit: bool = True) -> list[dic
     """
     if not is_live(draft_id):
         return []
-    state = json.loads(STATE.read_text()) if STATE.exists() else {}
+    state = chat_cursor.read(STATE)
     last = state.get("last_id")
     msgs = messages(limit=50, draft_id=draft_id)
     if msgs:
         newest = msgs[0]["id"]
+        if last is None:
+            # No usable cursor -- adopt the present and answer nothing.
+            # See robo/chat_cursor.py: replaying the backlog would
+            # burst-reply to every recent message instead of recovering.
+            chat_cursor.adopt(STATE, newest)
+            return []
         STATE.write_text(json.dumps({"last_id": newest} if commit
                                     else {"last_id": last, "pending_id": newest}))
     # Filter our OWN posts by author_id, not by is_bot. Robowner is an ordinary
@@ -125,11 +131,7 @@ def new_messages(draft_id: str = DRAFT_ID_2026, commit: bool = True) -> list[dic
 
 
 def commit_seen() -> None:
-    if not STATE.exists():
-        return
-    state = json.loads(STATE.read_text())
-    if state.get("pending_id"):
-        STATE.write_text(json.dumps({"last_id": state["pending_id"]}))
+    chat_cursor.commit(STATE)
 
 
 if __name__ == "__main__":

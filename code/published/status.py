@@ -182,6 +182,69 @@ def _tz_label() -> str:
     return utc
 
 
+# Exception text as the responder logs it, in words that say what went wrong.
+# Substring match on purpose: the point is to recognise the SHAPE of a common
+# failure, not to enumerate every exception the transports can raise.
+_ERROR_SHAPES = (
+    ("Expecting value", "got a reply that was not JSON"),
+    ("JSONDecode", "got a reply that was not JSON"),
+    ("timed out", "timed out"),
+    ("Timeout", "timed out"),
+    ("Max retries", "could not be reached"),
+    ("ConnectionError", "could not be reached"),
+    ("NewConnectionError", "could not be reached"),
+    ("401", "was refused (401 unauthorised)"),
+    ("403", "was refused (403 forbidden)"),
+    ("429", "was rate-limited (429)"),
+    ("500", "hit a server error (500)"),
+    ("502", "hit a bad gateway (502)"),
+    ("503", "hit an unavailable service (503)"),
+)
+
+
+def _plain(err: str) -> str:
+    for needle, said in _ERROR_SHAPES:
+        if needle in err:
+            return said
+    return "failed with " + err[:60]
+
+
+def _responder_why(hb) -> tuple[str, str]:
+    """Why the responder is not OK, in a sentence that is not the dot's colour.
+
+    This used to read "the last cycle reported degraded", which told the reader
+    the thing they could already see and nothing else. The note behind it is
+    written by chat_responder._run as "channel: exception", joined by "; ", so
+    WHICH channel broke and WHAT it hit are both already in hand -- they were
+    just never said. The first real use of this row found a three-day Sleeper
+    chat outage that had been sitting behind that sentence.
+    """
+    note = (hb.get("note") or "").strip()
+    if not note:
+        return "its last cycle did not finish cleanly", ""
+    chans, causes = [], []
+    for part in (x.strip() for x in note.split(";")):
+        if not part:
+            continue
+        chan, sep, err = part.partition(":")
+        chans.append(chan.strip() if sep else "a channel")
+        causes.append(_plain((err or part).strip()))
+    if not chans:
+        return "its last cycle did not finish cleanly", note
+    detail = "Reported by the responder itself on its most recent cycle: " + note
+    if len(set(causes)) == 1:
+        who = (chans[0] if len(chans) == 1
+               else ", ".join(chans[:-1]) + " and " + chans[-1])
+        return ("the %s channel%s %s on the last poll"
+                % (who, "" if len(chans) == 1 else "s", causes[0]), detail)
+    # Different failures on different channels: pair them up rather than
+    # gluing the causes together, which read as one run-on sentence about
+    # both -- "the groupme and sleeper channels timed out; got a reply that
+    # was not JSON".
+    return ("; ".join("%s %s" % (c, k) for c, k in zip(chans, causes))
+            + " on the last poll", detail)
+
+
 def _age_verdict(ts, max_age_s):
     """(status, why). Fresh under budget, warn over it, bad at double.
 
@@ -267,16 +330,13 @@ def responder() -> dict:
 
     status = OK if alive else BAD
     why = "" if alive else "no heartbeat -- the responder process is not running"
+    why_detail = ""
     if alive and (hb.get("status") or "ok") != "ok":
         status = WARN
-        # The note is the responder's own account of what went wrong on its last
-        # cycle. It has always been collected and has only ever been printed to
-        # the terminal, so the page could say DEGRADED with nothing on it saying
-        # why -- which is the whole reason this exists.
-        why = "the last cycle reported %s" % (hb.get("status") or "a problem")
+        why, why_detail = _responder_why(hb)
     return {
         "status": status, "alive": alive,
-        "why": why, "why_detail": hb.get("note") or "",
+        "why": why, "why_detail": why_detail,
         "heartbeat_ts": hb_ts, "heartbeat_age": age,
         "heartbeat_status": hb.get("status") or "unknown",
         "note": hb.get("note") or "",
