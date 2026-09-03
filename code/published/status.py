@@ -183,13 +183,23 @@ def _tz_label() -> str:
 
 
 def _age_verdict(ts, max_age_s):
-    """Fresh under budget, warn over it, bad at double."""
+    """(status, why). Fresh under budget, warn over it, bad at double.
+
+    Returns the REASON alongside the verdict rather than leaving the renderer to
+    work backwards from a colour. A page that can say "amber" but not "amber
+    because" makes the reader open a terminal, which is the one thing it exists
+    to avoid.
+    """
     if not ts:
-        return BAD
+        return BAD, "has never landed"
     age = time.time() - float(ts)
     if age <= max_age_s:
-        return OK
-    return WARN if age <= max_age_s * 2 else BAD
+        return OK, ""
+    over = (age - max_age_s) / 3600.0
+    budget = "%gh" % round(max_age_s / 3600.0, 1)
+    if age <= max_age_s * 2:
+        return WARN, "%.1fh past its %s budget" % (over, budget)
+    return BAD, "more than double its %s budget" % budget
 
 
 def _worst(*states):
@@ -229,10 +239,19 @@ def responder() -> dict:
         stamps = _read_json(DATA / ("chat_replies_%s.json" % name), []) or []
         hour = len([s for s in stamps if s > time.time() - 3600])
         nfail = int(fails.get(name, 0) or 0)
+        cwhy = ""
         if nfail >= cr.MAX_BATCH_ATTEMPTS:
             cs = BAD
-        elif hour >= cr.MAX_REPLIES_PER_HOUR or nfail:
+            cwhy = ("%d failed batches in a row (max %d) -- this channel has "
+                    "given up on its current batch" % (nfail, cr.MAX_BATCH_ATTEMPTS))
+        elif hour >= cr.MAX_REPLIES_PER_HOUR:
             cs = WARN
+            cwhy = ("at the hourly cap, %d of %d -- further replies wait for the "
+                    "hour to roll over" % (hour, cr.MAX_REPLIES_PER_HOUR))
+        elif nfail:
+            cs = WARN
+            cwhy = "%d failed batch%s so far (gives up at %d)" % (
+                nfail, "" if nfail == 1 else "es", cr.MAX_BATCH_ATTEMPTS)
         else:
             cs = OK
         chans.append({
@@ -243,14 +262,21 @@ def responder() -> dict:
             "headroom": max(0, cr.MAX_REPLIES_PER_HOUR - hour),
             "failures": nfail,
             "max_failures": cr.MAX_BATCH_ATTEMPTS,
-            "status": cs,
+            "status": cs, "why": cwhy, "why_detail": "",
         })
 
     status = OK if alive else BAD
+    why = "" if alive else "no heartbeat -- the responder process is not running"
     if alive and (hb.get("status") or "ok") != "ok":
         status = WARN
+        # The note is the responder's own account of what went wrong on its last
+        # cycle. It has always been collected and has only ever been printed to
+        # the terminal, so the page could say DEGRADED with nothing on it saying
+        # why -- which is the whole reason this exists.
+        why = "the last cycle reported %s" % (hb.get("status") or "a problem")
     return {
         "status": status, "alive": alive,
+        "why": why, "why_detail": hb.get("note") or "",
         "heartbeat_ts": hb_ts, "heartbeat_age": age,
         "heartbeat_status": hb.get("status") or "unknown",
         "note": hb.get("note") or "",
@@ -487,18 +513,26 @@ def ingests() -> list:
             # something that is gone.
             ts, status = None, BAD
             detail = "missing or unreadable"
+            why = "the file we hold is missing or unreadable"
         else:
             ts = mark_ts or entry.get("last_ok")
-            status = _age_verdict(ts, max_age)
+            status, why = _age_verdict(ts, max_age)
         failed_since = bool(entry.get("last_fail")
                             and entry["last_fail"] > (entry.get("last_ok") or 0))
         if failed_since and status == OK:
             status = WARN
+        if failed_since:
+            why = ((why + "; ") if why else "") + "last refresh attempt failed"
         rows.append({
             "step": step, "label": label, "ts": ts, "status": status,
             "detail": detail or _pretty(step, entry.get("detail", "")),
             "failed_since": failed_since,
             "fail_detail": entry.get("fail_detail", ""),
+            "why": why,
+            # The failure text has been collected here since this function was
+            # written and has never once been rendered -- the page said "last
+            # attempt failed" and kept the actual message to itself.
+            "why_detail": entry.get("fail_detail", ""),
             "task": task, "max_age": max_age,
         })
     return rows
@@ -524,6 +558,14 @@ _PS_TASKS = (
 # "not yet run", not a failure -- rendering it red would make every pre-draft
 # task look broken right up until the moment it mattered.
 NEVER_RUN_RESULT = 267011
+
+# 0x41301, SCHED_S_TASK_RUNNING: the task is running RIGHT NOW and has no result
+# yet. Not a failure, and not rare either -- the watchdog fires every fifteen
+# minutes and the page is written by the watchdog, so sampling one mid-run is
+# routine. Treating it as a non-zero exit painted RobonerWatchdog amber whenever
+# the two lined up, which for as long as the dot had no explanation just looked
+# like unexplained flakiness.
+RUNNING_RESULT = 267009
 
 
 def _iso(s):
@@ -555,17 +597,24 @@ def tasks() -> list:
         last = _iso(t.get("last"))
         result = t.get("result")
         never = (result == NEVER_RUN_RESULT) or bool(last and last < 946684800)
+        why, why_detail = "", ""
         if str(t.get("state", "")).lower() == "disabled":
             status = WARN
-        elif never or result in (0, None):
+            why = "the task is disabled, so it will not run"
+        elif never or result in (0, None, RUNNING_RESULT):
             status = OK
         else:
             status = WARN
+            why = "its last run exited %s" % result
+            why_detail = ("Windows reports exit code %s for the most recent run. "
+                          "A non-zero code means the script itself failed, not "
+                          "that the schedule is wrong." % result)
         out.append({
             "name": t.get("name"), "state": t.get("state"),
             "last": None if never else last,
             "result": result, "never_run": never,
             "next": _iso(t.get("next")), "status": status,
+            "why": why, "why_detail": why_detail,
         })
     return sorted(out, key=lambda r: r["name"] or "")
 
@@ -610,6 +659,20 @@ def sleeper() -> dict:
         if out["token_days"] < 14 and out["graphql"] == OK:
             out["graphql"] = WARN
     out["status"] = _worst(out["rest"], out["graphql"])
+    bits = []
+    if out["rest"] == BAD:
+        bits.append("the REST API did not respond")
+    elif out["rest"] == WARN:
+        bits.append("the REST API took %sms to answer" % out["latency_ms"])
+    if out["graphql"] == BAD:
+        bits.append("the authenticated write API rejected us")
+    elif out["graphql"] == WARN:
+        bits.append("the write token expires in %d days" % (out["token_days"] or 0))
+    out["why"] = "; ".join(bits)
+    # rest_error and graphql_error have always been collected here and have
+    # never reached the page: a dead Sleeper showed as a red dot and nothing else.
+    out["why_detail"] = " ".join(
+        x for x in (out.get("rest_error"), out.get("graphql_error")) if x)
     return out
 
 
@@ -865,10 +928,17 @@ def snapshot() -> dict:
     drf = _safe(draft, {"status": UNK})
     pre = _safe(lambda: preflight(resp, ing, tsk, slp, drf, brain), [])
     ins = _safe(inseason, {"status": UNK})
-    overall = _worst(resp.get("status", UNK), slp.get("status", UNK),
-                     ins.get("status", UNK),
-                     *[r["status"] for r in ing], *[r["status"] for r in pre])
+    # Named components, so the banner can say WHICH one lost rather than
+    # discarding that the moment _worst() collapses them to a colour.
+    parts = ([("chat responder", resp.get("status", UNK)),
+              ("Sleeper", slp.get("status", UNK)),
+              ("this week", ins.get("status", UNK))]
+             + [(r["label"], r["status"]) for r in ing]
+             + [(r["label"], r["status"]) for r in pre])
+    overall = _worst(*[st for _n, st in parts])
+    cause = [n for n, st in parts if st == overall] if overall != OK else []
     return {
+        "overall_why": cause,
         "generated": time.time(),
         "generated_iso": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "overall": overall,
@@ -949,13 +1019,38 @@ CSS = """
    /* The row's own title is a heading, not a labelled field: no label, and it
       stays hard left instead of being pushed across by space-between. */
    td.name { white-space:normal; font-weight:600; justify-content:flex-start;
-             text-align:left; gap:0; padding-bottom:.3rem; }
+             text-align:left; gap:0; padding-bottom:.3rem; flex-wrap:wrap; }
    td.name::before { content:none; }
  }
  .checks li { list-style:none; display:flex; align-items:flex-start; gap:.1rem;
               padding:.34rem 0; border-bottom:1px solid rgba(255,255,255,.05); font-size:.88rem; }
  .checks { margin:0; padding:0; } .checks li:last-child { border-bottom:0; }
  .checks .what { flex:1; } .checks .why { color:var(--dim); font-size:.8rem; text-align:right; }
+ /* The reason under a non-OK row. Coloured to match its dot, so the eye that
+    found the amber dot lands on the amber sentence explaining it. */
+ .why { white-space:normal; font-weight:400; font-size:.8rem; margin:.3rem 0 .1rem;
+        display:flex; flex-wrap:wrap; align-items:center; gap:.5rem; flex-basis:100%; }
+ .w-warn { color:var(--warn); } .w-bad { color:var(--bad); } .w-unknown { color:var(--unk); }
+ /* 2.5rem is 40px: the dot is .56rem and could never be an honest tap target,
+    so the button is the thing you aim at. */
+ .wbtn { appearance:none; -webkit-appearance:none; background:#22304a; color:var(--ink);
+         border:1px solid var(--line); border-radius:6px; font:inherit; font-size:.72rem;
+         letter-spacing:.06em; text-transform:uppercase; padding:.35rem .75rem;
+         min-height:2.5rem; cursor:pointer; flex:none; }
+ .wbtn:hover { border-color:var(--acc); } .wbtn:focus-visible { outline:2px solid var(--acc); }
+ .modal { position:fixed; inset:0; background:rgba(6,10,18,.72); display:flex;
+          align-items:center; justify-content:center; padding:1rem; z-index:50; }
+ /* [hidden] loses to display:flex without this, so the sheet would ship open. */
+ .modal[hidden] { display:none; }
+ .sheet { background:var(--card); border:1px solid var(--line); border-radius:12px;
+          padding:1rem 1.1rem; max-width:34rem; width:100%; max-height:80vh; overflow-y:auto; }
+ .mhead { display:flex; align-items:flex-start; justify-content:space-between; gap:1rem; }
+ .mhead b { font-size:.95rem; }
+ .mx { appearance:none; background:none; border:0; color:var(--dim); font-size:1.2rem;
+       line-height:1; cursor:pointer; padding:.25rem .4rem; min-height:2.5rem; min-width:2.5rem; }
+ .mx:hover { color:var(--ink); }
+ #mbody { margin:.6rem 0 0; font-size:.86rem; color:var(--dim); overflow-wrap:anywhere; }
+ .cause { color:var(--dim); font-size:.85rem; }
  .spark { display:flex; align-items:flex-end; gap:2px; height:34px; margin-top:.5rem; }
  .spark i { flex:1; background:var(--acc); opacity:.75; border-radius:1px; min-height:2px; }
  .foot { color:var(--dim); font-size:.8rem; margin:2.5rem 0 1rem; border-top:1px solid var(--line);
@@ -985,6 +1080,11 @@ JS = """
     if (sev !== base) {
       document.getElementById('verdict').textContent =
         age > badAt ? 'snapshot stale' : 'snapshot ageing';
+      // The cause describes what was WRONG when the snapshot was taken. Left
+      // beside an overridden pill it reads as "SNAPSHOT STALE - chat responder",
+      // blaming the responder for the staleness.
+      var cz = document.getElementById('cause');
+      if (cz) { cz.hidden = true; }
     }
     var cd = document.getElementById('countdown');
     if (cd) {
@@ -998,6 +1098,37 @@ JS = """
     }
   }
   tick(); setInterval(tick, 1000);
+
+  // One shared sheet rather than a popover per row: both tables collapse to
+  // display:block under 640px, and an absolutely-positioned popover anchored
+  // inside a <td> would have to be solved twice. A centred sheet is identical
+  // in both layouts.
+  var modal = document.getElementById('modal');
+  var mtitle = document.getElementById('mtitle');
+  var mbody = document.getElementById('mbody');
+  var opener = null;
+  function close() {
+    modal.hidden = true;
+    if (opener) { opener.focus(); opener = null; }
+  }
+  document.addEventListener('click', function (ev) {
+    var t = ev.target;
+    var b = t.closest ? t.closest('.wbtn') : null;
+    if (b) {
+      opener = b;
+      mtitle.textContent = b.getAttribute('data-title') || 'Why';
+      mbody.textContent = b.getAttribute('data-body') || '';
+      modal.hidden = false;
+      document.getElementById('mclose').focus();
+      return;
+    }
+    // Backdrop or the close control only -- a click inside the sheet must not
+    // dismiss it.
+    if (t === modal || (t.closest && t.closest('.mx'))) { close(); }
+  });
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && !modal.hidden) { close(); }
+  });
 })();
 """
 
@@ -1012,10 +1143,39 @@ def _row(label, value) -> str:
     return '<div class="row"><span>%s</span><span>%s</span></div>' % (_e(label), _e(value))
 
 
-def _card(title, body, status=None) -> str:
+def _why_html(item, title="") -> str:
+    """The one-line reason under a non-OK row, and the control for the rest.
+
+    NOTHING IS DRAWN FOR A HEALTHY ROW. A green page looks exactly as it did
+    before this existed -- no affordance, nothing inviting a tap that would only
+    answer "this is fine".
+
+    The reason itself is always VISIBLE rather than hidden behind the gesture.
+    This page is mostly read on a phone, where hover does not exist and the dot
+    is a 9px target; making the reader find and hit it before the page will say
+    what is wrong would be a worse page than the one that just says it. The
+    button is only for the unabridged text -- an exception, an exit code -- which
+    is too long to sit inline.
+    """
+    st = item.get("status")
+    if st in (OK, None) or not (item.get("why") or item.get("why_detail")):
+        return ""
+    why = item.get("why") or "see the detail"
+    detail = item.get("why_detail") or ""
+    btn = ""
+    if detail:
+        btn = ('<button class="wbtn" type="button" data-title="%s" data-body="%s">'
+               'why</button>' % (_e(title or item.get("label") or item.get("name") or ""),
+                                 _e(detail)))
+    return ('<div class="why w-%s"><span>%s</span>%s</div>'
+            % (st, _e(why), btn))
+
+
+def _card(title, body, status=None, why=None) -> str:
     dot = '<span class="dot s-%s"></span>' % status if status else ""
-    return ('<div class="card"><div class="k">%s%s</div>%s</div>'
-            % (dot, _e(title), body))
+    reason = _why_html(why, title) if why else ""
+    return ('<div class="card"><div class="k">%s%s</div>%s%s</div>'
+            % (dot, _e(title), reason, body))
 
 
 def _responder_html(resp, hist) -> str:
@@ -1028,7 +1188,7 @@ def _responder_html(resp, hist) -> str:
         _row("uptime", uptime),
         _row("heartbeat", _ago(resp.get("heartbeat_ts"))),
         _row("replies", "%d today / %d this week" % (hist.get("day", 0), hist.get("week", 0)))))
-    cards = [_card("responder", head, resp.get("status"))]
+    cards = [_card("responder", head, resp.get("status"), why=resp)]
 
     for c in resp.get("channels", []):
         pct = min(100, int(100 * c["hour"] / max(1, c["cap"])))
@@ -1042,7 +1202,7 @@ def _responder_html(resp, hist) -> str:
                     _row("today", "%d" % hist.get("per_channel_day", {}).get(c["name"], 0))))
         label = {"groupme": "GroupMe", "sleeper": "Sleeper league chat",
                  "draft": "Sleeper draft room"}.get(c["name"], c["name"])
-        cards.append(_card(label, body, c["status"]))
+        cards.append(_card(label, body, c["status"], why=c))
 
     peak = max(hist.get("hourly") or [0]) or 1
     bars = "".join('<i style="height:%d%%" title="%d"></i>' % (max(6, int(100 * v / peak)), v)
@@ -1112,6 +1272,16 @@ def _inseason_html(ins) -> str:
                                 "; ".join(ins["illegal"])))
     lineup_status = (BAD if (ins.get("holes") or ins.get("illegal"))
                      else OK if ins.get("lineup_set") else WARN)
+    # Summary only: the holes and illegal starters are already listed as rows
+    # below, so there is nothing to open -- no why_detail, no button.
+    lbits = []
+    if ins.get("holes"):
+        lbits.append("%d slot(s) with nobody eligible" % len(ins["holes"]))
+    if ins.get("illegal"):
+        lbits.append("%d starter(s) who should not be playing" % len(ins["illegal"]))
+    if not lbits and lineup_status != OK:
+        lbits.append("a better legal lineup is available than the one that is set")
+    lineup_why = {"status": lineup_status, "why": "; ".join(lbits)}
 
     roster_body = [
         _row("active roster", "%s / %s (%s open)"
@@ -1129,10 +1299,17 @@ def _inseason_html(ins) -> str:
     for d in ins.get("drift") or []:
         roster_body.append(_row("league shape drift", d))
     roster_status = (WARN if (ins.get("ir_warnings") or ins.get("drift")) else OK)
+    rbits = []
+    if ins.get("ir_warnings"):
+        rbits.append("%d reserve warning(s)" % len(ins["ir_warnings"]))
+    if ins.get("drift"):
+        rbits.append("%d league-shape disagreement(s)" % len(ins["drift"]))
+    roster_why = {"status": roster_status, "why": "; ".join(rbits)}
 
     return ('<div class="grid">'
-            + _card("Starting lineup", "".join(lineup_body), lineup_status)
-            + _card("Roster", "".join(roster_body), roster_status)
+            + _card("Starting lineup", "".join(lineup_body), lineup_status,
+                    why=lineup_why)
+            + _card("Roster", "".join(roster_body), roster_status, why=roster_why)
             + '</div>')
 
 
@@ -1176,7 +1353,7 @@ def _sleeper_html(slp) -> str:
                  else "no response")
             + _row("write access", "authenticated" if slp.get("graphql") == OK else "failing")
             + _row("credential", "valid %d more days" % days if days is not None else "unknown"))
-    return _card("Sleeper connection", body, slp.get("status"))
+    return _card("Sleeper connection", body, slp.get("status"), why=slp)
 
 
 def _ingest_html(ing, tsk) -> str:
@@ -1187,11 +1364,11 @@ def _ingest_html(ing, tsk) -> str:
         if r.get("failed_since"):
             note += " (last attempt failed; holding the previous copy)"
         rows.append(
-            "<tr><td class='name'><span class='dot s-%s'></span>%s</td>"
+            "<tr><td class='name'><span class='dot s-%s'></span>%s%s</td>"
             "<td data-l='last landed'>%s</td>"
             "<td class='d' data-l='we hold'>%s</td>"
             "<td class='d' data-l='next run'>%s</td></tr>"
-            % (r["status"], _e(r["label"]), _e(_ago(r["ts"])),
+            % (r["status"], _e(r["label"]), _why_html(r), _e(_ago(r["ts"])),
                _e(note), _e(_clock(nxt.get(r["task"])))))
     return ("<div class='scroll'><table><thead><tr><th>source</th><th>last landed</th>"
             "<th>what we hold</th><th>next run</th></tr></thead><tbody>%s</tbody></table></div>"
@@ -1202,12 +1379,12 @@ def _tasks_html(tsk) -> str:
     rows = []
     for t in tsk:
         last = "not yet run" if t.get("never_run") else _clock(t.get("last"))
-        rows.append("<tr><td class='name'><span class='dot s-%s'></span>%s</td>"
+        rows.append("<tr><td class='name'><span class='dot s-%s'></span>%s%s</td>"
                     "<td class='d' data-l='state'>%s</td>"
                     "<td class='d' data-l='last run'>%s</td>"
                     "<td data-l='next run'>%s</td></tr>"
-                    % (t["status"], _e(t["name"]), _e(t.get("state")),
-                       _e(last), _e(_clock(t.get("next")))))
+                    % (t["status"], _e(t["name"]), _why_html(t, t.get("name")),
+                       _e(t.get("state")), _e(last), _e(_clock(t.get("next")))))
     return ("<div class='scroll'><table><thead><tr><th>task</th><th>state</th>"
             "<th>last run</th><th>next run</th></tr></thead><tbody>%s</tbody>"
             "</table></div>" % "".join(rows))
@@ -1241,6 +1418,8 @@ def render(snap=None) -> str:
         '<a href="index.html">decision log</a> and the <a href="changelog.html">dev log</a>.</p>\n'
         '<div class="banner ' + overall + '" id="banner" data-base="' + overall + '">'
         '<span class="pill" id="verdict">' + VERDICT[s["overall"]] + '</span>'
+        + ('<span class="cause" id="cause">' + _e(", ".join(s["overall_why"]))
+           + '</span>' if s.get("overall_why") else '') +
         '<span class="gen">snapshot <b id="age">just now</b>, taken '
         + html.escape(_clock(s["generated"])) + '</span></div>\n'
         '<p class="snapnote">This is a static snapshot, rewritten every 15 minutes '
@@ -1262,7 +1441,13 @@ def render(snap=None) -> str:
         + _tasks_html(s["tasks"]) + '</div>'
         '<p class="foot">Generated by the bot itself, on the machine it runs on. '
         'No account details, message contents, or roster plans appear on this page.</p>\n'
-        '</main><script>'
+        '</main>\n'
+        '<div class="modal" id="modal" hidden><div class="sheet" role="dialog" '
+        'aria-modal="true" aria-labelledby="mtitle">'
+        '<div class="mhead"><b id="mtitle"></b>'
+        '<button class="mx" id="mclose" type="button" aria-label="Close">&#10005;</button>'
+        '</div><p id="mbody"></p></div></div>\n'
+        '<script>'
         + (JS % (int(s["generated"]), PAGE_WARN_AGE, PAGE_BAD_AGE))
         + '</script></body></html>\n')
     return page
