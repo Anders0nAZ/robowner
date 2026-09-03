@@ -44,6 +44,7 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery.
 |---|---|
 | [`season.py`](in-season/season.py) | Live in-season league state -- what is true right now, not what the board froze. |
 | [`lineup.py`](in-season/lineup.py) | Weekly lineup optimizer. |
+| [`model_proj.py`](in-season/model_proj.py) | This week's projections from the NFL Model, or nothing at all. |
 | [`ir.py`](in-season/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |
 | [`value.py`](in-season/value.py) | Rest-of-season player value -- the seam, in progress. |
 | [`moves.py`](in-season/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |

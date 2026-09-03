@@ -56,7 +56,7 @@ CATEGORIES = [
       "draft_sim", "mock_draft", "draft_chat"]),
     ("in-season", "In season",
      "Weekly lineups, injured reserve, and the add/drop and waiver machinery.",
-     ["season", "lineup", "ir", "value", "moves"]),
+     ["season", "lineup", "model_proj", "ir", "value", "moves"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",

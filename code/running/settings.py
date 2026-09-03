@@ -429,6 +429,22 @@ REGISTRY: list[S] = [
       "Questionable player is startable and NOT IR-eligible; an Out player is "
       "neither. Removing an entry here means the optimizer will happily start "
       "someone who cannot play if he out-projects the alternative."),
+    S(LINEUP, "robo.model_proj", "USE_MODEL", bool,
+      "Which engine prices the weekly lineup.",
+      "On, the projection is the NFL Model's simulated mean -- 4,000 stat "
+      "lines scored under all 57 of our keys. Off, it is Sleeper's weekly "
+      "number, which carries 23 of them and has never included a "
+      "quarterback's sack penalty or any bonus tier. Off is the rollback if "
+      "the model starts producing something strange mid-season; the lineup "
+      "still gets set either way."),
+    S(LINEUP, "robo.model_proj", "MAX_AGE_H", float,
+      "How old the model's artifact may be before the lineup ignores it.",
+      "Too high and a Sunday afternoon lineup runs on a Tuesday simulation "
+      "that never heard about a Saturday scratch. Too low and one failed "
+      "export benches the model for the rest of the week. Sized to the DAILY "
+      "export, so the pre-kickoff refreshes tighten it in practice without "
+      "this having to know the kickoff schedule.",
+      bounds=(1.0, 168.0), unit="hours"),
     S(LINEUP, "robo.lineup", "SLOTS", list,
       "The starting lineup's slots, in Sleeper's order.",
       "STRUCTURAL -- a fact about the league. The submitted starters array is "

@@ -23,7 +23,7 @@ from datetime import datetime
 
 import requests
 
-from robo import DATA, RAW, ROOT
+from robo import DATA, MODEL_ROOT, RAW, ROOT
 
 LOG = ROOT / "refresh.log"
 
@@ -102,6 +102,43 @@ def refresh_buzz():
     net = buzz.load(refresh=True)
     top = max(net.values(), default=0)
     return f"{len(net)} players, top {top:,} net adds over {buzz.WINDOW_HOURS}h"
+
+
+MODEL_OUT = MODEL_ROOT / "out"
+
+
+@step("model")
+def refresh_model():
+    """The NFL Model's weekly distributions, validated and copied in.
+
+    COPIED, not read in place. Everything the bot runs on lives under its own
+    data/ directory, so an NFL Model tree that is missing, half-written, or on
+    a drive that did not mount cannot reach robo.lineup -- which writes to
+    Sleeper unattended. A failure here leaves yesterday's file, and a file too
+    old to trust is refused by model_proj rather than used.
+    """
+    from robo import LEAGUE_ID_2026, season
+    wk = season.current_week()
+    src = MODEL_OUT / f"weekly_{season.SEASON}_wk{wk:02d}.json"
+    if not src.exists():
+        raise FileNotFoundError(f"{src} - has nflmodel.export run for week {wk}?")
+    d = json.loads(src.read_text(encoding="utf-8"))
+    if d.get("schema") != 1:
+        raise ValueError(f"schema {d.get('schema')}, expected 1")
+    if str(d.get("season")) != season.SEASON or int(d.get("week", -1)) != wk:
+        raise ValueError(f"artifact is {d.get('season')} week {d.get('week')}, "
+                         f"not {season.SEASON} week {wk}")
+    if d.get("league_id") != LEAGUE_ID_2026:
+        raise ValueError(f"artifact is for league {d.get('league_id')}")
+    players = d.get("players") or {}
+    # The universe scope is every rostered player plus everyone Sleeper
+    # projects, which has never been under 400. A short file means the model
+    # ran against a broken anchor, and yesterday's numbers beat a third of
+    # this week's.
+    if len(players) < 300:
+        raise ValueError(f"only {len(players)} players; keeping the old file")
+    (DATA / "model_week.json").write_text(json.dumps(d), encoding="utf-8")
+    return f"week {wk}, {len(players)} players, anchored {d.get('generated_utc', '?')[:16]}"
 
 
 @step("board")
@@ -236,7 +273,7 @@ def main():
     # it. Put it back with the draft-prep tasks next August; data/adp_live.json
     # simply holds its last pre-draft values until then.
     ok = [refresh_players(), refresh_projections(), refresh_ecr(),
-          refresh_buzz(), rebuild_board(),
+          refresh_buzz(), refresh_model(), rebuild_board(),
           ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
           refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
     if not args.no_restart:

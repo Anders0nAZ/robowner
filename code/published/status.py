@@ -41,7 +41,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from robo import DATA, RAW, ROOT, DRAFT_ID_2026
+from robo import DATA, DRAFT_ID_2026, MODEL_ROOT, RAW, ROOT
 
 OUT = ROOT / "decision-log" / "status.html"
 STATE = DATA / "status_state.json"
@@ -90,8 +90,13 @@ _WINPATH = re.compile(r"[A-Za-z]:\\[^\s\"'<>|]*")
 # own it would publish " Robo Owner\robo\groupme.py" out of a real traceback.
 # All three spellings, because a path reaches us raw from an OSError, escaped
 # from a repr()'d traceback, and slash-separated from anything pathlib touched.
-_ROOT_FORMS = (str(ROOT).replace("\\", "\\\\"), str(ROOT),
-               str(ROOT).replace("\\", "/"))
+# BOTH repo roots. The NFL Model's directory name has a space in it too, so a
+# traceback naming its export file published everything after "C:\NFL " until
+# this covered it.
+_ROOT_FORMS = tuple(
+    form for base in (ROOT, MODEL_ROOT)
+    for form in (str(base).replace("\\", "\\\\"), str(base),
+                 str(base).replace("\\", "/")))
 
 
 def _scrub(text, limit: int = 240) -> str:
@@ -328,6 +333,11 @@ SOURCES = [
     ("projections", "Sleeper projections",  26 * 3600, "RobonerRefresh"),
     ("buzz",        "Trending adds/drops",  26 * 3600, "RobonerRefresh"),
     ("board",       "Ranking board",        26 * 3600, "RobonerRefresh"),
+    # 30 hours, matching model_proj.MAX_AGE_H: the page should go amber at the
+    # same moment the lineup stops trusting the file, not before it and not
+    # after. Moving one without the other is how the page reports healthy on a
+    # source nothing is using.
+    ("model",       "NFL Model projections", 30 * 3600, "RobonerRefresh"),
     ("chat-memory", "League chat index",    26 * 3600, "RobonerRefresh"),
     ("media-pool",  "Reaction image pool",  26 * 3600, "RobonerRefresh"),
     # ADP and ECR are deliberately absent, for the same reason and with the same
@@ -387,7 +397,7 @@ def _refresh_log() -> dict:
 # means the file itself is gone -- a hard failure, not a reason to consult the
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
-MARKED_STEPS = {"players", "projections", "buzz", "board"}
+MARKED_STEPS = {"players", "projections", "buzz", "board", "model"}
 
 
 def _source_marker(step: str):
@@ -416,6 +426,15 @@ def _source_marker(step: str):
         d = _read_json(DATA / "buzz.json", {}) or {}
         return d.get("ts"), "%d players over %sh" % (
             len(d.get("net", {})), d.get("hours", "?"))
+    if step == "model":
+        d = _read_json(DATA / "model_week.json", {}) or {}
+        ts = None
+        try:
+            ts = datetime.fromisoformat(d["generated_utc"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            pass
+        return ts, "%d players, %s week %s" % (
+            len(d.get("players", {})), d.get("season", "?"), d.get("week", "?"))
     if step == "projections":
         p = RAW / "projections_2026.json"
         return _mtime(p), "%d rows" % len(_read_json(p, []) or [])
@@ -689,6 +708,13 @@ def inseason() -> dict:
 
     res = lu.run(week=week, apply=False, verbose=False)
     out["projected"] = res["total"]
+    # Which engine priced that number, and how much of the roster it reached.
+    # A lineup quietly set on Sleeper's projection because the model artifact
+    # went stale looks identical to one set on the model, and the difference is
+    # the whole reason the model exists.
+    out["proj_source"] = res.get("provenance") or ""
+    out["proj_modelled"] = res.get("modelled", 0)
+    out["proj_of_roster"] = res.get("of_roster", 0)
     out["current_projected"] = res["current_total"]
     out["gain_available"] = res["gain"]
     out["illegal"] = res["illegal"]
@@ -1019,6 +1045,16 @@ def _inseason_html(ins) -> str:
              else "a better legal lineup is available"),
         _row("projected", "%s pts (currently %s)"
              % (ins.get("projected"), ins.get("current_projected"))),
+        # WHICH ENGINE, on every render. A lineup quietly set on Sleeper's
+        # projection because the model artifact went stale looks identical to
+        # one set on the model, and the difference is the reason the model
+        # exists.
+        _row("projection source", _scrub(
+            "%s (%s of %s players)" % (ins["proj_source"],
+                                       ins.get("proj_modelled"),
+                                       ins.get("proj_of_roster"))
+            if ins.get("proj_source")
+            else "Sleeper weekly projections - the model is not in use")),
     ]
     if ins.get("holes"):
         lineup_body.append(_row("EMPTY SLOTS", ", ".join(ins["holes"])))
