@@ -82,6 +82,21 @@ def load() -> tuple[dict, str]:
     return d, ""
 
 
+def age_hours() -> float | None:
+    """How old the artifact the lineup would actually use is, or None.
+
+    None for every reason load() refuses it, so a caller cannot accidentally
+    report an age for a file nothing is reading.
+    """
+    d, _ = load()
+    if not d:
+        return None
+    try:
+        return _age_hours(d["generated_utc"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 def week_projections(week: int, season_yr: str = season.SEASON,
                      league_id: str | None = None) -> tuple[dict, str]:
     """player_id -> {mean, p10, p25, p50, p75, p90}, plus a provenance line.

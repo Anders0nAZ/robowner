@@ -6,6 +6,10 @@ questions you cannot answer from a phone today: is the responder up, how close i
 it to its hourly cap in each chat, when did each data source last land, when does
 it next run, and is it keeping up with the season.
 
+The scheduled-job table spans BOTH projects -- Roboner's own tasks and the NFL
+Model capture that produces the weekly projections the lineup is decided on.
+A data source whose producer is off the page can only ever show a symptom.
+
 GitHub Pages is static, so this page is a SNAPSHOT. That is its main design
 hazard: a frozen page reading ALL GREEN is worse than no page. It therefore
 carries its own generation timestamp and ages itself in the browser, going amber
@@ -500,8 +504,14 @@ def ingests() -> list:
     return rows
 
 
+# BOTH projects. The job that PRODUCES the weekly model artifact
+# (NFLModelCaptureDaily, plus the NFLModelCapture_* one-shots it queues before
+# each kickoff slot) lives in the NFL Model repo, so a Roboner-only query left
+# the page able to show the artifact going stale but never why: every visible
+# job read green while the one that actually failed was not on the list.
 _PS_TASKS = (
-    "Get-ScheduledTask | Where-Object { $_.TaskName -like 'Roboner*' } | ForEach-Object { "
+    "Get-ScheduledTask | Where-Object { $_.TaskName -like 'Roboner*' "
+    "-or $_.TaskName -like 'NFLModel*' } | ForEach-Object { "
     "$i = $_ | Get-ScheduledTaskInfo; [PSCustomObject]@{ "
     "name = $_.TaskName; state = [string]$_.State; "
     "last = $(if ($i.LastRunTime) { $i.LastRunTime.ToString('o') } else { '' }); "
@@ -526,6 +536,15 @@ def _iso(s):
 
 
 def tasks() -> list:
+    """Every scheduled job behind the bot, across both projects.
+
+    The one-shot captures are transient by design -- registered before each of
+    the day's kickoff slots and swept on the next daily run -- so most days this
+    is the standing set and a Sunday carries three or four extras that then
+    disappear. One that has been registered but has not fired yet reports the
+    NEVER_RUN_RESULT sentinel and renders "not yet run", which is why that
+    sentinel is not treated as a failure.
+    """
     p = subprocess.run(["powershell", "-NoProfile", "-Command", _PS_TASKS],
                        capture_output=True, timeout=90)
     raw = json.loads(p.stdout.decode("utf-8", "replace").strip() or "[]")
@@ -694,7 +713,7 @@ def inseason() -> dict:
     ranking board -- a status page that costs a board build every 15 minutes
     would be the most expensive thing in the project.
     """
-    from robo import ir, lineup as lu, season, value
+    from robo import ir, lineup as lu, model_proj, season, value
 
     out: dict = {"status": UNK, "gated": not value.ready()}
     week = season.current_week()
@@ -715,6 +734,7 @@ def inseason() -> dict:
     out["proj_source"] = res.get("provenance") or ""
     out["proj_modelled"] = res.get("modelled", 0)
     out["proj_of_roster"] = res.get("of_roster", 0)
+    out["proj_age_h"] = _safe(model_proj.age_hours, None)
     out["current_projected"] = res["current_total"]
     out["gain_available"] = res["gain"]
     out["illegal"] = res["illegal"]
@@ -811,7 +831,14 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # of the draft-day tasks, so asserting on it would be the same false alarm
     # as the guard. Run it by hand, or schedule it again when something in
     # season actually consumes its verdicts.
-    inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers"]
+    # NFLModelCaptureDaily is in this list because the weekly lineup is decided
+    # on what it produces: a disabled producer is a readiness failure, not just
+    # a data row that will go amber in thirty hours. Its ONE-SHOTS are NOT
+    # asserted -- they are supposed to be absent most days, and asserting them
+    # would be the same false alarm as asserting on the draft guard that
+    # correctly disabled itself.
+    inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers",
+                       "NFLModelCaptureDaily"]
                       if done else ["RobonerScout"])
     for name in inseason_tasks:
         t = by_name.get(name)
@@ -1027,6 +1054,25 @@ def _responder_html(resp, hist) -> str:
         "".join(cards), spark)
 
 
+def _proj_source(ins) -> str:
+    """Which engine priced the lineup, and on a fallback, why.
+
+    KEYED ON HOW MANY PLAYERS THE MODEL ACTUALLY PRICED, not on whether
+    proj_source is set: that field carries the REASON when the model is not in
+    use, so it is truthy either way and testing it rendered a missing artifact
+    as "NFL Model, 0 of 17 players" -- the one reading this row exists to
+    prevent.
+    """
+    n = ins.get("proj_modelled") or 0
+    if not n:
+        why = ins.get("proj_source") or "the model is not in use"
+        return "Sleeper weekly projections - %s" % why
+    age = ins.get("proj_age_h")
+    return "NFL Model, %s of %s players%s" % (
+        n, ins.get("proj_of_roster"),
+        ", %.1fh old" % age if age is not None else "")
+
+
 def _inseason_html(ins) -> str:
     """Roster, lineup and the move engine's gate.
 
@@ -1049,12 +1095,15 @@ def _inseason_html(ins) -> str:
         # projection because the model artifact went stale looks identical to
         # one set on the model, and the difference is the reason the model
         # exists.
-        _row("projection source", _scrub(
-            "%s (%s of %s players)" % (ins["proj_source"],
-                                       ins.get("proj_modelled"),
-                                       ins.get("proj_of_roster"))
-            if ins.get("proj_source")
-            else "Sleeper weekly projections - the model is not in use")),
+        #
+        # The WORKING case is a sentence, not a log line: engine, how much of
+        # the roster it priced, how old it is. The capture it was anchored on
+        # is not repeated here -- decisions.record() puts it in the data blob
+        # of every lineup the bot actually sets, which is published.
+        #
+        # The FALLBACK case keeps its reason, because a fallback with no cause
+        # is precisely what this row exists to catch.
+        _row("projection source", _scrub(_proj_source(ins))),
     ]
     if ins.get("holes"):
         lineup_body.append(_row("EMPTY SLOTS", ", ".join(ins["holes"])))
