@@ -24,8 +24,15 @@ python -m robo.ir --apply      # do it
 
 import argparse
 
-from robo import LEAGUE_ID_2026, season, settings
+from robo import LEAGUE_ID_2026, season, settings, value
 from robo import sleeper_read as api
+
+# How long a designation typically keeps a man out, used only to break ties when
+# more players are eligible than there are slots. A reserve slot is committed for
+# the whole absence, so when two men are worth the same it is better spent on the
+# longer one -- the short absence would only have to be activated back out.
+_DURATION = {"IR": 3, "PUP": 3, "Sus": 2, "NA": 2, "DNR": 2,
+             "Out": 1, "COV": 1, "Doubtful": 0}
 
 # Master switch. Off means the module still reports what it would do and
 # changes nothing, which is the state to leave it in if the league ever
@@ -47,13 +54,31 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
 
     to_reserve, to_activate, blocked = [], [], []
 
-    room = sl["ir_open"]
-    for pid in roster:
-        if pid in reserve:
-            continue
+    # WHEN MORE MEN ARE ELIGIBLE THAN THERE ARE SLOTS, THIS IS A DECISION.
+    # Everyone eligible is unplayable, so any of them frees an active slot
+    # equally -- which means the question is not who to park but who to KEEP.
+    # Reserve the most valuable, and the ones left in active slots are then the
+    # natural drop candidates, which is exactly the right answer. Ordered by
+    # rest-of-season hold value, ties broken toward the longer absence. Before
+    # this it was roster order, which is arbitrary and would happily strand a
+    # starter in an active slot behind a fourth-string body.
+    def _keep_rank(pid: str) -> tuple:
+        try:
+            v = value.ros_value(pid, season.current_week(), "hold")
+        except Exception:
+            v = 0.0
         st = (players.get(pid) or {}).get("injury_status") or ""
-        if st not in ok:
-            continue
+        return (-v, -_DURATION.get(st, 0), pid)
+
+    eligible = sorted(
+        (p for p in roster
+         if p not in reserve
+         and ((players.get(p) or {}).get("injury_status") or "") in ok),
+        key=_keep_rank)
+
+    room = sl["ir_open"]
+    for pid in eligible:
+        st = (players.get(pid) or {}).get("injury_status") or ""
         name = api.player_name(players, pid)
         if pid in starters:
             # Reserving somebody Sleeper still has in a starting slot would
@@ -66,7 +91,10 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
             continue
         if room <= 0:
             blocked.append({"player_id": pid, "name": name, "status": st,
-                            "why": f"all {sl['ir_slots']} IR slots are full"})
+                            "why": f"all {sl['ir_slots']} IR slots are full and "
+                                   f"more valuable men hold them; he is the "
+                                   f"cheapest body we could cut if a slot is "
+                                   f"needed"})
             continue
         room -= 1
         to_reserve.append({"player_id": pid, "name": name, "status": st,
@@ -82,9 +110,9 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
         if space <= 0:
             blocked.append({"player_id": pid, "name": name, "status": st or "healthy",
                             "why": "no longer IR-eligible but the active roster is "
-                                   "full; activating him needs a cut, and choosing "
-                                   "who to cut is a valuation this bot does not "
-                                   "have yet"})
+                                   "full; activating him needs a cut, and a cut is "
+                                   "moves.py's decision, not a bookkeeping "
+                                   "module's -- run `moves --mode patch`"})
             continue
         space -= 1
         to_activate.append({"player_id": pid, "name": name, "status": st or "healthy",
@@ -136,9 +164,10 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     why = "; ".join(m["why"] for m in p["reserve"] + p["activate"])
     freed = len(p["reserve"]) - len(p["activate"])
     if freed > 0:
-        why += (f". That leaves {freed} active roster spot(s) open. Nothing is "
-                f"being signed to fill them: what a free agent is worth has not "
-                f"been modelled yet, so the space is left open rather than spent")
+        why += (f". That leaves {freed} active roster spot(s) open, which the "
+                f"next waiver or free-agent run may spend. Reserving and signing "
+                f"stay separate decisions: this one is bookkeeping and cannot be "
+                f"wrong, the other is a valuation and can be")
     record("ir", "Injured reserve updated", "Moved " + ", ".join(moved) + ".",
            why + ".", data={"reserve": p["target"], "previous": p["current"]})
 

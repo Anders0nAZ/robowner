@@ -96,12 +96,65 @@ def refresh_buzz():
     call to buzz.signal() refetches a cache older than STALE_AFTER, and the draft
     tooling called it constantly. With the draft over nothing does, so the file
     would have frozen and the page would have blamed RobonerRefresh for skipping
-    a step it had never been asked to run. Trending adds are the fastest signal
-    the bot has and the one that matters most on a waiver wire."""
+    a step it had never been asked to run.
+
+    IN SEASON IT IS A TIEBREAK, NOT A SIGNAL. This docstring used to call
+    trending "the signal that matters most on a waiver wire", which contradicted
+    buzz.py's own docstring saying the module is for August because in season it
+    is contaminated by streaming and bye-week churn. Both cannot be true and the
+    module knows its own data better: ros.py does not read buzz, and nothing
+    lets crowd churn move a valuation. It still runs, because it widens the pool
+    a human reads and breaks ties."""
     from robo import buzz
     net = buzz.load(refresh=True)
     top = max(net.values(), default=0)
     return f"{len(net)} players, top {top:,} net adds over {buzz.WINDOW_HOURS}h"
+
+
+@step("proj-archive")
+def capture_projections():
+    """One snapshot a day of EVERY remaining week's projections.
+
+    Evidence, not input: nothing reads these. They exist to settle whether
+    Sleeper reprices FUTURE weeks on news, which ros.py currently assumes at
+    half strength because it has never been observable. See robo/projarchive.py.
+    """
+    from robo import projarchive
+    snap = projarchive.capture()
+    n = sum(len(v) for v in snap["weeks"].values())
+    return f"{len(snap['weeks'])} weeks, {n} player-weeks"
+
+
+@step("playoff-odds")
+def refresh_playoff_odds():
+    """P(we make the playoffs), which weights every playoff week in ros.py.
+
+    Before the board, because ros.py reads these odds and the board does not
+    read ros.
+    """
+    from robo import playoffs
+    d = playoffs.simulate()
+    import json as _json
+    playoffs.CACHE.write_text(_json.dumps(d, indent=1), encoding="utf-8")
+    ours = (d.get("odds") or {}).get(d.get("ours") or "", 0)
+    return f"{len(d.get('odds') or {})} teams, ours {ours:.1%}"
+
+
+@step("ros")
+def rebuild_ros():
+    """The rest-of-season valuation every roster decision is priced on.
+
+    LAST of the data steps on purpose: it reads the board, the model artifact,
+    the news verdicts, the fitted role curve and the playoff odds, so every one
+    of them must already be today's.
+    """
+    from robo import ros
+    d = ros.build()
+    rows = d.get("players") or {}
+    top = max((r["mean"] for r in rows.values()), default=0.0)
+    import json as _json
+    ros.CACHE.write_text(_json.dumps(d), encoding="utf-8")
+    return f"{len(rows)} players from week {d['week']}, top {top:.0f}"
 
 
 MODEL_OUT = MODEL_ROOT / "out"
@@ -274,6 +327,7 @@ def main():
     # simply holds its last pre-draft values until then.
     ok = [refresh_players(), refresh_projections(), refresh_ecr(),
           refresh_buzz(), refresh_model(), rebuild_board(),
+          capture_projections(), refresh_playoff_odds(), rebuild_ros(),
           ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
           refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
     if not args.no_restart:

@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS matchups (
 CREATE TABLE IF NOT EXISTS transactions (
     season TEXT, transaction_id TEXT PRIMARY KEY, week INT, type TEXT,
     status TEXT, roster_ids TEXT, adds TEXT, drops TEXT, waiver_bid INT,
+    notes TEXT,
     created INT);
 CREATE TABLE IF NOT EXISTS picks (
     season TEXT, draft_id TEXT, round INT, pick_no INT, roster_id INT,
@@ -54,6 +55,20 @@ def conn(db=None) -> sqlite3.Connection:
     DATA.mkdir(exist_ok=True)
     c = sqlite3.connect(db or DB)
     c.executescript(SCHEMA)
+    # CREATE TABLE IF NOT EXISTS will not add a column to a table that already
+    # exists, so a new one needs its own migration. `notes` carries Sleeper's
+    # own stated reason a transaction failed, which is the ONLY thing that
+    # distinguishes a claim that lost on price from one that bounced off a full
+    # roster -- and reading that distinction out of the `drops` column instead
+    # gets it exactly backwards, because a failed claim never executes its drop
+    # and so never records one.
+    try:
+        cols = {r[1] for r in c.execute("PRAGMA table_info(transactions)")}
+        if "notes" not in cols:
+            c.execute("ALTER TABLE transactions ADD COLUMN notes TEXT")
+            c.commit()
+    except sqlite3.Error:
+        pass
     return c
 
 
@@ -118,11 +133,13 @@ def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> None:
             try:
                 for t in api.transactions(lid, wk):
                     st = t.get("settings") or {}
-                    c.execute("INSERT OR REPLACE INTO transactions VALUES (?,?,?,?,?,?,?,?,?,?)", (
+                    c.execute("INSERT OR REPLACE INTO transactions VALUES "
+                              "(?,?,?,?,?,?,?,?,?,?,?)", (
                         season, t["transaction_id"], t.get("leg", wk), t.get("type"),
                         t.get("status"), json.dumps(t.get("roster_ids") or []),
                         json.dumps(t.get("adds") or {}), json.dumps(t.get("drops") or {}),
-                        st.get("waiver_bid"), t.get("created")))
+                        st.get("waiver_bid"), t.get("created"),
+                        ((t.get("metadata") or {}).get("notes") or "").strip()))
             except Exception:
                 pass
 

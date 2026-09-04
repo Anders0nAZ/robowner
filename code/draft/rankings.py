@@ -74,6 +74,11 @@ _BONUS_VOLUME = {  # missing scoring key -> the volume stat that drives it
 }
 _LEAGUE_SACK_RATE = 0.065  # fallback sacks-per-dropback for QBs with no 2025 sample
 
+# Weekly pass attempts that mark a genuine starter, for the per-week sack
+# correction. The season-scale gate is 100 attempts; a starter throws about
+# thirty in a game and a mop-up backup throws a handful.
+_WEEK_QB_ATT_MIN = 8
+
 
 def stats_2025() -> dict:
     """2025 season actuals, cached to disk for offline resilience."""
@@ -103,6 +108,35 @@ def missing_key_points(pid: str, proj: dict, scoring: dict, s25_all: dict) -> fl
         if pts and c25 and v25 > 50 and pv:
             extra += c25 * min(pv / v25, 2.0) * pts
     return round(extra, 1)
+
+
+def missing_key_rate(pid: str, week_proj: dict, scoring: dict,
+                     s25_all: dict) -> float:
+    """The same 22-key correction, for ONE WEEK's projection rather than a season.
+
+    The bonus half needs no change and that is not a coincidence: it already
+    scales a player's 2025 bonus count by his projected volume over his 2025
+    volume, so handing it a week's volume returns a week's worth of bonus.
+
+    The sack half does need a different gate. It fires on `pass_att > 100`,
+    which is a season starter and which no weekly blob will ever reach, so
+    reusing it unchanged would silently drop a starting quarterback's sack
+    penalty from every rest-of-season number -- the exact class of quiet
+    omission the 57-key correction exists to stop.
+    """
+    s25 = s25_all.get(pid) or {}
+    extra = 0.0
+    week_att = week_proj.get("pass_att") or 0
+    if week_att > _WEEK_QB_ATT_MIN:
+        att25 = s25.get("pass_att") or 0
+        rate = ((s25.get("pass_sack") or 0) / att25) if att25 > 100 else _LEAGUE_SACK_RATE
+        extra += rate * week_att * scoring.get("pass_sack", 0.0)
+    for key, vol in _BONUS_VOLUME.items():
+        pts = scoring.get(key) or 0.0
+        c25, v25, pv = s25.get(key) or 0, s25.get(vol) or 0, week_proj.get(vol) or 0
+        if pts and c25 and v25 > 50 and pv:
+            extra += c25 * min(pv / v25, 2.0) * pts
+    return round(extra, 2)
 
 
 def build_board() -> list[dict]:

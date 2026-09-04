@@ -20,6 +20,8 @@ Everything the bot knows comes in through here. All free, all public except Slee
 | [`buzz.py`](data/buzz.py) | What the market is doing RIGHT NOW, because ADP and depth charts lag. |
 | [`scout.py`](data/scout.py) | Pre-draft gut check: read what the writers say, decide who to trust. |
 | [`history.py`](data/history.py) | Harvest the league's full Sleeper history into data/history.db. |
+| [`vegas.py`](data/vegas.py) | Implied team totals from the betting market, for the weeks the books have posted. |
+| [`projarchive.py`](data/projarchive.py) | A daily snapshot of Sleeper's projections for EVERY remaining week. |
 
 ## The draft
 
@@ -38,7 +40,7 @@ Valuing players, pricing keepers, and the agent that actually sat on the clock a
 
 ## In season
 
-Weekly lineups, injured reserve, and the add/drop and waiver machinery.
+Weekly lineups, injured reserve, and the add/drop and waiver machinery. What a player is worth from here to the end of the season is the number every roster decision is priced on, and it is built from public projections, ten seasons of usage, and the betting market.
 
 | module | what it does |
 |---|---|
@@ -46,8 +48,13 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery.
 | [`lineup.py`](in-season/lineup.py) | Weekly lineup optimizer. |
 | [`model_proj.py`](in-season/model_proj.py) | This week's projections from the NFL Model, or nothing at all. |
 | [`ir.py`](in-season/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |
-| [`value.py`](in-season/value.py) | Rest-of-season player value -- the seam, in progress. |
+| [`value.py`](in-season/value.py) | Rest-of-season player value -- the seam, now wired to a real number. |
 | [`moves.py`](in-season/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
+| [`ros.py`](in-season/ros.py) | What a player is worth from here to the end -- the number moves.py was waiting on. |
+| [`roles.py`](in-season/roles.py) | Who actually has the job, and who gets it if it opens -- measured, not declared. |
+| [`playoffs.py`](in-season/playoffs.py) | P(this team makes the playoffs) -- the weight ros.py hangs the future on. |
+| [`streaming.py`](in-season/streaming.py) | Streaming defences: who to start, and who to pick up, weeks before kickoff. |
+| [`faab.py`](in-season/faab.py) | What a waiver claim costs in THIS league, from six seasons of real auctions. |
 
 ## Talking
 

@@ -48,15 +48,19 @@ CATEGORIES = [
      "Everything the bot knows comes in through here. All free, all public "
      "except Sleeper's write API, which uses its own account.",
      ["sleeper_read", "sleeper_write", "adp", "adp_live", "fantasypros",
-      "buzz", "scout", "history"]),
+      "buzz", "scout", "history", "vegas", "projarchive"]),
     ("draft", "The draft",
      "Valuing players, pricing keepers, and the agent that actually sat on the "
      "clock and submitted picks.",
      ["rankings", "keeper", "league_keepers", "bench", "draft_agent",
       "draft_sim", "mock_draft", "draft_chat"]),
     ("in-season", "In season",
-     "Weekly lineups, injured reserve, and the add/drop and waiver machinery.",
-     ["season", "lineup", "model_proj", "ir", "value", "moves"]),
+     "Weekly lineups, injured reserve, and the add/drop and waiver machinery. "
+     "What a player is worth from here to the end of the season is the number "
+     "every roster decision is priced on, and it is built from public "
+     "projections, ten seasons of usage, and the betting market.",
+     ["season", "lineup", "model_proj", "ir", "value", "moves",
+      "ros", "roles", "playoffs", "streaming", "faab"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",

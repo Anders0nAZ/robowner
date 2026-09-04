@@ -461,12 +461,14 @@ REGISTRY: list[S] = [
       "somebody is a separate decision the bot cannot make yet."),
     S(ROSTER, "robo.moves", "MIN_GAIN_TO_ADD", float,
       "How much better a candidate must be than the man he replaces.",
-      "In the valuation's units, so it will need retuning the moment the "
-      "valuation is real -- the current number is calibrated against a "
-      "PROVISIONAL stand-in and means little. Inert until then.",
+      "In rest-of-season points, comparing what a candidate is worth (`mean`) "
+      "against what the man he replaces would cost us (`hold`). Lower it and the "
+      "bot churns the bottom of the roster for fractional gains; raise it and it "
+      "sits out real upgrades. Ignored in `patch` mode, where an empty starting "
+      "slot scores zero and anyone startable beats it.",
       bounds=(0.0, 200.0), unit="points"),
     S(ROSTER, "robo.moves", "DROP_FLOOR", float,
-      "Never cut anyone valued above this.",
+      "Never cut anyone whose HOLD value is above this.",
       "A backstop against the valuation being wrong, checked in addition to the "
       "hard rule that nobody in the current starting lineup is droppable. Two "
       "guards because they fail differently: one catches a bad number, the other "
@@ -486,17 +488,87 @@ REGISTRY: list[S] = [
       "off a player no longer on our roster at zero cost. A one-deep slate is "
       "the failure mode here, not a long one.",
       bounds=(1, 20), unit="claims"),
-    S(ROSTER, "robo.moves", "FAAB_AGGRESSION", float,
-      "How much of a player's per-week edge to offer as FAAB.",
-      "INERT: the gain it scales is the valuation's output, and there is no "
-      "valuation yet. The shape is here so it can be tuned against real numbers "
-      "rather than invented alongside them.",
-      bounds=(0.0, 3.0)),
-    S(ROSTER, "robo.moves", "FAAB_MAX_BID_PCT", float,
+    S(ROSTER, "robo.faab", "MAX_SINGLE_BID_PCT", float,
       "Hard ceiling on one bid, as a share of the budget still unspent.",
-      "Stops a single week emptying the season's budget. 100 FAAB has to cover "
-      "roughly eighteen waiver runs, and the expensive weeks are rarely the "
-      "early ones.",
+      "Stops a single week emptying the season's budget. Bid pricing moved out "
+      "of moves.py into faab.py when it stopped being an invented formula and "
+      "started being this league's own 1,032 recorded bids, and this dial moved "
+      "with it.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.faab", "MIN_POINTS_PER_DOLLAR", float,
+      "What a FAAB dollar is worth in rest-of-season points, at an even pace.",
+      "THE BID POLICY IN ONE NUMBER -- it decides where on the win-probability "
+      "curve we stop. The first dollar buys about ten points of win probability "
+      "and everything past $10 buys a fraction of one, so lowering this bids "
+      "harder into a steeply flattening curve. The budget genuinely is scarce "
+      "here (median team spends $89 of $100, 24 of 55 team-seasons exhausted "
+      "it) and it expires worthless, which is why the price is paced rather "
+      "than fixed -- see PACE_BOUNDS.",
+      bounds=(0.0, 20.0), unit="points per FAAB dollar"),
+    S(ROSTER, "robo.faab", "PACE_BOUNDS", tuple,
+      "How far the budget pace may push the price of a dollar, (min, max).",
+      "Unclamped, a team that had spent nothing by week 14 would price dollars "
+      "near zero and empty the budget on the first player it saw; a team that "
+      "had spent everything would price them so high it stopped bidding at all.",
+      bounds=(0.0, 20.0)),
+    S(ROSTER, "robo.faab", "MIN_LIVE_BID", int,
+      "The least we will offer on a claim we actually want.",
+      "A $0 claim is a real claim in this league and plenty have won, so this is "
+      "not about validity -- it is a dollar of separation from everyone who left "
+      "the field blank. Raising it spends budget on rungs that were converting "
+      "anyway.",
+      bounds=(0, 10), unit="FAAB"),
+    S(ROSTER, "robo.moves", "ROS_MOVE_BLACKOUT_H", float,
+      "Hours before kickoff when long-horizon roster moves stop.",
+      "A rest-of-season swap made an hour before the early games is this week's "
+      "panic with the season's consequences, and nothing about it could not have "
+      "waited for Tuesday. Only `ros` and `block` are held; `patch` still runs, "
+      "because an unfillable starting slot is the emergency the hour justifies. "
+      "Set to 0 to remove the brake entirely.",
+      bounds=(0.0, 48.0), unit="hours"),
+    S(ROSTER, "robo.moves", "BYE_LOOKAHEAD_WEEKS", int,
+      "How far ahead to look for a week we cannot field a legal lineup.",
+      "Raising it pre-empts byes earlier at the cost of holding cover we may not "
+      "need; the wire turns over, so cover bought five weeks out is often wasted.",
+      bounds=(0, 6), unit="weeks"),
+    S(ROSTER, "robo.moves", "BLOCK_MIN_DENY", float,
+      "How much a free agent must improve an OPPONENT before denying him.",
+      "Blocking is the third priority and buys us nothing directly -- the gain is "
+      "purely somebody else's loss, priced on a bench we can only estimate. Set "
+      "it low and the bot spends roster spots on players it will never start.",
+      bounds=(0.0, 300.0), unit="points"),
+    S(ROSTER, "robo.moves", "BLOCK_MAX_BID", int,
+      "The most FAAB a purely defensive claim may spend.",
+      "Denial is worth a roster spot occasionally and real budget almost never. "
+      "Budget spent here is budget missing when our own need appears.",
+      bounds=(0, 50), unit="FAAB"),
+    S(ROSTER, "robo.ros", "UPSIDE_WEIGHT", float,
+      "How hard the rising-role premium protects a player from being dropped.",
+      "THE ROOKIE-HOLD DIAL. At 0 an add and a drop are priced off the same "
+      "number and the bot will cut a breakout-in-waiting for any established "
+      "veteran; at 2 it hoards lottery tickets it will never start. Only affects "
+      "drops -- an add is always judged on what a man is worth now.",
+      bounds=(0.0, 3.0)),
+    S(ROSTER, "robo.ros", "NEWS_APPLY_FUTURE", float,
+      "How much of a scout news verdict reaches the FUTURE weeks.",
+      "PROVISIONAL AT 0.5 pending evidence. Sleeper demonstrably reprices the "
+      "CURRENT week on news; whether it reprices week 9 has never been observed. "
+      "At 1.0 a feed that does reprice counts the same injury twice; at 0.0 a "
+      "feed that does not carries no news at all. `python -m robo.projarchive "
+      "--diff` is collecting the answer.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.playoffs", "WEEKLY_SD", float,
+      "Week-to-week scoring spread used to simulate playoff odds.",
+      "This league's own within-team standard deviation, 23.8 across 72 "
+      "team-seasons. Do NOT set it to the spread of all scores (26.8): that also "
+      "contains the real gap between good and bad teams, which the projected "
+      "lineups already carry, and using it would count team quality twice.",
+      bounds=(1.0, 60.0), unit="points"),
+    S(ROSTER, "robo.vegas", "MIN_COVERAGE", float,
+      "Share of a week's games that must be priced before it is planned around.",
+      "Books post a week or two out, not a season. Below this the best available "
+      "defence is really the best of whichever few games the book happened to "
+      "post first, which is a different question.",
       bounds=(0.0, 1.0)),
     S(ROSTER, "robo.season", "ROSTER_MAX", int,
       "Active roster size.",

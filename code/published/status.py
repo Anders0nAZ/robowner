@@ -428,6 +428,16 @@ SOURCES = [
     # after. Moving one without the other is how the page reports healthy on a
     # source nothing is using.
     ("model",       "NFL Model projections", 30 * 3600, "RobonerRefresh"),
+    # 20 hours, matching ros.MAX_AGE_H, so the page goes amber at the same
+    # moment the valuation stops trusting itself -- the same rule as the model
+    # row above.
+    ("ros",         "Rest-of-season value", 20 * 3600, "RobonerRefresh"),
+    ("playoff-odds", "Playoff odds",        30 * 3600, "RobonerRefresh"),
+    # Produced by the OTHER repo's daily ingest. Before week 1 is played there
+    # is nothing to hold and the row reads BAD with "no player_stats yet" --
+    # which is the honest state, and the reason roles.py is running on last
+    # season's shares until then.
+    ("usage",       "nflverse usage data",  30 * 3600, "NFLModelCaptureDaily"),
     ("chat-memory", "League chat index",    26 * 3600, "RobonerRefresh"),
     ("media-pool",  "Reaction image pool",  26 * 3600, "RobonerRefresh"),
     # ADP and ECR are deliberately absent, for the same reason and with the same
@@ -487,7 +497,28 @@ def _refresh_log() -> dict:
 # means the file itself is gone -- a hard failure, not a reason to consult the
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
-MARKED_STEPS = {"players", "projections", "buzz", "board", "model"}
+MARKED_STEPS = {"players", "projections", "buzz", "board", "model",
+                "ros", "playoff-odds", "usage"}
+
+# Sources whose ABSENCE is a normal state at some point in the year, and so must
+# not paint the page red on a perfectly healthy bot. A false alarm that runs for
+# a week teaches the reader to ignore the dot, which costs more than the warning
+# was ever worth -- the same reasoning that keeps adp-live, ecr and scout off
+# the SOURCES list entirely.
+SOFT_ABSENT = {"usage"}
+
+
+def _absence_is_expected(step: str) -> bool:
+    if step != "usage":
+        return False
+    # nflverse cannot publish a season's usage before the season has been
+    # played. Until week 1 kicks off there is nothing missing, and roles.py
+    # says so itself by falling back to last season's shares.
+    try:
+        from robo import season as _season, vegas as _vegas
+        return _vegas.next_kickoff(_season.SEASON, 1) is not None
+    except Exception:
+        return False
 
 
 def _source_marker(step: str):
@@ -525,6 +556,31 @@ def _source_marker(step: str):
             pass
         return ts, "%d players, %s week %s" % (
             len(d.get("players", {})), d.get("season", "?"), d.get("week", "?"))
+    if step == "ros":
+        d = _read_json(DATA / "ros.json", {}) or {}
+        return d.get("computed"), "%d players from week %s" % (
+            len(d.get("players", {})), d.get("week", "?"))
+    if step == "playoff-odds":
+        d = _read_json(DATA / "playoff_odds.json", {}) or {}
+        ours = (d.get("odds") or {}).get(d.get("ours") or "")
+        return d.get("computed"), "%d teams, ours %s" % (
+            len(d.get("odds", {})),
+            "%.0f%%" % (ours * 100) if ours is not None else "?")
+    if step == "usage":
+        # nflverse's CURRENT-season player_stats, which roles.py reads to work
+        # out who actually has the job. It is refreshed by the NFL Model's
+        # ingest, not ours -- hence the NFLModelCaptureDaily attribution -- and
+        # it legitimately does not exist until week 1 has been played, which the
+        # detail says rather than the dot pretending it is broken.
+        try:
+            from robo import roles, season as _season
+            f = roles.freshness(_season.SEASON)
+        except Exception:
+            return None, "unreadable"
+        if not f.get("ok"):
+            return None, f.get("why", "absent")
+        import time as _t
+        return _t.time() - f["age_h"] * 3600.0, "%.0fh old" % f["age_h"]
     if step == "projections":
         p = RAW / "projections_2026.json"
         return _mtime(p), "%d rows" % len(_read_json(p, []) or [])
@@ -572,8 +628,13 @@ def ingests() -> list:
             # corrupted, and "fresh" is the worst possible answer to give about
             # something that is gone.
             ts, status = None, BAD
-            detail = "missing or unreadable"
-            why = "the file we hold is missing or unreadable"
+            # The marker gets to say WHY when it knows. The generic text is
+            # right about a file that vanished and wrong about one that is not
+            # supposed to exist yet, and those look identical from here.
+            why = detail or "the file we hold is missing or unreadable"
+            detail = detail or "missing or unreadable"
+            if step in SOFT_ABSENT and _absence_is_expected(step):
+                status = WARN
         else:
             ts = mark_ts or entry.get("last_ok")
             status, why = _age_verdict(ts, max_age)

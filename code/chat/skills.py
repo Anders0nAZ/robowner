@@ -696,6 +696,41 @@ def explain_myself(topic: str = "") -> str:
     return selfdoc.digest()
 
 
+def player_value(name: str) -> str:
+    """What a player is worth from here to the end of the season, and why.
+
+    Two numbers come back and they answer different questions: `mean` is what he
+    is worth to us, `hold` is what it would cost to lose him. They differ when a
+    man stands to inherit the job in front of him, which is the whole reason a
+    rookie backup does not get cut for an established veteran.
+    """
+    from robo import ros
+    if not (name or "").strip():
+        return "Name a player and I will price him."
+    out = ros.explain(name.strip())
+    return out or f"I have no rest-of-season number for {name}."
+
+
+def playoff_odds() -> str:
+    """Every team's chance of making the playoffs, simulated over what is left."""
+    from robo import playoffs
+    return playoffs.report()
+
+
+def defense_streaming(weeks: int = 3) -> str:
+    """The best defence matchups over the next few weeks, from the betting market.
+
+    Kickers are deliberately absent and the report says so: the same fit on 1,478
+    kicker weeks finds no usable signal, so there is nothing to recommend.
+    """
+    from robo import streaming
+    try:
+        n = max(1, min(6, int(weeks)))
+    except (TypeError, ValueError):
+        n = 3
+    return streaming.report(weeks=n, top=6)
+
+
 SKILLS = {
     "league_chat_history": league_chat_history,
     "my_franchise": my_franchise,
@@ -721,6 +756,9 @@ SKILLS = {
     "draft_results": draft_results,
     "my_lineup": my_lineup,
     "roster_state": roster_state,
+    "player_value": player_value,
+    "playoff_odds": playoff_odds,
+    "defense_streaming": defense_streaming,
 }
 
 # Ollama/OpenAI-style tool schemas for the local model
@@ -754,8 +792,22 @@ TOOL_SCHEMAS = [
             "week": {"type": "string", "description": "Optional week number; omit for the current week"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "roster_state",
-        "description": "My roster count, IR usage, FAAB budget left, who is on waivers, and WHAT I AM CURRENTLY ALLOWED TO DO about it. Call this for any question about adds, drops, waivers, free agents, my budget, or whether I am going to pick somebody up. It will tell you plainly if that part of me is switched off, which it currently is.",
+        "description": "My roster count, IR usage, FAAB budget left, who is on waivers, and WHAT I AM CURRENTLY ALLOWED TO DO about it. Call this for any question about adds, drops, waivers, free agents, my budget, or whether I am going to pick somebody up. It will tell you plainly whether that part of me is switched on.",
         "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "player_value",
+        "description": "What a player is worth from NOW to the end of the season, week by week, and what it would cost me to lose him. Call this for 'is X worth picking up', 'should you drop Y', 'who is better rest of season', or any question about a player's value going forward. It is not the same as this week's projection - use player_projection for that.",
+        "parameters": {"type": "object", "properties": {
+            "name": {"type": "string", "description": "The player's name"}}, "required": ["name"]}}},
+    {"type": "function", "function": {
+        "name": "playoff_odds",
+        "description": "Every team's simulated chance of making the playoffs, and of the top seed, based on records and projected lineups over the remaining schedule. Call this for 'who is making the playoffs', 'what are my chances', 'is anyone eliminated', or any standings-into-the-future question.",
+        "parameters": {"type": "object", "properties": {}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "defense_streaming",
+        "description": "The best defence matchups over the next few weeks, ranked by the opponent's implied point total from the betting market. Call this for 'what defence should I stream', 'who has a good matchup', or defence pickup questions. I do not rank kickers and will say why if asked.",
+        "parameters": {"type": "object", "properties": {
+            "weeks": {"type": "integer", "description": "How many weeks ahead (1-6, default 3)"}}, "required": []}}},
     {"type": "function", "function": {
         "name": "explain_myself",
         "description": "How I am built AND what has recently changed about me. Returns my architecture, my public dev log of recent fixes and new capabilities, and optionally the actual source of one part of me. Call this for any question about myself - how I work, how I decide something, what I am made of, what I can or cannot do, who wrote me, what model I run on. Never describe my own workings from memory; read them.",
