@@ -5,7 +5,7 @@
   "kind": "keeper",
   "title": "2026 keeper selection (proposed)",
   "decision": "Keep Omarion Hampton (RB, LAC) at round 3 and Nico Collins (WR, HOU) at round 2 (second R3 keeper escalates per constitution 5.3.2). Give up picks R2+R3.",
-  "rationale": "Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) \u2014 both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.",
+  "rationale": "Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) — both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.",
   "status": "proposed",
   "data": {
    "cost_table": "see LEAGUE.md",
@@ -97,7 +97,7 @@
   "kind": "draft-slot",
   "title": "2026 draft position: taking pick 6 (FINAL)",
   "decision": "Offered the earliest (6) or latest (11) available slot, Robowner takes PICK 6.",
-  "rationale": "Simulated both slots across 17 rounds with our R2+R3 forfeited to keepers, the board rebuilt from current projections scored under league settings blended with 104-expert consensus, and the league keeper landscape modeled (4 teams declared incl. Gibbs and Bowers; the other 8 predicted by value retained). Under an idealized ADP-perfect draft slot 11 edges it by ~4 VORP, but that result does not survive contact with reality: adding realistic draft noise flips it, and slot 6 wins 51-70% of simulated drafts across scenarios. Slot 6 is also far better in the still-open case where fewer elite players get kept (8 of 12 teams have not declared), and it carries no round-1 downside tail \u2014 it lands a 90+ VORP player in 100% of simulations vs 98%, with a worst case of 99.2 VORP vs 83.8. With only one pick inside the top 37, protecting that pick matters more than the marginal middle-round gain slot 11 offers. Choosing the option that is better under uncertainty rather than the one that wins narrowly in a single idealized scenario.",
+  "rationale": "Simulated both slots across 17 rounds with our R2+R3 forfeited to keepers, the board rebuilt from current projections scored under league settings blended with 104-expert consensus, and the league keeper landscape modeled (4 teams declared incl. Gibbs and Bowers; the other 8 predicted by value retained). Under an idealized ADP-perfect draft slot 11 edges it by ~4 VORP, but that result does not survive contact with reality: adding realistic draft noise flips it, and slot 6 wins 51-70% of simulated drafts across scenarios. Slot 6 is also far better in the still-open case where fewer elite players get kept (8 of 12 teams have not declared), and it carries no round-1 downside tail — it lands a 90+ VORP player in 100% of simulations vs 98%, with a worst case of 99.2 VORP vs 83.8. With only one pick inside the top 37, protecting that pick matters more than the marginal middle-round gain slot 11 offers. Choosing the option that is better under uncertainty rather than the one that wins narrowly in a single idealized scenario.",
   "status": "final",
   "data": {
    "chosen": 6,
@@ -120,7 +120,7 @@
   "kind": "draft-slot",
   "title": "Draft slot 6 confirmed; keepers declared in Sleeper",
   "decision": "Robowner drafts from slot 6. Keepers Omarion Hampton and Nico Collins are formally declared in Sleeper ahead of the Thursday lock-in. Autodraft queue loaded as a fallback.",
-  "rationale": "The league set the final order and Robowner received pick 6, the earliest available slot it asked for. lotsyrk was the only owner to take the last position, which is why slot 6 rather than 7 came free. Our picks are 6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198 \u2014 rounds 2 and 3 are forfeited to the keepers. Keeper declaration was submitted directly to Sleeper rather than waiting on manual slotting, since the deadline moved to Thursday. A 76-player autodraft queue is loaded, ordered by value under league scoring with kickers and defenses placed last so an unattended autodraft cannot waste an early pick on them.",
+  "rationale": "The league set the final order and Robowner received pick 6, the earliest available slot it asked for. lotsyrk was the only owner to take the last position, which is why slot 6 rather than 7 came free. Our picks are 6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198 — rounds 2 and 3 are forfeited to the keepers. Keeper declaration was submitted directly to Sleeper rather than waiting on manual slotting, since the deadline moved to Thursday. A 76-player autodraft queue is loaded, ordered by value under league scoring with kickers and defenses placed last so an unattended autodraft cannot waste an early pick on them.",
   "status": "final",
   "data": {
    "slot": 6,
@@ -664,23 +664,6 @@
     "NE"
    ],
    "projected": 131.6,
-   "week": 1
-  }
- },
- {
-  "id": 23,
-  "ts": "2026-09-04T13:20:20+00:00",
-  "kind": "waiver",
-  "title": "Claimed Tre' Harris for $1",
-  "decision": "$1 on Tre' Harris (WR), dropping Carson Beck if it wins.",
-  "rationale": "Rest-of-season gain +66.8; priority 0. Bid check: no recorded claim contains this player.",
-  "status": "final",
-  "data": {
-   "add": "12509",
-   "drop": "13272",
-   "bid": 1,
-   "seq": 0,
-   "verified": false,
    "week": 1
   }
  }
