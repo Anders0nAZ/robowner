@@ -666,5 +666,22 @@
    "projected": 131.6,
    "week": 1
   }
+ },
+ {
+  "id": 23,
+  "ts": "2026-09-04T13:20:20+00:00",
+  "kind": "waiver",
+  "title": "Claimed Tre' Harris for $1",
+  "decision": "$1 on Tre' Harris (WR), dropping Carson Beck if it wins.",
+  "rationale": "Rest-of-season gain +66.8; priority 0. Bid check: no recorded claim contains this player.",
+  "status": "final",
+  "data": {
+   "add": "12509",
+   "drop": "13272",
+   "bid": 1,
+   "seq": 0,
+   "verified": false,
+   "week": 1
+  }
  }
 ]
