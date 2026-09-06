@@ -116,7 +116,7 @@ BLOCK_MAX_BID = 3
 
 settings.apply(__name__, globals())
 
-MODES = ("patch", "fill", "ros", "block")
+MODES = ("patch", "fill", "stream", "ros", "block")
 
 
 # ------------------------------------------------------------------ evaluation
@@ -182,6 +182,15 @@ def holes(ctx: dict) -> list[dict]:
         empty = [lineup.SLOTS[i] for i, p in enumerate(filled) if not p]
         unstartable = [lineup.SLOTS[i] for i, p in enumerate(filled)
                        if p and not lineup.startable(p)]
+        if w != ctx["week"]:
+            # A KICKER OR DEFENCE BYE IS NOT WORTH PRE-EMPTING. Three weeks of
+            # lookahead is right where the wire turns over and a replacement may
+            # not be there later; it is wrong at these two, where twenty-one
+            # defences and a shelf of kickers sit unowned all season. Left in, it
+            # signs a second kicker in week 3 to cover a week-6 bye and pays a
+            # bench spot for three weeks to solve a problem that solves itself.
+            empty = [x for x in empty if x not in ("K", "DEF")]
+            unstartable = [x for x in unstartable if x not in ("K", "DEF")]
         if empty or unstartable:
             out.append({"week": w, "empty": empty, "unstartable": unstartable})
     return out
@@ -301,9 +310,108 @@ def _need_positions(ctx: dict) -> set[str]:
     return need
 
 
+def submit_free(ctx: dict, plans: list[dict], out: dict,
+                league_id: str = LEAGUE_ID_2026) -> dict:
+    """Send free-agent adds and write the public record. ONE submission path.
+
+    Factored out of run() so the defence streamer can reach it without growing a
+    parallel one. Everything above it in run() -- the gate, the blackout, the
+    refusal to act -- has already happened by the time this is called, and a
+    second copy of any of that is the thing most likely to forget the gate.
+    """
+    from robo import sleeper_write as sw
+    rid = ctx["roster"]["roster_id"]
+    mode = ctx.get("mode", "ros")
+    for p in plans:
+        add, drop = p["add"], p["drop"]
+        try:
+            sw.free_agent_transaction(
+                {add["player_id"]: rid} if add.get("player_id") else None,
+                {drop["player_id"]: rid} if drop.get("player_id") else None,
+                league_id)
+        except Exception as e:
+            print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
+            continue
+        out["submitted"].append({"add": add["name"], "drop": drop["name"]})
+        _record("free-agent", f"Signed {add['name']}, released {drop['name']}",
+                f"{add['name']} ({add['pos']}) in, {drop['name']} out.",
+                f"Rest-of-season value {p['add_value']:.1f} against "
+                f"{p['drop_value']:.1f} held, a gain of {p['gain']:+.1f} "
+                f"in {mode} mode."
+                + (f" {p['why']}." if p.get("why") else ""),
+                {"add": add.get("player_id"), "drop": drop.get("player_id"),
+                 "mode": mode, "week": ctx["week"], "gain": p["gain"]})
+    out["applied"] = True
+    return out
+
+
+def plan_strand(ctx: dict) -> list[dict]:
+    """Free a slot for a man Sleeper will not let stay on reserve.
+
+    THE ANNOYANCE THIS EXISTS FOR. A player parked on IR with an `Out`
+    designation loses that designation once the week's games finish. He is then
+    not IR-eligible, and Sleeper BLOCKS EVERY ROSTER MOVE -- adds, drops,
+    claims, all of it -- until he is activated or cut. It is the one roster
+    state that freezes the whole account.
+
+    ir.py detects it correctly and refuses to resolve it, on the grounds that
+    activating a man into a full roster means cutting somebody and a cut is a
+    valuation. That was right, and its handoff was wrong: it says to run
+    `moves --mode patch`, and patch fires only on holes(), which is about
+    UNFILLABLE STARTING SLOTS. A stranded man on reserve leaves the lineup
+    perfectly legal, so patch returned nothing and the deadlock sat there --
+    ir pointing at moves, moves seeing no hole, Sleeper refusing everything.
+
+    THE CUT IS NOW ANSWERABLE, which is what changed. The question is simply who
+    is cheapest to lose: the returning man himself, or the cheapest body on the
+    active roster. Both are priced by the same simulator, so this compares two
+    drop prices and takes the smaller. Dropping the stranded man is often
+    correct and was never even considered before.
+    """
+    from robo import ir, marginal
+    p = ir.plan(ctx["league_id"])
+    stuck = [b for b in p["blocked"] if b.get("player_id") in set(p["current"])]
+    if not stuck:
+        return []
+    out, spent = [], set()
+    for b in stuck:
+        pid = b["player_id"]
+        his = marginal.drop_price(pid, ctx["league_id"])
+        cands = [d for d in droppables(ctx) if d["row"]["player_id"] not in spent]
+        cheapest = cands[0] if cands else None
+        row = ctx["by_id"].get(pid) or {"player_id": pid, "name": b["name"], "pos": "--"}
+        if cheapest is None or his <= cheapest["value"]:
+            out.append({"add": {"player_id": None, "name": "(nobody -- a cut, not a swap)",
+                                "pos": "--"},
+                        "drop": row, "gain": 0.0, "add_value": 0.0,
+                        "drop_value": round(his, 1), "real": True,
+                        "why": f"{b['status']}, so he cannot stay on reserve, and at "
+                               f"{his:.1f} he is cheaper to lose than anyone we hold; "
+                               f"cutting him unblocks the roster"})
+            spent.add(pid)
+            continue
+        spent.add(cheapest["row"]["player_id"])
+        out.append({"add": row, "drop": cheapest["row"],
+                    "gain": round(his - cheapest["value"], 1),
+                    "add_value": round(his, 1),
+                    "drop_value": round(cheapest["value"], 1), "real": True,
+                    "why": f"activating him off reserve ({b['status']}) needs an "
+                           f"active slot; he is worth {his:.1f} against "
+                           f"{cheapest['value']:.1f} for the cheapest body we hold"})
+    return out
+
+
 def plan_free(ctx: dict) -> list[dict]:
     """Instant adds. One proposal per roster slot we are willing to turn over."""
     mode = ctx["mode"]
+    if mode == "patch":
+        # A STRANDED RESERVE IS A LEGALITY PROBLEM TOO, and the more urgent one:
+        # an unfillable lineup slot costs us one week's points, while a man
+        # Sleeper will not let stay on reserve blocks every transaction on the
+        # account until he moves. It is checked first for that reason.
+        stranded = plan_strand(ctx)
+        if stranded:
+            return stranded
     need = _need_positions(ctx) if mode == "patch" else None
     if mode == "patch" and not need:
         return []
@@ -721,29 +829,12 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
     if not apply or block or not plans:
         return out
 
+    if channel == "free":
+        return submit_free(ctx, plans, out, league_id)
+
     from robo import sleeper_write as sw
     rid = ctx["roster"]["roster_id"]
-    if channel == "free":
-        for p in plans:
-            add, drop = p["add"], p["drop"]
-            try:
-                sw.free_agent_transaction(
-                    {add["player_id"]: rid},
-                    {drop["player_id"]: rid} if drop.get("player_id") else None,
-                    league_id)
-            except Exception as e:
-                print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
-                continue
-            out["submitted"].append({"add": add["name"], "drop": drop["name"]})
-            _record("free-agent", f"Signed {add['name']}, released {drop['name']}",
-                    f"{add['name']} ({add['pos']}) in, {drop['name']} out.",
-                    f"Rest-of-season value {p['add_value']:.1f} against "
-                    f"{p['drop_value']:.1f} held, a gain of {p['gain']:+.1f} "
-                    f"in {mode} mode."
-                    + (f" {p['why']}." if p.get("why") else ""),
-                    {"add": add["player_id"], "drop": drop["player_id"],
-                     "mode": mode, "week": ctx["week"], "gain": p["gain"]})
-    else:
+    if True:
         for s in plans:
             for c in sorted(s["claims"], key=lambda x: x["seq"]):
                 add = c["add"]

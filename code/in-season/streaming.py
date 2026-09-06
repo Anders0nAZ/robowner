@@ -197,6 +197,45 @@ def rank_week(week: int, season_yr=None, pos: str = "DEF") -> list[dict]:
     return out
 
 
+def best_available(week: int, league_id=None, season_yr=None) -> dict | None:
+    """The best defence we could actually get this week, or None.
+
+    rank_week() ranks all thirty-two, which is right for a board a human reads
+    and wrong for a decision: in week 1 the top two were Jacksonville at 11.18
+    and the Chargers at 10.68 and BOTH were rostered, so a streamer built on the
+    raw board would have proposed a move Sleeper cannot execute. The best one
+    actually free was Las Vegas at 10.52.
+
+    A team defence's Sleeper player_id IS its team code, which is what makes the
+    intersection a set membership test rather than a name match.
+    """
+    from robo import LEAGUE_ID_2026, season as _season
+    held = _season.rostered_ids(league_id or LEAGUE_ID_2026)
+    for r in rank_week(week, season_yr, pos="DEF"):
+        if r["team"] not in held:
+            return r
+    return None
+
+
+def swap(week: int, ours: str, league_id=None, season_yr=None) -> dict:
+    """Should we stream this week? {gain, best, mine, why}.
+
+    The whole decision, in one place, so the cascade does not have to know how
+    a defence is priced and streaming.py does not have to know how a roster move
+    is submitted.
+    """
+    board = rank_week(week, season_yr, pos="DEF")
+    mine = next((r for r in board if r["team"] == ours), None)
+    best = best_available(week, league_id, season_yr)
+    if not best or not mine:
+        return {"gain": 0.0, "best": best, "mine": mine,
+                "why": "no priced line for one side of the comparison"}
+    gain = round(best["pts"] - mine["pts"], 2)
+    return {"gain": gain, "best": best, "mine": mine,
+            "why": (f"{best['team']} {best['pts']:.2f} against {ours} "
+                    f"{mine['pts']:.2f} on this week's lines")}
+
+
 def plan(from_week: int | None = None, weeks: int = 4, season_yr=None,
          pos: str = "DEF") -> dict:
     """A week-by-week streaming board out to the end of the priced horizon."""

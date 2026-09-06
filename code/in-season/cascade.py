@@ -78,7 +78,7 @@ EXPORT_TIMEOUT_S = 120
 # Steps whose failure must NOT stop the chain. A stale weekly projection is
 # survivable and model_proj says so out loud; a lineup that never gets set is
 # not. Anything outside this set aborts the run.
-SOFT_STEPS = ("scout", "capture", "export", "waivers")
+SOFT_STEPS = ("scout", "capture", "export", "stream", "waivers")
 
 settings.apply(__name__, globals())
 
@@ -231,7 +231,10 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     step("lineup", lambda: _lineup(lineup, wk, apply))
     step("ir", lambda: _ir(ir, apply))
     step("lineup2", lambda: _lineup(lineup, wk, apply))
+    step("patch", lambda: _moves(moves, "patch", apply))
+    step("ir2", lambda: _ir(ir, apply))
     step("fill", lambda: _moves(moves, "fill", apply))
+    step("stream", lambda: _stream(moves, wk, apply, league_id))
     step("lineup3", lambda: _lineup(lineup, wk, apply))
     step("waivers", lambda: _waiver_watch(league_id))
 
@@ -312,12 +315,29 @@ def _lineup(lineup, wk: int, apply: bool) -> str:
 
 
 def _ir(ir, apply: bool) -> str:
+    """BLOCKED IS REPORTED FIRST, because `changed` is False when it happens.
+
+    A man whose designation cleared cannot be activated into a full roster, so
+    he stays in `target`, so `changed` comes back False -- and the old summary
+    read that as "nothing to move" while Sleeper was refusing every transaction
+    on the account. The one roster state that freezes everything was the one
+    the cascade described as quiet.
+    """
     out = ir.run(apply=apply, verbose=False)
     res, act = out.get("reserve") or [], out.get("activate") or []
-    if not out.get("changed"):
-        return f"nothing to move ({out.get('slots', {}).get('ir_used', 0)} on IR)"
-    tag = "applied" if out.get("applied") else "would move"
-    return f"{tag}: {len(res)} to reserve, {len(act)} to activate"
+    stuck = [b for b in (out.get("blocked") or [])
+             if b.get("player_id") in set(out.get("current") or [])]
+    parts = []
+    if stuck:
+        parts.append("ROSTER BLOCKED by " + ", ".join(
+            f"{b['name']} ({b['status']})" for b in stuck)
+            + " -- no move will be accepted until he is activated or cut")
+    if out.get("changed"):
+        tag = "applied" if out.get("applied") else "would move"
+        parts.append(f"{tag}: {len(res)} to reserve, {len(act)} to activate")
+    elif not stuck:
+        parts.append(f"nothing to move ({out.get('slots', {}).get('ir_used', 0)} on IR)")
+    return "; ".join(parts)
 
 
 def _moves(moves, mode: str, apply: bool) -> str:
@@ -339,6 +359,61 @@ def _moves(moves, mode: str, apply: bool) -> str:
     if out.get("gated"):
         return f"{len(plans)} add(s) WOULD be made ({who}) -- gate shut"
     return f"{len(plans)} add(s): {who}" + ("" if out.get("applied") else " (not submitted)")
+
+
+def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
+    """Swap the defence when this week's lines say somebody free is better.
+
+    DEFENCES ONLY, AND THAT IS A MEASURED DECISION rather than an omission.
+    streaming.py fits 2,174 defence weeks against the opponent's implied total
+    and gets 11.39 points down to 4.72, monotone across all eight buckets -- a
+    6.7-point spread on a slot averaging eight. The same fit on 1,478 kicker
+    weeks runs 6.95 to 8.16 with a correlation of +0.051 and no ordering at all,
+    and the NFL Model separately found the top ten kickers in a week span about
+    a third of a point. So a kicker is held, replaced when he is hurt or on bye,
+    and never streamed; churning a roster spot weekly to chase noise is a cost
+    with no matching benefit.
+
+    EXEMPT FROM THE KICKOFF BLACKOUT, like patch and for a stated reason. That
+    blackout exists so a season-long swap is not made on Sunday-morning panic --
+    it protects decisions you cannot take back. A defence stream is undone next
+    Tuesday for nothing, and the lines it reads are firmest late, so the rule
+    does not reach it.
+
+    THE BOARD IS INTERSECTED WITH WHAT IS ACTUALLY FREE. rank_week() ranks all
+    thirty-two; in week 1 the top two were both rostered and the best gettable
+    was fourth. A streamer on the raw board proposes moves Sleeper refuses.
+    """
+    from robo import streaming, value
+    from robo import sleeper_read as api
+    ctx = moves._context(league_id, mode="stream")
+    players = ctx["players"]
+    held = [p for p in (ctx["roster"].get("players") or [])
+            if (players.get(p) or {}).get("position") == "DEF"]
+    if not held:
+        return "we hold no defence; patch owns an empty slot"
+    ours = (players.get(held[0]) or {}).get("team") or held[0]
+    d = streaming.swap(wk, ours, league_id)
+    if not d.get("best"):
+        return d["why"]
+    if d["gain"] < streaming.MIN_STREAM_GAIN:
+        return (f"hold {ours}: {d['why']}, {d['gain']:+.2f} under the "
+                f"{streaming.MIN_STREAM_GAIN:g} bar")
+    best = d["best"]["team"]
+    plan = [{"add": {"player_id": best, "name": api.player_name(players, best),
+                     "pos": "DEF"},
+             "drop": {"player_id": held[0],
+                      "name": api.player_name(players, held[0]), "pos": "DEF"},
+             "gain": d["gain"], "add_value": round(d["best"]["pts"], 2),
+             "drop_value": round(d["mine"]["pts"], 2), "real": True,
+             "why": d["why"]}]
+    if not value.may_submit():
+        return f"WOULD stream {ours} -> {best} ({d['gain']:+.2f}) -- gate shut"
+    if not apply:
+        return f"would stream {ours} -> {best} ({d['gain']:+.2f})"
+    out = {"submitted": [], "applied": False}
+    moves.submit_free(ctx, plan, out, league_id)
+    return f"streamed {ours} -> {best} ({d['gain']:+.2f})"
 
 
 def _waiver_watch(league_id: str) -> str:
