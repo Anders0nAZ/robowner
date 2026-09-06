@@ -312,6 +312,27 @@ REGISTRY: list[S] = [
       "projection, the role and the market, and it must not be able to overturn "
       "all three. Widen this and one bad read moves the roster.",
       bounds=(0.1, 3.0)),
+    S(ROSTER, "robo.marginal", "HIT_POINTS", float,
+      "Season points a bench player must move us by before he counts as having mattered.",
+      "Measured, not chosen: 7.0 is the median realised starting contribution of "
+      "this league's own 1,861 completed adds. 36% of adds here never start a "
+      "single game and the ninetieth percentile returns 62, so most adds doing "
+      "nothing is the normal shape rather than a failure. Raise this and the bot "
+      "stops crediting the tail that is the only reason to spend a bench spot.",
+      bounds=(1.0, 60.0), unit="points"),
+    S(ROSTER, "robo.marginal", "SIMS", int,
+      "How many seasons are simulated to price a roster move.",
+      "Every hypothetical is scored against the SAME drawn worlds, so this buys "
+      "precision on a difference rather than on a total and a few hundred goes a "
+      "long way. The standard error is printed beside every number; if a gap you "
+      "care about sits inside its own +/-, raise this rather than trusting it.",
+      bounds=(25, 5000), unit="seasons"),
+    S(ROSTER, "robo.marginal", "CONTENDER_ODDS", float,
+      "Playoff odds above which the bot optimises the mean instead of the upside.",
+      "A contender wants the safe bench; a long-shot needs the variance that wins "
+      "a league. This is bench.py's INSURANCE_WEIGHT expressed as an objective "
+      "rather than a weight, and driven by the odds ros.week_weights already uses.",
+      bounds=(0.0, 1.0)),
     S(ROSTER, "robo.injuries", "MAX_AGE_H", float,
       "How stale the ESPN injury feed may be before the valuation ignores it.",
       "Sized to the daily refresh with room for one missed run. Too low and one "

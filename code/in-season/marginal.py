@@ -76,10 +76,16 @@ CONTENDER_ODDS = 0.45
 UPSIDE_PCTL = 75
 
 # What counts as a bench player actually MATTERING in a given season -- the bar
-# p_hit is measured against. Five points over a season is nothing for a starter
-# and is the difference between a dead roster spot and a real contributor for a
-# man who was never going to play.
-HIT_POINTS = 5.0
+# p_hit is measured against. NOT a guess: 7.0 is the median realised starting
+# contribution of the 1,861 completed adds in this league's own history, so
+# "matters" means "does at least what a typical add does". See calibrate().
+#
+# The shape behind that number is the real lesson and it belongs on the wall:
+# 36% of adds in this league NEVER START A SINGLE GAME, the median returns 7
+# points and the ninetieth percentile returns 62. Most adds do nothing. That is
+# the normal outcome here, not a failure of one, and a bot that demands a high
+# expected gain before it will move is refusing the only distribution on offer.
+HIT_POINTS = 7.0
 
 settings.apply(__name__, globals())
 
@@ -98,11 +104,21 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
     for pid, r in (ex.get("players") or {}).items():
         wk = {}
         for w, d in (r.get("by_week") or {}).items():
-            wk[int(w)] = (d.get("s1") or 0.0, d.get("s2") or 0.0, d.get("a") or 0.0)
+            wk[int(w)] = (d.get("s1") or 0.0, d.get("s2") or 0.0,
+                          d.get("a") or 0.0, d.get("final") or 0.0,
+                          d.get("miss") or 0.0)
         out[pid] = {"name": r.get("name"), "pos": r.get("pos"), "team": r.get("team"),
                     # season-only rows carry no shape, so they are scaled at 1.0
                     # and priced on the flat series expected.py already wrote.
                     "k": r.get("k") or 1.0, "rank": r.get("rank"),
+                    # A SEASON-ONLY ROW HAS NO SHAPE TO REBUILD FROM. expected.py
+                    # spends the market's number flat across the games left when
+                    # the structural model gives it nothing to scale, so s1 is
+                    # near zero and only `final` carries the value. Reconstructing
+                    # k*s1 for those 38 players priced them at nothing -- Michael
+                    # Penix, a startable quarterback sitting unowned at 141, read
+                    # as worthless and took the QB wire floor down with him.
+                    "flat": r.get("k_source") == "season-only",
                     # The MEAN fraction expected.py folded into s2. Kept so the
                     # simulation can recover the lead's own number and redraw the
                     # fraction, instead of spending the average every week.
@@ -114,6 +130,42 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
 
 def _rooms_of(ids: list[str], S: dict) -> set:
     return {S[p]["room"] for p in ids if p in S and all(S[p]["room"])}
+
+
+def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026) -> dict:
+    """{pos: {week: points}} for the best man on the wire at that position.
+
+    THE WIRE IS A FLOOR UNDER EVERY SLOT, and in a twelve-team league it is a
+    high one. Measured on this roster in week 5: the best free-agent receiver is
+    worth 6.3 points and our own WR3 is worth 6.3, the best free-agent back is
+    worth 3.5 and our RB6 is worth 2.3. A spot starter is simply available.
+
+    So a hurt starter does not cost us the drop to our own bench -- it costs the
+    drop to whoever we claim on Tuesday, which is much less. Leaving the wire out
+    of the simulation overstates every depth piece we hold and understates the
+    case for spending a bench spot on a man who might become more than that.
+    A bench body worth less than this line is worth exactly nothing, and the only
+    thing that justifies the roster spot is a CEILING the wire cannot supply.
+
+    One body per position per week, which is what a waiver claim actually buys.
+    The pool is treated as fixed: our own adds and drops would move it slightly,
+    and that second-order effect is not modelled.
+    """
+    held = season.rostered_ids(league_id)
+    out: dict = {}
+    for pid, p in S.items():
+        if pid in held:
+            continue
+        for w in weeks:
+            cell = p["weeks"].get(w)
+            if cell is None:
+                continue
+            pts = (cell[3] / cell[2] if p.get("flat") and cell[2] > 0
+                   else p["k"] * cell[0])
+            cur = out.setdefault(p["pos"], {}).get(w, 0.0)
+            if pts > cur:
+                out[p["pos"]][w] = pts
+    return out
 
 
 def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
@@ -147,7 +199,7 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
         rate = roles.miss_rate(p["pos"])
         lead = p.get("rank") == 1
         for w in weeks:
-            a = (p["weeks"].get(w) or (0.0, 0.0, 0.0))[2]
+            a = (p["weeks"].get(w) or (0.0, 0.0, 0.0, 0.0, 0.0))[2]
             # A(w) below 1 is a KNOWN absence the injury feed already priced, so
             # the ordinary hazard must not be stacked on top of it.
             hit = a if a < 1.0 else (1.0 if lead else 1.0 - rate)
@@ -206,7 +258,7 @@ def _absorb_dist(pos: str, rank) -> tuple[float, float]:
 # -------------------------------------------------------------- the simulation
 
 def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
-                  vac, avail, share, sims: int) -> list[float]:
+                  vac, avail, share, sims: int, repl: dict | None = None) -> list[float]:
     """One optimal-lineup season total per simulated world."""
     out = []
     for s in range(sims):
@@ -222,11 +274,19 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                     continue
                 if not avail.get((pid, w, s), True):
                     continue
-                s1, s2, _ = cell
+                s1, s2, a, final, miss = cell
                 tm, pos = p["room"]
                 opened = bool(tm) and vac.get((tm, pos, w, s), False)
                 if opened and p.get("rank") == 1:
                     continue                # it is HIS job that came open
+                if p.get("flat"):
+                    # No shape: spend the flat number, undoing the availability
+                    # the draw has already decided for us.
+                    cands.append({"player_id": pid, "name": p["name"],
+                                  "pos": p["pos"],
+                                  "pts": final / a if a > 0 else final,
+                                  "has_game": True, "injury": None, "locked": False})
+                    continue
                 gain = 0.0
                 if opened and p.get("absorbs"):
                     # s2 is the lead's own number times the MEAN fraction, so
@@ -239,6 +299,15 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                 cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
                               "pts": pts, "has_game": True, "injury": None,
                               "locked": False})
+            # The wire, one body per position, always available. It is in every
+            # hypothetical so it cancels -- what it changes is the FLOOR, which
+            # is the whole point: a bench man below it adds nothing, and a hurt
+            # starter costs only the drop to here.
+            for pos, byweek in (repl or {}).items():
+                if w in byweek:
+                    cands.append({"player_id": f"wire-{pos}", "name": f"wire {pos}",
+                                  "pos": pos, "pts": byweek[w], "has_game": True,
+                                  "injury": None, "locked": False})
             tot += weights.get(w, 1.0) * _optimize(cands)
         out.append(tot)
     return out
@@ -279,13 +348,14 @@ class Board:
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
         self.vac, self.avail, self.share = draws(pool, self.S, self.weeks, sims)
+        self.repl = replacement(self.S, self.weeks, league_id)
         self.p_playoffs = playoffs.p_playoffs(league_id=league_id, default=1.0)
         self.contender = self.p_playoffs >= CONTENDER_ODDS
         self.base = self.totals(self.mine)
 
     def totals(self, ids):
         return season_totals(ids, self.S, self.weeks, self.weights,
-                             self.vac, self.avail, self.share, self.sims)
+                             self.vac, self.avail, self.share, self.sims, self.repl)
 
     def score(self, totals):
         return _score(totals, self.contender)
@@ -348,6 +418,56 @@ class Board:
 
 # ---------------------------------------------------------------- reporting
 
+def _base(p: dict, w: int) -> float:
+    """His ordinary weekly number, before any door opens and before availability."""
+    cell = p["weeks"].get(w)
+    if not cell:
+        return 0.0
+    s1, _, a, final, _ = cell
+    if p.get("flat"):
+        return final / a if a > 0 else final
+    return p["k"] * s1
+
+
+def replaceability(b, league_id: str = LEAGUE_ID_2026) -> list[tuple]:
+    """(pos, our starters, wire 1st, wire 2nd, wire as % of ours), per position.
+
+    WHICH BENCH SPOTS ARE WORTH SPENDING ON A TICKET, and the answer is not the
+    same at every position. Measured on this roster over weeks 2-14: the wire's
+    best tight end is 88% of ours and its best back is 26%. Depth is nearly
+    worthless at tight end and receiver, because a spot starter is simply there
+    every Tuesday, and it is close to irreplaceable at running back.
+
+    The second column is the shape, and quarterback has a different one from
+    everything else: 11.3 then 4.0, a cliff rather than a slope. There is exactly
+    one startable quarterback unowned, so in a two-quarterback league a single
+    claim cannot cover both slots -- which is why the wire floor moved every
+    other bench player toward zero and left Carson Beck untouched.
+    """
+    import statistics as st
+    held = season.rostered_ids(league_id)
+    mine = set(b.mine)
+    starts = {"QB": 2, "RB": 2, "WR": 2, "TE": 1}
+    out = []
+    for pos, n in starts.items():
+        ours, w1, w2 = [], [], []
+        for w in b.weeks:
+            o = sorted((_base(b.S[p], w) for p in mine
+                        if b.S.get(p, {}).get("pos") == pos), reverse=True)
+            f = sorted((_base(p, w) for pid, p in b.S.items()
+                        if pid not in held and p["pos"] == pos and w in p["weeks"]),
+                       reverse=True)
+            if o[:n]:
+                ours.append(st.mean(o[:n]))
+            if f:
+                w1.append(f[0])
+                w2.append(f[1] if len(f) > 1 else f[0])
+        if ours and w1:
+            m = st.mean(ours)
+            out.append((pos, m, st.mean(w1), st.mean(w2), st.mean(w1) / max(m, 1e-9)))
+    return sorted(out, key=lambda t: -t[4])
+
+
 def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
     b = Board(league_id, sims)
     rows = []
@@ -380,6 +500,16 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
           "  tenth percentile -- what losing him costs in the seasons where it",
           "  actually bites. P(matters) is the",
           f"  share of simulated seasons he moves us by more than {HIT_POINTS:.0f} points."]
+    L += ["", "HOW REPLACEABLE EACH POSITION IS -- which is where a bench spot is",
+          "better spent on a man who might become more than just a guy:", "",
+          f"  {'pos':<5}{'our starters':>13}{'wire 1st':>10}{'wire 2nd':>10}"
+          f"{'wire as % of ours':>19}"]
+    for pos, m, w1, w2, pct in replaceability(b, league_id):
+        L.append(f"  {pos:<5}{m:>13.1f}{w1:>10.1f}{w2:>10.1f}{pct:>18.0%}")
+    L += ["", "  a high percentage means the wire already supplies that slot, so depth",
+          "  there is a wasted roster spot. The second column is the SHAPE, and",
+          "  quarterback has a different one: a cliff rather than a slope, so one",
+          "  claim cannot fill two QB slots the way it can fill a second receiver."]
     return "\n".join(L)
 
 
@@ -428,13 +558,92 @@ def moves_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS,
     return "\n".join(L)
 
 
+def calibrate() -> str:
+    """What an add has actually been worth in this league. Where HIT_POINTS comes from.
+
+    Measured the way faab.py measured bids: from what happened, not from a
+    formula. For every completed add, the points the added player went on to
+    score IN A STARTING SLOT for the manager who added him.
+
+    READ THE POSITION TABLE CAREFULLY -- it measures how adds are USED, not what
+    a position is worth. Kickers and defences are dead 7% of the time against
+    60% for backs and receivers, which is not a statement that a kicker is more
+    valuable; it is a statement that you add a kicker to start him on Sunday and
+    you add a back on the chance he becomes something. The skill positions are
+    where the lottery is, and the quarterback tail is the fattest of them -- p90
+    of 72 -- which is the same cliff the wire table finds from the other side.
+    """
+    import collections
+    import sqlite3
+    db = DATA / "history.db"
+    if not db.exists():
+        return "no data/history.db -- run `python -m robo.history`"
+    players = api.players()
+    c = sqlite3.connect(str(db))
+    started: dict = collections.defaultdict(float)
+    for s, w, r, ss, sp in c.execute(
+            "select season,week,roster_id,starters,starters_points from matchups"):
+        try:
+            S, P = json.loads(ss), json.loads(sp)
+        except Exception:
+            continue
+        for pid, pts in zip(S, P):
+            if pid and pid != "0":
+                started[(s, int(r), str(pid))] += float(pts or 0)
+    allv, bypos = [], collections.defaultdict(list)
+    for s, w, adds in c.execute("select season,week,adds from transactions "
+                                "where status='complete' and adds is not null "
+                                "and adds!='null'"):
+        try:
+            A = json.loads(adds) or {}
+        except Exception:
+            continue
+        for pid, rid in A.items():
+            v = started.get((s, int(rid), str(pid)), 0.0)
+            allv.append(v)
+            bypos[(players.get(str(pid)) or {}).get("position") or "DEF"].append(v)
+    allv.sort()
+    n = len(allv)
+    if not n:
+        return "no completed adds in history"
+
+    def q(v, p):
+        return sorted(v)[min(len(v) - 1, int(p / 100 * len(v)))]
+    L = [f"WHAT AN ADD HAS BEEN WORTH - {n} completed adds, this league only", "",
+         "  realised points the added player scored IN A STARTING SLOT for the",
+         "  manager who added him, over the rest of that season", "",
+         f"  {'median':>15}{q(allv, 50):>9.1f}",
+         f"  {'p75':>15}{q(allv, 75):>9.1f}",
+         f"  {'p90':>15}{q(allv, 90):>9.1f}",
+         f"  {'never started':>15}{100 * sum(1 for v in allv if v == 0) / n:>8.0f}%", "",
+         f"  {'pos':<5}{'n':>7}{'median':>9}{'p75':>9}{'p90':>9}{'dead':>8}"]
+    for pos in ("QB", "RB", "WR", "TE", "K", "DEF"):
+        v = bypos.get(pos) or []
+        if len(v) < 25:
+            continue
+        L.append(f"  {pos:<5}{len(v):>7}{q(v, 50):>9.1f}{q(v, 75):>9.1f}{q(v, 90):>9.1f}"
+                 f"{100 * sum(1 for x in v if x == 0) / len(v):>7.0f}%")
+    L += ["", f"  HIT_POINTS is set to the overall median ({HIT_POINTS:.0f}), so P(matters)",
+          "  reads as 'at least what a typical add in this league does'.", "",
+          "  The position rows measure how adds are USED, not what a position is",
+          "  worth: a kicker is added to be started on Sunday, a running back is",
+          "  added on the chance he becomes something. Which is why the skill",
+          "  positions are dead 60% of the time and carry all of the upside."]
+    return "\n".join(L)
+
+
 def main():
     ap = argparse.ArgumentParser(description="what a roster move is really worth")
+    ap.add_argument("--calibrate", action="store_true",
+                    help="what an add has been worth in this league's history")
     ap.add_argument("--roster", action="store_true", help="what each man we hold is worth")
     ap.add_argument("--moves", action="store_true", help="every live proposal, old vs new")
     ap.add_argument("--sims", type=int, default=SIMS)
     a = ap.parse_args()
-    print(moves_report(sims=a.sims) if a.moves else roster_report(sims=a.sims))
+    if a.calibrate:
+        print(calibrate())
+    else:
+        print(moves_report(sims=a.sims) if a.moves else roster_report(sims=a.sims))
 
 
 if __name__ == "__main__":
