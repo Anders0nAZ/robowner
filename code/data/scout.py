@@ -211,10 +211,21 @@ def bundle(x: dict, players: dict) -> dict:
     }
 
 
-def gather(limit: int | None = None) -> list[dict]:
-    """Build the corpus. Roughly a second a player, almost all of it Sleeper."""
+def gather(limit: int | None = None, only=None) -> list[dict]:
+    """Build the corpus. Roughly a second a player, almost all of it Sleeper.
+
+    `only` narrows it to specific player ids, which is what makes this callable
+    from the cascade several times a day: the full pool is about a second a
+    player and a minute is too much to spend three times daily on a wire that
+    has not moved, while the handful of men whose designation actually changed
+    costs seconds. The pool still decides membership -- `only` can narrow it,
+    never widen it, so a man we cannot act on does not enter through this door.
+    """
     players = api.players()
     pool = decision_pool()
+    if only is not None:
+        keep = {str(p) for p in only}
+        pool = [x for x in pool if x["player_id"] in keep]
     if limit:
         pool = pool[:limit]
     return [bundle(x, players) for x in pool]

@@ -78,7 +78,7 @@ EXPORT_TIMEOUT_S = 120
 # Steps whose failure must NOT stop the chain. A stale weekly projection is
 # survivable and model_proj says so out loud; a lineup that never gets set is
 # not. Anything outside this set aborts the run.
-SOFT_STEPS = ("capture", "export", "waivers")
+SOFT_STEPS = ("scout", "capture", "export", "waivers")
 
 settings.apply(__name__, globals())
 
@@ -208,6 +208,7 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
 
     prec: dict = {}
     step("pull", lambda: _fmt_pull(pull(record=prec)))
+    step("scout", lambda: _scout(prec))
     step("capture", lambda: capture_week(wk)[1])
     step("export", lambda: export_week(wk)[1])
     step("model", lambda: refresh.pull_model())
@@ -237,6 +238,53 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     prov = model_proj.week_projections(wk)[1]
     return {"week": wk, "applied": bool(apply), "steps": log,
             "pull": prec, "weekly_projection": prov}
+
+
+def _scout(pulled: dict) -> str:
+    """Re-read the reporting for anyone whose DESIGNATION just moved.
+
+    THE FLOOR IS A RULE AND THE DATE IS A JUDGEMENT, and before this step the
+    cascade refreshed one and not the other. ESPN gives the earliest week the
+    rules allow a man back, and the pull makes that current within the run --
+    but expected.py reads the DATED estimate that overrides it out of the
+    verdicts file, which only the 06:30 refresh ever wrote. A Thursday IR
+    placement therefore got a fresh floor of week 5 and kept yesterday's silence
+    about the reporting that says week 7, until the following morning.
+
+    GATED ON A ROSTER-KIND CHANGE, because that is the only thing that can
+    produce a new date. projarchive classifies a move as `volume` (his
+    projection fell) or `roster` (he was designated or traded); a projection
+    drifting a point is not new reporting and does not deserve a model. On a
+    quiet run this costs one dictionary lookup.
+
+    Narrowed to those men, because the full pool is about a second a player and
+    a minute is too much to spend three times a day on a wire that has not
+    moved. needs_judging still decides who is actually re-read -- the
+    fingerprint covers the designation, so a new placement forces it.
+
+    EVERY OTHER VERDICT IS CARRIED FORWARD EXPLICITLY. write_verdicts persists
+    exactly what it is handed, so a narrow run that passed only its own reuse
+    would silently truncate the file to the handful it looked at.
+    """
+    from robo import scout
+    moved = [m["player_id"] for m in (pulled.get("changed") or [])
+             if m.get("kind") in ("roster", "both")]
+    if not moved:
+        return "no designation moved; nothing to re-read"
+    b = scout.gather(only=moved)
+    if not b:
+        return f"{len(moved)} designation(s) moved, none in the decision pool"
+    todo, reuse = scout.needs_judging(b)
+    if not todo:
+        return f"{len(b)} in scope, all fingerprints unchanged"
+    v = scout.judge(todo, verbose=False)
+    keep = dict((scout.load_verdicts().get("verdicts") or {}))
+    for x in todo:
+        keep.pop(x["player_id"], None)
+    keep.update(reuse)
+    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep)
+    dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
+    return f"{len(todo)} re-read, {dated} carry a date"
 
 
 def _fmt_pull(p: dict) -> str:
