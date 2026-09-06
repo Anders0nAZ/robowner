@@ -58,7 +58,8 @@ from robo import DATA, MODEL_ROOT, vegas
 
 PARQUET = MODEL_ROOT / "data" / "parquet"
 FIT_FILE = DATA / "roles_fit.json"
-SCHEMA = 1
+# 2: carries the takeover fit alongside the absorption curve.
+SCHEMA = 2
 
 # What counts as "an opportunity" per position. A back's targets are part of his
 # job, so counting only carries would call a receiving back a backup.
@@ -209,6 +210,9 @@ def fit(first: int = FIT_FIRST, last: int = FIT_LAST, write: bool = True) -> dic
                              vac.group_by("position").len().to_dicts()},
            "deep_pool": {p: round(sum(v) / len(v), 4) for p, v in deep.items()},
            "held_weeks": held_by_pos,
+           # A second, different event: not "the job came open" but "he took
+           # it". See _takeover().
+           "takeover": _takeover(full),
            "miss_rate": {p: round(n / held_by_pos[p], 4)
                          for p, n in {r["position"]: int(r["len"]) for r in
                                       vac.group_by("position").len().to_dicts()}.items()
@@ -276,6 +280,86 @@ def absorption(pos: str, rank: int) -> tuple[float, str]:
 def _by_gsis() -> dict:
     """gsis_id -> sleeper_id. The panel speaks gsis; every caller speaks Sleeper."""
     return {v["gsis"]: sid for sid, v in _crosswalk().items() if v.get("gsis")}
+
+
+def _takeover(full) -> dict:
+    """P(a man who began the season a backup is holding the job by week 10).
+
+    A DIFFERENT EVENT FROM THE ABSORPTION CURVE, and the difference is the whole
+    reason to measure it. absorption() answers "the job came open, how much does
+    he pick up" -- an injury question, and a temporary one. This answers "did he
+    simply take it", which is the round-11 rookie who is an every-week starter by
+    week 8 because he outplayed the man in front of him. Nothing else here can
+    see that: miss_rate only counts vacancies.
+
+    Draft capital is the split that pays. A receiver drafted in the first three
+    rounds takes the job 28% of the time against 10% for everyone else -- and at
+    quarterback the panel simply cannot answer, because a QB2 accumulates no
+    usage and so never appears in it at all. That absence is reported rather
+    than papered over: it is the position where the question matters most.
+    """
+    import polars as pl
+    early = full.filter(pl.col("week") <= 4).group_by(
+        ["season", "team", "position", "player_id"]).agg(
+        pl.col("rank").min().alias("early_rank"))
+    late = full.filter(pl.col("week") >= 10).group_by(
+        ["season", "team", "position", "player_id"]).agg(
+        pl.col("rank").min().alias("late_rank"),
+        pl.col("prior").max().alias("late_prior"))
+    j = early.join(late, on=["season", "team", "position", "player_id"], how="inner")
+    try:
+        d = pl.read_parquet(PARQUET / "draft_picks.parquet").select(
+            ["season", "round", "gsis_id"]).rename(
+            {"season": "draft_year", "gsis_id": "player_id"})
+        j = j.join(d, on="player_id", how="left")
+    except Exception:
+        j = j.with_columns([pl.lit(None).alias("draft_year"), pl.lit(None).alias("round")])
+    j = j.with_columns([
+        (pl.col("season").cast(pl.Int64) - pl.col("draft_year").cast(pl.Int64)).alias("exp"),
+        ((pl.col("early_rank") >= 2) & (pl.col("late_rank") == 1)
+         & (pl.col("late_prior") >= MIN_ESTABLISHED_SHARE)).alias("took")])
+    pool = j.filter(pl.col("early_rank") >= 2)
+    out: dict = {}
+    for pos in ("QB", "RB", "WR", "TE"):
+        q = pool.filter(pl.col("position") == pos)
+        groups = {
+            "all": q,
+            "rookie_early": q.filter((pl.col("exp") == 0) & (pl.col("round") <= 3)),
+            "rookie_late": q.filter((pl.col("exp") == 0)
+                                    & ((pl.col("round") > 3) | pl.col("round").is_null())),
+            "veteran": q.filter(pl.col("exp") > 0),
+        }
+        out[pos] = {g: {"n": f.height, "rate": round(float(f["took"].mean()), 4)}
+                    for g, f in groups.items() if f.height}
+    return out
+
+
+# How many observations a takeover cell needs before it is quoted as its own
+# rate. Below this it falls back to the position's pooled rate and says so --
+# the same discipline absorption() applies, and it matters more here because
+# quarterback never clears it.
+MIN_TAKEOVER_N = 25
+
+
+def takeover_rate(pos: str, exp: int | None, rnd: int | None) -> tuple[float, str]:
+    """(P he takes the job outright this season, why). 0.0 where unfitted."""
+    t = (load_fit().get("takeover") or {}).get((pos or "").upper())
+    if not t:
+        return 0.0, "no takeover fit on disk"
+    if exp == 0:
+        key = "rookie_early" if (rnd or 99) <= 3 else "rookie_late"
+    elif exp is not None and exp > 0:
+        key = "veteran"
+    else:
+        key = "all"
+    cell = t.get(key) or {}
+    if cell.get("n", 0) >= MIN_TAKEOVER_N:
+        return cell["rate"], f"fitted, n={cell['n']}"
+    pooled = t.get("all") or {}
+    if pooled.get("n", 0) >= MIN_TAKEOVER_N:
+        return pooled["rate"], (f"thin cell (n={cell.get('n', 0)}), "
+                                f"pooled over all {pos} backups, n={pooled['n']}")
+    return 0.0, f"{pos} backups barely appear in the usage panel at all"
 
 
 @lru_cache(maxsize=1)

@@ -82,6 +82,16 @@ K_CLAMP = (0.25, 6.0)
 # explodes on rounding noise rather than on information.
 MIN_RAW_TO_SCALE = 1.0
 
+# A SEPARATE AND MUCH HIGHER BAR FOR READING k AS A SIGNAL. Computing the ratio
+# needs only a non-zero denominator; believing it needs a denominator with
+# something in it. Six of the thirty-three rows at k >= 2 were pinned to the
+# clamp ceiling at exactly 6.00, and every one had a raw total between 1.03 and
+# 3.36 -- Josh Johnson, Carson Wentz and two other career backup quarterbacks
+# whose ratio is arithmetic on nothing, not a market expecting a handoff. Beck's
+# 3.99 sits on a raw total of 15.0 and is a real reading. So `k` is quoted as
+# evidence only above this, and is_puzzle() is the one place that decides.
+K_PUZZLE_MIN_RAW = 5.0
+
 settings.apply(__name__, globals())
 
 
@@ -483,15 +493,84 @@ def compare(top: int = 25, pos: str | None = None) -> str:
     return "\n".join(L)
 
 
+def is_puzzle(row: dict, floor: float = 2.0) -> bool:
+    """Is this man's k actually saying something, or dividing by nothing?
+
+    ONE DEFINITION, because two consumers were about to grow their own. scout.py
+    reads it to decide who is worth asking a reporter about and this module reads
+    it to decide who to explain; a threshold written twice is a threshold that
+    disagrees with itself by Thursday.
+
+    Three conditions, and the last two are the ones that matter. A clamped row
+    hit the ceiling rather than landing there, and a thin raw total makes the
+    ratio arithmetic rather than evidence -- see K_PUZZLE_MIN_RAW.
+    """
+    return (row.get("k_source") == "ratio"
+            and (row.get("k") or 0) >= floor
+            and not row.get("clamped")
+            and (row.get("raw") or 0) >= K_PUZZLE_MIN_RAW)
+
+
+def puzzles(league_id: str = LEAGUE_ID_2026, floor: float = 2.0) -> str:
+    """Men the market pays for and the structural model cannot explain.
+
+    TWO INDEPENDENT ANSWERS TO ONE QUESTION, shown side by side and never
+    averaged -- the same shape scout runs two judges in. `k` is what the market
+    implies: how many times more than our model of his role says he is worth.
+    `takeover` is what ten seasons of usage say about men in his situation
+    actually taking the job outright.
+
+    Agreement means the premium is explained by an ordinary base rate and needs
+    no story. Disagreement is the interesting row: either the market knows
+    something a base rate cannot see, or `k` is absorbing an error somewhere
+    upstream. The point is to make that visible, not to resolve it here.
+    """
+    d = load()
+    players = api.players()
+    rows = []
+    for pid, r in (d.get("players") or {}).items():
+        if not is_puzzle(r, floor):
+            continue
+        p = players.get(pid) or {}
+        xw = roles._crosswalk().get(str(pid)) or {}
+        yr, rnd = xw.get("draft_year"), xw.get("draft_round")
+        exp = (int(d["season"]) - int(yr)) if yr else None
+        rate, why = roles.takeover_rate(r["pos"], exp, rnd)
+        rows.append((r["name"], r["pos"], r.get("rank"), r["k"], r["ros"],
+                     rate, why, r.get("lead_of")))
+    rows.sort(key=lambda t: -t[3])
+    L = [f"THE MARKET PAYS FOR THESE MEN AND OUR MODEL OF THEIR ROLE DOES NOT - "
+         f"k >= {floor:g}", "",
+         f"  {'player':<20}{'pos':<4}{'rk':>3}{'k':>6}{'ros':>7}{'takeover':>10}"
+         f"  behind / basis"]
+    for n, pos, rk, k, v, rate, why, lead in rows:
+        L.append(f"  {n[:20]:<20}{pos:<4}{str(rk or '-'):>3}{k:>6.2f}{v:>7.1f}"
+                 f"{rate:>9.0%}  {(lead or '-')[:16]:<16} {why[:34]}")
+    L += ["", "  k is the market's premium over our structural model. takeover is the",
+          "  measured rate at which men in his position, experience and draft-round",
+          "  cell take the job outright by week 10, over 2016-2025.",
+          "",
+          "  THE QUARTERBACK ROWS CANNOT BE ANSWERED and say so. A backup QB",
+          "  accumulates no usage, so he never enters the panel: only six rookie",
+          "  quarterbacks drafted in the first three rounds appear in ten seasons,",
+          "  and their 83% is six coin flips. Those rows pool to the all-QB rate."]
+    return "\n".join(L)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--top", type=int, default=40)
     ap.add_argument("--pos", type=str, default=None)
     ap.add_argument("--explain", type=str, default=None)
+    ap.add_argument("--puzzles", action="store_true",
+                    help="men the market pays for that our model cannot explain")
     ap.add_argument("--compare", action="store_true",
                     help="side by side with ros.py")
     ap.add_argument("--rebuild", action="store_true")
     args = ap.parse_args()
+    if args.puzzles:
+        print(puzzles())
+        return
     if args.compare:
         print(compare(args.top, args.pos))
         return

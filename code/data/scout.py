@@ -142,7 +142,11 @@ def decision_pool(limit_wire: int | None = None) -> list[dict]:
         if injuries.absent(pid) or sidelined(pid, players):
             pool.setdefault(pid, x)
             reasons.setdefault(pid, "absent")
-        elif (x.get("k") or 0) >= K_PUZZLE:
+        # ONE DEFINITION OF A PUZZLE, owned by expected.py. A bare k >= 2 test
+        # pooled four career backup quarterbacks whose ratio was arithmetic on a
+        # raw total near zero, and would have paid a model to read the news about
+        # them every morning.
+        elif expected.is_puzzle(x, K_PUZZLE):
             pool.setdefault(pid, x)
             reasons.setdefault(pid, "unexplained role")
 
