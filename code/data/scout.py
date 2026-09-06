@@ -66,8 +66,9 @@ VERDICTS = DATA / "news_verdicts.json"
 # market, and it must not be able to overturn all three.
 TRUST_LIFT = {"boost": 1.35, "neutral": 1.0, "avoid": 0.6}
 
-# How far down the wire to read. The wire is ranked by rest-of-season value, and
-# past this depth the news is about men no roster decision will ever reach.
+# How far down the WIRE to read, on top of every rostered player in the league.
+# The wire is ranked by rest-of-season value, and past this depth the news is
+# about men no claim will ever reach.
 POOL_WIRE = 50
 
 # Calibration residual above which the market is pricing a role the structural
@@ -94,12 +95,20 @@ def sidelined(pid: str, players: dict) -> bool:
 
 
 def decision_pool(limit_wire: int | None = None) -> list[dict]:
-    """Our roster plus the top of the wire, with two hard includes.
+    """Every rostered player in the league, plus the top of the wire.
 
-    THE POOL IS THE DECISION, NOT THE DRAFT BOARD. Whatever we could act on this
-    week is our own seventeen men and whoever is unowned; a player on somebody
-    else's roster is not a move we can make, and reading news about him spends
-    tokens on nothing.
+    THE POOL IS THE DECISION, NOT THE DRAFT BOARD. It was briefly narrower than
+    this -- our own men and the unowned -- on the reasoning that a player on
+    somebody else's roster is not a move we can make. That is wrong twice over.
+    A TRADE is a move we can make, and it is the one decision where knowing more
+    about the other side's players than they do is the whole edge. And ros.py
+    prices all 900 players for exactly that reason: narrowing the pool sent 98
+    of them back to a news multiplier of 1.000, blinding the valuation of every
+    roster but ours.
+
+    So the league's ~180 rostered skill players are all in scope. That is
+    bounded by the league itself rather than by a cutoff, and the delta judging
+    means the cost is whoever actually moved, not the whole board.
 
     Two things are pulled in regardless of where they rank, because they are
     exactly the cases a value ranking is worst at: anyone the league says cannot
@@ -117,13 +126,15 @@ def decision_pool(limit_wire: int | None = None) -> list[dict]:
                   key=lambda x: -(x.get("ros") or 0))
     pool = {pid: ex[pid] for pid in mine if pid in ex}
     reasons = {pid: "roster" for pid in pool}
+    for pid in held:
+        if pid in ex:
+            pool.setdefault(pid, ex[pid])
+            reasons.setdefault(pid, "rostered")
     for x in free[:(limit_wire or POOL_WIRE)]:
         pool.setdefault(x["player_id"], x)
         reasons.setdefault(x["player_id"], "wire")
 
     for pid, x in ex.items():
-        if pid not in mine and pid in held:
-            continue
         # EITHER source counts as sidelined. ESPN leads on the date, but its
         # feed is an injury REPORT and drops men it has stopped reporting on --
         # Brandon Aiyuk is absent from it entirely while Sleeper still carries

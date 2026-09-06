@@ -289,9 +289,11 @@ REGISTRY: list[S] = [
       bounds=(300, 86400), unit="seconds"),
     S(ROSTER, "robo.scout", "POOL_WIRE", int,
       "How far down the waiver wire the scout reads news, by rest-of-season value.",
-      "The main cost dial. Men on our own roster and anyone who cannot play are "
-      "read regardless of where they rank, so lowering this only trims the tail "
-      "of the wire -- players a claim would never reach anyway.",
+      "Every rostered player in the league is read regardless -- the trade "
+      "evaluator needs the other side of a deal priced as well as ours -- as is "
+      "anyone who cannot play. So this only trims the tail of the WIRE, players "
+      "a claim would never reach anyway, and it is not the main cost dial: the "
+      "league's own roster count is.",
       bounds=(10, 250), unit="players"),
     S(ROSTER, "robo.scout", "K_PUZZLE", float,
       "Calibration residual above which a player is read as a role the model cannot see.",
