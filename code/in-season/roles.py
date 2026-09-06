@@ -554,7 +554,8 @@ def projected_role(sleeper_id: str, team: str, pos: str,
     from robo import vegas
     tm, pos = vegas.team_code(team), (pos or "").upper()
     base = {"player_id": str(sleeper_id), "team": tm, "pos": pos, "rank": None,
-            "share": 0.0, "ahead_of": None, "ahead_id": None, "absorbs": 0.0,
+            "share": 0.0, "ahead_of": None, "ahead_id": None,
+            "lead_of": None, "lead_id": None, "absorbs": 0.0,
             "tier": "projected", "why": ""}
     if pos not in PROJ_OPPORTUNITY:
         base["why"] = f"{pos or 'unknown'} has no opportunity model"
@@ -569,6 +570,15 @@ def projected_role(sleeper_id: str, team: str, pos: str,
         return base
     frac, why = absorption(pos, me["rank"])
     ahead = room[me["rank"] - 2] if me["rank"] > 1 else None
+    # THE LEAD, NOT THE MAN ONE RUNG UP, IS WHAT `absorbs` IS MEASURED AGAINST.
+    # fit() defines a vacancy as the RANK-1 man's opportunity going to zero and
+    # divides the share each rank gained by HIS vacated share, so `absorbs` is a
+    # fraction of the lead's workload. Pricing it against the rank above is a
+    # mismatched numerator and denominator, and it silently guts every deep
+    # bench player: Kaelon Black is SF's rank 3, so he was priced as inheriting
+    # from Jordan James at 0.41 points a week when the bet is McCaffrey. It is
+    # identical for rank 2, which is why that half always looked right.
+    lead = room[0] if room else None
     if record is not None:
         record.update({"absorb_why": why, "miss_rate": miss_rate(pos),
                        "cell": ((load_fit().get("curve") or {}).get(pos)
@@ -576,6 +586,8 @@ def projected_role(sleeper_id: str, team: str, pos: str,
     base.update({"rank": me["rank"], "share": me["share"],
                  "ahead_of": ahead["name"] if ahead else None,
                  "ahead_id": ahead["player_id"] if ahead else None,
+                 "lead_of": lead["name"] if lead and lead is not me else None,
+                 "lead_id": lead["player_id"] if lead and lead is not me else None,
                  "absorbs": round(frac, 4),
                  "why": f"projected {me['share']:.0%} of the {tm} {pos} room "
                         f"({me['opp']:g} opportunities); {why}"})

@@ -124,7 +124,14 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
     """{week: expected points} from the structural model, before calibration."""
     mine = rates.get(pid) or {}
     r = roles.projected_role(pid, team, pos)
-    ahead = rates.get(r["ahead_id"]) if r.get("ahead_id") else None
+    # THE JOB HE INHERITS IS THE LEAD'S, NOT THE MAN'S ONE RUNG ABOVE HIM.
+    # roles.fit() defines a vacancy as the rank-1 man's opportunity going to
+    # zero and measures `absorbs` as a fraction of HIS vacated share, so pairing
+    # it with the rank above was a mismatched numerator and denominator. It made
+    # no difference at rank 2, where the two are the same man, and gutted every
+    # deep bench player: SF's rank-3 back was priced as inheriting from Jordan
+    # James rather than from McCaffrey, which is the whole of the bet.
+    ahead = rates.get(r["lead_id"]) if r.get("lead_id") else None
     miss = roles.miss_rate(pos) if pos in roles.OPPORTUNITY else 0.0
     absorb = min(1.0, r.get("absorbs") or 0.0)
     status = player.get("injury_status")
@@ -316,6 +323,11 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "weeks": games_left,
             "rank": rec["role"].get("rank"), "share": rec["role"].get("share"),
             "ahead_of": rec["role"].get("ahead_of"),
+            # Who the inheritance is actually priced against, which is the man
+            # holding the job and not the man one rung up. They differ from
+            # rank 3 down, and that is where a trace would otherwise name the
+            # wrong player as the reason for a number.
+            "lead_of": rec["role"].get("lead_of"),
             "absorbs": rec.get("absorbs"),
             "injury_status": rec.get("injury_status"),
             "eligible_week": rec.get("eligible_week"),
@@ -371,8 +383,14 @@ def trace(name: str) -> str:
     L.append(f"    rank {r['rank']} of the {r['team']} {r['pos']} room, "
              f"{(r['share'] or 0):.1%} of its projected opportunity")
     if r["ahead_of"]:
-        L.append(f"    behind {r['ahead_of']}; inherits {(r['absorbs'] or 0):.0%} "
-                 f"if that job opens")
+        L.append(f"    behind {r['ahead_of']}")
+    # Named separately because it is the number's actual reference. The
+    # absorption curve measures a share of the LEAD's vacated work, so from
+    # rank 3 down the man he is behind and the job he would inherit are two
+    # different people, and printing only the first explains the wrong number.
+    if r.get("lead_of"):
+        L.append(f"    inherits {(r['absorbs'] or 0):.0%} of {r['lead_of']}'s "
+                 f"work if that job opens")
     L.append("")
     L.append(f"[2] AVAILABILITY  (status {r['injury_status'] or 'healthy'})")
     if r.get("feed_eligible"):

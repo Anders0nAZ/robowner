@@ -54,6 +54,7 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery. What a p
 | [`ros.py`](in-season/ros.py) | What a player is worth from here to the end -- the number moves.py was waiting on. |
 | [`expected.py`](in-season/expected.py) | Expected points, conditioned on actually playing -- one number, built once. |
 | [`returns.py`](in-season/returns.py) | When a hurt man comes back -- measured, and as a distribution rather than a date. |
+| [`marginal.py`](in-season/marginal.py) | What a roster move is worth, across the worlds where it matters. |
 | [`roles.py`](in-season/roles.py) | Who actually has the job, and who gets it if it opens -- measured, not declared. |
 | [`playoffs.py`](in-season/playoffs.py) | P(this team makes the playoffs) -- the weight ros.py hangs the future on. |
 | [`streaming.py`](in-season/streaming.py) | Streaming defences: who to start, and who to pick up, weeks before kickoff. |

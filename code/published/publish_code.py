@@ -62,7 +62,8 @@ CATEGORIES = [
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
      ["season", "lineup", "model_proj", "ir", "value", "moves",
-      "ros", "expected", "returns", "roles", "playoffs", "streaming", "faab"]),
+      "ros", "expected", "returns", "marginal", "roles", "playoffs",
+      "streaming", "faab"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",
