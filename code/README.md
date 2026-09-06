@@ -46,6 +46,7 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery. What a p
 | module | what it does |
 |---|---|
 | [`season.py`](in-season/season.py) | Live in-season league state -- what is true right now, not what the board froze. |
+| [`cascade.py`](in-season/cascade.py) | The in-season chain, in order, on one snapshot. |
 | [`lineup.py`](in-season/lineup.py) | Weekly lineup optimizer. |
 | [`model_proj.py`](in-season/model_proj.py) | This week's projections from the NFL Model, or nothing at all. |
 | [`ir.py`](in-season/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |

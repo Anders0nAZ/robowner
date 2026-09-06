@@ -57,8 +57,14 @@ def refresh_players():
     return f"{len(data):,} players"
 
 
-@step("projections")
-def refresh_projections():
+def pull_projections() -> int:
+    """The season projection file. Returns the row count; raises on a bad pull.
+
+    Split out of the @step wrapper so robo/cascade.py can call it mid-day
+    without writing into refresh.log, which the daily pipeline owns. The
+    validation is the point and stays here: a short response keeps the old file
+    rather than replacing a good one with a truncated one.
+    """
     r = requests.get(
         "https://api.sleeper.app/projections/nfl/2026?season_type=regular"
         "&position[]=QB&position[]=RB&position[]=WR&position[]=TE&position[]=K&position[]=DEF"
@@ -68,7 +74,12 @@ def refresh_projections():
     if len(rows) < 500:
         raise ValueError(f"suspiciously few rows ({len(rows)}); keeping old file")
     (RAW / "projections_2026.json").write_text(json.dumps(rows), encoding="utf-8")
-    return f"{len(rows)} rows"
+    return len(rows)
+
+
+@step("projections")
+def refresh_projections():
+    return f"{pull_projections()} rows"
 
 
 @step("adp-live")
@@ -219,6 +230,10 @@ MODEL_OUT = MODEL_ROOT / "out"
 
 @step("model")
 def refresh_model():
+    return pull_model()
+
+
+def pull_model() -> str:
     """The NFL Model's weekly distributions, validated and copied in.
 
     COPIED, not read in place. Everything the bot runs on lives under its own

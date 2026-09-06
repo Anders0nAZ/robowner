@@ -15,11 +15,18 @@ THE PRIORITY CHAIN IS LEXICOGRAPHIC, NOT A WEIGHTED SUM. Fielding a legal
 starting lineup this week beats improving the roster, which beats denying an
 opponent, and no amount of the lower thing adds up to the higher one. That is
 the same shape as lineup.illegal_starters() bypassing MIN_GAIN_TO_CHANGE:
-legality is not a matter of degree. It is implemented as three modes:
+legality is not a matter of degree. It is implemented as four modes:
 
     patch   a starting slot is empty or unstartable and the bench cannot cover
             it. May cut into a rising-role player, because a hole in the lineup
             is a certain loss and an inheritance is a maybe. Allowed at any hour.
+    fill    the roster is UNDER 17 and a spot is sitting empty. Not a legality
+            emergency, so it does not get patch's exemptions -- but an empty spot
+            scores zero every week it stays empty, so it does not face the
+            upgrade bar either. Nobody is displaced, so there is no incumbent to
+            beat. Judged on the CEILING, because an empty spot is exactly where a
+            lottery ticket belongs. This is the step that catches the slot an IR
+            move just freed.
     ros     ordinary upgrades on the rest-of-season number. The default.
     block   nothing cleared for us, we have a spare turnable slot, and somebody
             on the wire would visibly improve an opponent.
@@ -109,7 +116,7 @@ BLOCK_MAX_BID = 3
 
 settings.apply(__name__, globals())
 
-MODES = ("patch", "ros", "block")
+MODES = ("patch", "fill", "ros", "block")
 
 
 # ------------------------------------------------------------------ evaluation
@@ -311,9 +318,14 @@ def plan_free(ctx: dict) -> list[dict]:
         gaps = max((len(h["empty"]) + len(h["unstartable"]) for h in holes(ctx)),
                    default=0)
         slots = min(gaps, MAX_SLOTS_TO_TURN_OVER)
+    elif mode == "fill":
+        slots = ctx["slots"]["open"]
     else:
         slots = MAX_SLOTS_TO_TURN_OVER
     used, out = set(), []
+
+    if mode == "fill" and slots <= 0:
+        return []
 
     if mode == "block":
         for d in drops[:1]:  # blocking only ever spends the LAST turnable slot
@@ -356,7 +368,8 @@ def plan_free(ctx: dict) -> list[dict]:
     # a fourth receiver on the same axis and scored a +1.6 swap at +87.
     P = priced(ctx)
     for drop in P["drops"][:max(1, slots)]:
-        o = best_free([x for x in P["free"] if x["add"] not in used], drop)
+        o = best_free([x for x in P["free"] if x["add"] not in used], drop,
+                      fill=(mode == "fill"))
         if not o:
             continue
         used.add(o["add"])
@@ -369,14 +382,19 @@ def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
     add_row = ctx["by_id"].get(o["add"]) or {"player_id": o["add"],
                                              "name": board.S[o["add"]]["name"],
                                              "pos": board.S[o["add"]]["pos"]}
-    drop_row = ctx["by_id"].get(o["drop"]) or {"player_id": o["drop"],
-                                               "name": board.S[o["drop"]]["name"],
-                                               "pos": board.S[o["drop"]]["pos"]}
+    if o["drop"] is None:
+        drop_row = {"player_id": None, "name": "(open roster spot)", "pos": "--"}
+        drop_val = 0.0
+    else:
+        drop_row = ctx["by_id"].get(o["drop"]) or {"player_id": o["drop"],
+                                                   "name": board.S[o["drop"]]["name"],
+                                                   "pos": board.S[o["drop"]]["pos"]}
+        drop_val = round(board.drop_price(o["drop"])[0], 1)
     kind = "starting slot" if o["starter"] else "bench, judged on the ceiling"
     return {"add": add_row, "drop": drop_row,
             "gain": round(o["gain"], 1),
             "add_value": round(o["gain"], 1),
-            "drop_value": round(board.drop_price(o["drop"])[0], 1),
+            "drop_value": drop_val,
             "real": True,
             "se": round(o["se"], 2), "ceiling": round(o["ceiling"], 1),
             "why": why or f"{kind}; +/- {o['se']:.1f}, ceiling {o['ceiling']:.1f}"}
@@ -419,7 +437,12 @@ def priced(ctx: dict) -> dict:
                 out.append(pid)
         return out
 
-    drops = [d["row"]["player_id"] for d in droppables(ctx)][:MAX_SLOTS_TO_TURN_OVER]
+    if ctx["mode"] == "fill":
+        # An open roster spot has no incumbent, so there is nothing to price the
+        # candidate against and nothing to give up. None carries that through.
+        drops = [None] * max(1, ctx["slots"]["open"])
+    else:
+        drops = [d["row"]["player_id"] for d in droppables(ctx)][:MAX_SLOTS_TO_TURN_OVER]
     free, wire = shortlist(False), shortlist(True)
     b = marginal.Board(ctx["league_id"], extra=free + wire)
     return {"board": b, "drops": drops,
@@ -427,7 +450,7 @@ def priced(ctx: dict) -> dict:
             "wire": marginal.price_options(b, drops, wire)}
 
 
-def clears(o: dict) -> bool:
+def clears(o: dict, fill: bool = False) -> bool:
     """Is this option worth a transaction at all?
 
     Two bars, and which applies depends on the slot. A STARTING upgrade is judged
@@ -438,18 +461,26 @@ def clears(o: dict) -> bool:
 
     Both are also required to beat the simulator's own noise. A gap inside its
     standard error is not a ranking, whatever it is a ranking of.
+
+    FILLING AN EMPTY SPOT IS NOT AN UPGRADE and does not face the upgrade bar.
+    Nobody is being displaced, so there is no incumbent to beat and no cost to
+    weigh -- an empty roster spot scores zero every week it stays empty. The
+    ceiling bar still applies, because the question of WHICH man to put there is
+    still a bench question, and the noise gate still applies because a number
+    inside its own error is not a reason.
     """
     from robo import marginal
     if o["gain"] <= NOISE_MULTIPLE * o["se"]:
         return False
-    return (o["gain"] >= MIN_GAIN_TO_ADD if o["starter"]
-            else o["ceiling"] >= marginal.HIT_POINTS)
+    if fill or not o["starter"]:
+        return o["ceiling"] >= marginal.HIT_POINTS
+    return o["gain"] >= MIN_GAIN_TO_ADD
 
 
-def best_free(opts: list[dict], drop: str) -> dict | None:
+def best_free(opts: list[dict], drop, fill: bool = False) -> dict | None:
     """The best thing available for nothing, for this slot."""
-    fits = [o for o in opts if o["drop"] == drop and clears(o)]
-    return max(fits, key=lambda o: o["gain"]) if fits else None
+    fits = [o for o in opts if o["drop"] == drop and clears(o, fill=fill)]
+    return max(fits, key=lambda o: o["ceiling"] if fill else o["gain"]) if fits else None
 
 
 def plan_claims(ctx: dict) -> list[dict]:
@@ -508,10 +539,17 @@ def plan_claims(ctx: dict) -> list[dict]:
 
 # ------------------------------------------------------------------- payloads
 
-def free_payload(add_id: str, drop_id: str, roster_id: int) -> dict:
-    """Exactly what sleeper_write.free_agent_transaction would send."""
-    return {"k_adds": [add_id], "v_adds": [roster_id],
-            "k_drops": [drop_id], "v_drops": [roster_id]}
+def free_payload(add_id: str, drop_id, roster_id: int) -> dict:
+    """Exactly what sleeper_write.free_agent_transaction would send.
+
+    A None drop is an ADD INTO AN EMPTY SPOT and must send no drop keys at all
+    rather than a null one -- fill mode has no incumbent, and a null in the drop
+    array is not the same request as an absent array.
+    """
+    out = {"k_adds": [add_id], "v_adds": [roster_id]}
+    if drop_id is not None:
+        out.update({"k_drops": [drop_id], "v_drops": [roster_id]})
+    return out
 
 
 def claim_payload(add_id: str, drop_id: str, roster_id: int, bid: int) -> dict:
@@ -689,8 +727,10 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
         for p in plans:
             add, drop = p["add"], p["drop"]
             try:
-                sw.free_agent_transaction({add["player_id"]: rid},
-                                          {drop["player_id"]: rid}, league_id)
+                sw.free_agent_transaction(
+                    {add["player_id"]: rid},
+                    {drop["player_id"]: rid} if drop.get("player_id") else None,
+                    league_id)
             except Exception as e:
                 print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
                 continue

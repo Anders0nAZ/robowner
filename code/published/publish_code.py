@@ -61,7 +61,7 @@ CATEGORIES = [
      "What a player is worth from here to the end of the season is the number "
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
-     ["season", "lineup", "model_proj", "ir", "value", "moves",
+     ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
       "ros", "expected", "returns", "marginal", "roles", "playoffs",
       "streaming", "faab"]),
     ("chat", "Talking",

@@ -559,7 +559,9 @@ def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
     """
     out = []
     for drop in drops:
-        if drop not in b.S:
+        # None means ADD WITHOUT DROPPING -- an open roster spot, where there is
+        # no incumbent to beat and the only question is what the man is worth.
+        if drop is not None and drop not in b.S:
             continue
         for add in adds:
             if add not in b.S or add == drop:

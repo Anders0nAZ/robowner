@@ -210,6 +210,34 @@ def _season_of(snap: dict) -> dict:
     return snap.get("season_proj") or {}
 
 
+def diff_blocks(a: dict, b: dict, min_move: float = 1.0) -> list[dict]:
+    """What moved between two season blocks held in memory.
+
+    The same comparison season_diff() runs between two captures on disk, factored
+    out so robo/cascade.py can diff before-the-pull against after-the-pull
+    without writing a snapshot for it. One implementation, because a second one
+    would be a second thing to drift -- and this one is already the definition
+    of what `volume`, `roster` and `both` mean.
+    """
+    moves = []
+    for pid in set(a) & set(b):
+        x, y = a[pid], b[pid]
+        vol = {k: (x.get("vol", {}).get(k), y.get("vol", {}).get(k))
+               for k in VOLUME_KEYS
+               if (x.get("vol", {}).get(k) or 0) != (y.get("vol", {}).get(k) or 0)}
+        dp = round((y.get("pts") or 0) - (x.get("pts") or 0), 2)
+        roster = {k: (x.get(k), y.get(k)) for k in ("team", "inj")
+                  if x.get(k) != y.get(k)}
+        if not roster and abs(dp) < min_move and not vol:
+            continue
+        moves.append({"player_id": pid, "was": x.get("pts"), "now": y.get("pts"),
+                      "move": dp, "vol": vol, "roster": roster,
+                      "kind": ("both" if roster and (vol or abs(dp) >= min_move)
+                               else "roster" if roster else "volume")})
+    moves.sort(key=lambda m: -abs(m["move"]))
+    return moves
+
+
 def season_diff(first=None, last=None, min_move: float = 1.0,
                 season_yr: str = season.SEASON) -> dict:
     """What moved in the SEASON projection between two captures.
@@ -236,22 +264,7 @@ def season_diff(first=None, last=None, min_move: float = 1.0,
     if not sa or not sb:
         return {"error": "no season block in one of these captures "
                          "(schema 1 predates it)", "moves": []}
-    moves = []
-    for pid in set(sa) & set(sb):
-        x, y = sa[pid], sb[pid]
-        vol = {k: (x["vol"].get(k), y["vol"].get(k))
-               for k in VOLUME_KEYS
-               if (x["vol"].get(k) or 0) != (y["vol"].get(k) or 0)}
-        dp = round((y["pts"] or 0) - (x["pts"] or 0), 2)
-        roster = {k: (x.get(k), y.get(k)) for k in ("team", "inj")
-                  if x.get(k) != y.get(k)}
-        if not roster and abs(dp) < min_move and not vol:
-            continue
-        moves.append({"player_id": pid, "was": x["pts"], "now": y["pts"],
-                      "move": dp, "vol": vol, "roster": roster,
-                      "kind": ("both" if roster and (vol or abs(dp) >= min_move)
-                               else "roster" if roster else "volume")})
-    moves.sort(key=lambda m: -abs(m["move"]))
+    moves = diff_blocks(sa, sb, min_move)
     return {"from": a["captured_iso"], "to": b["captured_iso"],
             "compared": len(set(sa) & set(sb)), "moved": len(moves),
             "moves": moves}
