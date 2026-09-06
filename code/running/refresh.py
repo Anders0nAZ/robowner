@@ -113,16 +113,20 @@ def refresh_buzz():
 
 @step("proj-archive")
 def capture_projections():
-    """One snapshot a day of EVERY remaining week's projections.
+    """One snapshot a day of every remaining week, and of the season file.
 
     Evidence, not input: nothing reads these. They exist to settle whether
     Sleeper reprices FUTURE weeks on news, which ros.py currently assumes at
-    half strength because it has never been observable. See robo/projarchive.py.
+    half strength because it has never been observable -- and to time how long
+    the season projection trails a roster event, which is the window a
+    valuation built on that file cannot see across. Runs after `projections`,
+    which is the file it reads. See robo/projarchive.py.
     """
     from robo import projarchive
     snap = projarchive.capture()
     n = sum(len(v) for v in snap["weeks"].values())
-    return f"{len(snap['weeks'])} weeks, {n} player-weeks"
+    sb = len(snap.get("season_proj") or {})
+    return f"{len(snap['weeks'])} weeks, {n} player-weeks, {sb} season rows"
 
 
 @step("playoff-odds")
@@ -138,6 +142,59 @@ def refresh_playoff_odds():
     playoffs.CACHE.write_text(_json.dumps(d, indent=1), encoding="utf-8")
     ours = (d.get("odds") or {}).get(d.get("ours") or "", 0)
     return f"{len(d.get('odds') or {})} teams, ours {ours:.1%}"
+
+
+@step("injuries")
+def refresh_injuries():
+    """Who cannot play, and the earliest week the rules allow him back.
+
+    Before expected and scout, both of which read it. ESPN publishes the return
+    date as data; deriving that floor from Sleeper's projection instead had us
+    pricing men on injured reserve for weeks they are barred from playing.
+    """
+    from robo import injuries
+    d, why = injuries.fetch()
+    if not d:
+        raise RuntimeError(why)
+    out = [r for r in d["players"].values() if (r.get("designation") or "") in injuries.ABSENT]
+    return f"{len(d['players'])} joined, {len(out)} unable to play"
+
+
+@step("scout")
+def refresh_scout():
+    """Dates out of reporting, for the men we can actually act on.
+
+    Only the delta: a player whose designation, return date and news are all
+    unchanged keeps his verdict, so a normal morning judges the handful that
+    moved plus whatever has aged past a week. Runs on qwen and costs nothing,
+    which is what lets it run daily rather than before a draft.
+
+    It reads expected.load() to size its pool, so a stale cache is rebuilt here
+    on yesterday's dates -- coarse, and only ever used to decide WHO to read
+    about. The authoritative build is the next step, with today's dates in it.
+    """
+    from robo import scout
+    b = scout.gather()
+    todo, reuse = scout.needs_judging(b)
+    if not todo:
+        return f"{len(b)} in pool, nothing changed"
+    v = scout.judge(todo, verbose=False)
+    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse)
+    dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
+    viol = sum(1 for x in v if x.get("floor_violation"))
+    return (f"{len(b)} in pool, {len(todo)} judged, {len(reuse)} reused, "
+            f"{dated} dated, {viol} rejected below the floor")
+
+
+@step("expected")
+def rebuild_expected():
+    """The calibrated rest-of-season model, with today's dates applied."""
+    import json as _json
+    from robo import expected
+    d = expected.build()
+    expected.CACHE.write_text(_json.dumps(d), encoding="utf-8")
+    dated = sum(1 for r in d["players"].values() if r.get("scout_return"))
+    return f"{len(d['players'])} players, {dated} carrying a reported return"
 
 
 @step("ros")
@@ -327,7 +384,8 @@ def main():
     # simply holds its last pre-draft values until then.
     ok = [refresh_players(), refresh_projections(), refresh_ecr(),
           refresh_buzz(), refresh_model(), rebuild_board(),
-          capture_projections(), refresh_playoff_odds(), rebuild_ros(),
+          capture_projections(), refresh_playoff_odds(),
+          refresh_injuries(), refresh_scout(), rebuild_expected(), rebuild_ros(),
           ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
           refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
     if not args.no_restart:

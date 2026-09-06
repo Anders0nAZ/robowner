@@ -279,8 +279,19 @@ def _by_gsis() -> dict:
 
 
 @lru_cache(maxsize=1)
+def _by_espn() -> dict:
+    """espn_id -> sleeper_id, for robo/injuries.py.
+
+    ESPN's injury feed identifies a player by his ESPN id and his display name,
+    and only one of those is safe: this repo already learned that "Josh Allen"
+    is a quarterback and a linebacker. 6,239 rows carry both ids.
+    """
+    return {v["espn"]: sid for sid, v in _crosswalk().items() if v.get("espn")}
+
+
+@lru_cache(maxsize=1)
 def _crosswalk() -> dict:
-    """sleeper_id -> {gsis, name, pos, draft_year, draft_round, draft_pick}."""
+    """sleeper_id -> {gsis, espn, name, pos, draft_year, draft_round, draft_pick}."""
     import polars as pl
     p = PARQUET / "ff_playerids.parquet"
     if not p.exists():
@@ -290,12 +301,19 @@ def _crosswalk() -> dict:
     except Exception:
         return {}
     out = {}
-    for r in df.select(["sleeper_id", "gsis_id", "name", "position",
+    for r in df.select(["sleeper_id", "gsis_id", "espn_id", "name", "position",
                         "draft_year", "draft_round", "draft_pick"]).iter_rows(named=True):
         sid = r["sleeper_id"]
         if sid is None or str(sid) == "":
             continue
-        out[str(sid)] = {"gsis": r["gsis_id"], "name": r["name"],
+        # espn_id arrives as a float in the parquet and as a string in ESPN's
+        # URLs. Normalising here rather than at the join keeps the two
+        # vocabularies from meeting anywhere else -- the same trap the NFL Model
+        # hit comparing an integer sleeper_id against Sleeper's string one.
+        espn = r["espn_id"]
+        out[str(sid)] = {"gsis": r["gsis_id"],
+                         "espn": None if espn is None else str(int(espn)),
+                         "name": r["name"],
                          "pos": r["position"], "draft_year": r["draft_year"],
                          "draft_round": r["draft_round"], "draft_pick": r["draft_pick"]}
     return out
@@ -354,21 +372,39 @@ def _rooms(season_yr: int, upto_week: int) -> dict:
     return out
 
 
-def role(sleeper_id: str, team: str, pos: str, season_yr, week: int) -> dict:
+def role(sleeper_id: str, team: str, pos: str, season_yr, week: int,
+         record: dict | None = None) -> dict:
     """This player's standing in his own position room, and what he inherits.
 
     THE TIER IS PART OF THE ANSWER. A number built from four games of real usage
     and a number built from where a man was drafted are not the same claim, and
     a caller that cannot tell them apart will trust both equally.
+
+    `record` keeps the whole POSITION ROOM and every rung of the cold-start
+    ladder that was tried before one matched. The room is the most explanatory
+    thing this module computes -- every man at the position with his rolling
+    share of the team's work -- and until now it was built and thrown away on
+    every call.
     """
     season_yr = int(season_yr)
     xw = _crosswalk().get(str(sleeper_id)) or {}
     tm, pos = vegas.team_code(team), (pos or "").upper()
+    if record is not None:
+        record.update({"sleeper_id": str(sleeper_id), "gsis": xw.get("gsis"),
+                       "team_asked": team, "team": tm, "pos": pos,
+                       "draft_year": xw.get("draft_year"),
+                       "draft_round": xw.get("draft_round"),
+                       "draft_pick": xw.get("draft_pick"),
+                       "crosswalk": str(PARQUET / "ff_playerids.parquet"),
+                       "panel": str(PARQUET / f"player_stats_{season_yr}.parquet"),
+                       "tried": []})
     base = {"player_id": str(sleeper_id), "team": tm, "pos": pos,
             "rank": None, "share": 0.0, "ahead_of": None, "ahead_id": None,
             "absorbs": 0.0, "tier": "none", "why": ""}
     if pos not in OPPORTUNITY:
         base["why"] = f"{pos or 'unknown'} has no opportunity model"
+        if record is not None:
+            record["outcome"] = base["why"]
         return base
 
     gsis = xw.get("gsis")
@@ -376,9 +412,22 @@ def role(sleeper_id: str, team: str, pos: str, season_yr, week: int) -> dict:
         rooms = _rooms(yr, week if yr == season_yr else 99)
         room = rooms.get((tm, pos)) or []
         me = next((r for r in room if r["gsis"] and r["gsis"] == gsis), None)
+        if record is not None:
+            record["tried"].append(
+                {"season": yr, "tier": tier, "room_size": len(room),
+                 "found": bool(me),
+                 "why": "" if me else ("no room on file for this team and position"
+                                       if not room else "not in this room")})
         if me:
             ahead = [r for r in room if r["rank"] < me["rank"]]
             frac, why = absorption(pos, me["rank"])
+            if record is not None:
+                record.update({"room": room, "room_season": yr, "me": me,
+                               "absorb_why": why, "miss_rate": miss_rate(pos),
+                               "fit": str(FIT_FILE),
+                               "cell": ((load_fit().get("curve") or {})
+                                        .get(pos) or {}).get(str(me["rank"])),
+                               "outcome": tier})
             base.update({"rank": me["rank"], "share": me["prior"],
                          "ahead_of": ahead[0]["name"] if ahead else None,
                          "ahead_id": _by_gsis().get(ahead[0]["gsis"]) if ahead else None,
@@ -395,6 +444,10 @@ def role(sleeper_id: str, team: str, pos: str, season_yr, week: int) -> dict:
                      for r in rm if r["gsis"] and r["gsis"] == gsis]
         if elsewhere:
             old_team, old = elsewhere[0]
+            if record is not None:
+                record.update({"room": rooms.get((old_team, pos)) or [],
+                               "room_season": yr, "me": old,
+                               "old_team": old_team, "outcome": "changed-team"})
             base.update({"share": old["prior"], "tier": "changed-team",
                          "why": f"{old['prior']:.0%} of {old_team} {pos} work in "
                                 f"{yr}; no {tm} usage yet, so no line of succession"})
@@ -419,12 +472,113 @@ def role(sleeper_id: str, team: str, pos: str, season_yr, week: int) -> dict:
         # guess at whose job he is behind.
         room = (_rooms(season_yr - 1, 99).get((tm, pos)) or [])
         top = room[0] if room else None
+        if record is not None:
+            record.update({"room": room, "room_season": season_yr - 1,
+                           "me": None, "assumed_rank": rank,
+                           "absorb_why": why, "miss_rate": miss_rate(pos),
+                           "fit": str(FIT_FILE), "halved": True,
+                           "outcome": "draft"})
         base.update({"absorbs": round(frac * 0.5, 4), "tier": "draft",
                      "ahead_of": top["name"] if top else None,
                      "ahead_id": _by_gsis().get(top["gsis"]) if top else None,
                      "why": f"no usage on record; {dy} round {rd} prior, {why}, halved"})
         return base
     base["why"] = "no usage on record and no recent draft capital"
+    if record is not None:
+        record["outcome"] = base["why"]
+    return base
+
+
+# ------------------------------------------------- the room the market expects
+
+# The same question OPPORTUNITY asks of history, asked of the forecast. A back's
+# receptions are part of his job, and a quarterback's carries are part of his, so
+# counting only the headline key would call a receiving back a backup and read a
+# running quarterback as a lesser passer.
+PROJ_OPPORTUNITY = {"QB": ("pass_att", "rush_att"), "RB": ("rush_att", "rec"),
+                    "WR": ("rec",), "TE": ("rec",)}
+
+
+@lru_cache(maxsize=1)
+def _projected_rooms() -> dict:
+    """{(team, pos): [members, most opportunity first]} from the SEASON file.
+
+    WHY THE FORECAST AND NOT THE DEPTH CHART. A listed rank is a roster
+    formality that says nothing about a position battle, and draft round -- what
+    role()'s cold-start branch falls back on -- says nothing about depth at all;
+    it put a third-round quarterback third on his own team's chart and, because
+    the QB absorption curve cliffs from 0.840 at rank 2 to 0.05 at rank 3, cost
+    him a factor of thirty-four for a reason that was never about Arizona.
+
+    Projected opportunity has none of those faults. It is CONTINUOUS, so there
+    is no cliff to fall off; it is made by people reading beat reporters, so it
+    moves on competition news; it exists in August for rookies and men who
+    changed teams, which is precisely the cold start; and it is CURRENT BY
+    CONSTRUCTION, which the nflverse rooms are not -- theirs are last season's
+    rosters, so Arizona's still contains Kyler Murray, who plays for Minnesota.
+    """
+    from robo import rankings
+    out: dict = {}
+    for r in rankings.load_projections():
+        p = r.get("player") or {}
+        pid = str(r.get("player_id") or p.get("player_id") or "")
+        pos = (p.get("fantasy_positions") or [None])[0]
+        tm = p.get("team")
+        if not pid or not tm or pos not in PROJ_OPPORTUNITY:
+            continue
+        st = r.get("stats") or {}
+        opp = sum(float(st.get(k) or 0) for k in PROJ_OPPORTUNITY[pos])
+        if opp <= 0:
+            continue
+        out.setdefault((tm, pos), []).append(
+            {"player_id": pid, "name": f"{p.get('first_name')} {p.get('last_name')}",
+             "opp": round(opp, 1)})
+    for room in out.values():
+        total = sum(m["opp"] for m in room) or 1.0
+        room.sort(key=lambda m: (-m["opp"], m["player_id"]))
+        for i, m in enumerate(room, 1):
+            m["rank"], m["share"] = i, round(m["opp"] / total, 4)
+    return out
+
+
+def projected_role(sleeper_id: str, team: str, pos: str,
+                   record: dict | None = None) -> dict:
+    """Where the market expects this man to stand in his own position room.
+
+    Returns the same shape role() does, so the two are interchangeable to a
+    caller, and carries tier "projected" so they are never mistaken for each
+    other. A share is reported alongside the rank because the rank is the lossy
+    part: Brissett 355 / Beck 124 / Minshew 60 and a three-way dead heat are
+    both "ranks 1, 2, 3", and only one of them is a settled job.
+    """
+    from robo import vegas
+    tm, pos = vegas.team_code(team), (pos or "").upper()
+    base = {"player_id": str(sleeper_id), "team": tm, "pos": pos, "rank": None,
+            "share": 0.0, "ahead_of": None, "ahead_id": None, "absorbs": 0.0,
+            "tier": "projected", "why": ""}
+    if pos not in PROJ_OPPORTUNITY:
+        base["why"] = f"{pos or 'unknown'} has no opportunity model"
+        return base
+    room = _projected_rooms().get((tm, pos)) or []
+    me = next((m for m in room if m["player_id"] == str(sleeper_id)), None)
+    if record is not None:
+        record.update({"room": room, "me": me, "team": tm, "pos": pos,
+                       "source": "season projection"})
+    if not me:
+        base["why"] = f"no projected {pos} opportunity for {tm}"
+        return base
+    frac, why = absorption(pos, me["rank"])
+    ahead = room[me["rank"] - 2] if me["rank"] > 1 else None
+    if record is not None:
+        record.update({"absorb_why": why, "miss_rate": miss_rate(pos),
+                       "cell": ((load_fit().get("curve") or {}).get(pos)
+                                or {}).get(str(me["rank"]))})
+    base.update({"rank": me["rank"], "share": me["share"],
+                 "ahead_of": ahead["name"] if ahead else None,
+                 "ahead_id": ahead["player_id"] if ahead else None,
+                 "absorbs": round(frac, 4),
+                 "why": f"projected {me['share']:.0%} of the {tm} {pos} room "
+                        f"({me['opp']:g} opportunities); {why}"})
     return base
 
 

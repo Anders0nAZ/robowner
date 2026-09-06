@@ -128,24 +128,50 @@ def load_fit() -> dict:
     return fit()
 
 
-def expected(pos: str, implied: float) -> float | None:
+def expected(pos: str, implied: float, record: dict | None = None) -> float | None:
     """Expected points for this position against that implied total.
 
     Linear between bucket midpoints, flat outside them: the tails are where the
     sample thins, and extrapolating a slope off two hundred games is how a
     defence facing a 34-point favourite gets projected below zero.
+
+    `record` keeps WHICH buckets were interpolated between and how far along --
+    "6.19 points" says nothing about whether it came off a bucket holding 263
+    games or off a flat tail, and those deserve different amounts of trust.
     """
     pts = (load_fit().get("curve") or {}).get(pos)
+    if record is not None:
+        record.update({"pos": pos, "implied": implied,
+                       "source": str(FIT_FILE), "buckets": len(pts or [])})
     if not pts:
+        if record is not None:
+            record["why"] = f"no fitted curve for {pos}"
         return None
     if implied <= pts[0]["mid"]:
+        if record is not None:
+            record.update({"mode": "flat-low", "bucket": pts[0],
+                           "why": "below the lowest bucket midpoint; held flat "
+                                  "rather than extrapolated"})
         return pts[0]["pts"]
     if implied >= pts[-1]["mid"]:
+        if record is not None:
+            record.update({"mode": "flat-high", "bucket": pts[-1],
+                           "why": "above the highest bucket midpoint; held flat "
+                                  "rather than extrapolated"})
         return pts[-1]["pts"]
     for a, b in zip(pts, pts[1:]):
         if a["mid"] <= implied <= b["mid"]:
             f = (implied - a["mid"]) / (b["mid"] - a["mid"] or 1)
-            return round(a["pts"] + f * (b["pts"] - a["pts"]), 2)
+            out = round(a["pts"] + f * (b["pts"] - a["pts"]), 2)
+            if record is not None:
+                record.update({"mode": "interpolated", "lo": a, "hi": b,
+                               "fraction": round(f, 4), "pts": out,
+                               "why": f"between buckets at {a['mid']:.1f} "
+                                      f"({a['pts']:.2f}) and {b['mid']:.1f} "
+                                      f"({b['pts']:.2f})"})
+            return out
+    if record is not None:
+        record.update({"mode": "fell-through", "bucket": pts[-1]})
     return pts[-1]["pts"]
 
 

@@ -287,22 +287,36 @@ REGISTRY: list[S] = [
       "The daily refresh pulls it anyway; this only matters for ad-hoc runs. Set "
       "very low and every board rebuild hits Sleeper.",
       bounds=(300, 86400), unit="seconds"),
-    S(DRAFT_PREP, "robo.scout", "POOL_ADP_MAX", int,
-      "ADP past which a backup is too deep to be worth reading news about.",
-      "Controls how many players the scout pays to judge. Raising it costs real "
-      "money per run and mostly buys verdicts on players we will never draft.",
-      bounds=(50, 400), unit="ADP"),
-    S(DRAFT_PREP, "robo.scout", "NEWS_LIMIT", int,
+    S(ROSTER, "robo.scout", "POOL_WIRE", int,
+      "How far down the waiver wire the scout reads news, by rest-of-season value.",
+      "The main cost dial. Men on our own roster and anyone who cannot play are "
+      "read regardless of where they rank, so lowering this only trims the tail "
+      "of the wire -- players a claim would never reach anyway.",
+      bounds=(10, 250), unit="players"),
+    S(ROSTER, "robo.scout", "K_PUZZLE", float,
+      "Calibration residual above which a player is read as a role the model cannot see.",
+      "expected.py's k: 1.0 means the market agrees with our model of his role, "
+      "3 or 4 means it is paying for a job he does not hold yet. Lower this and "
+      "the scout reads ordinary noise as a coming handoff.",
+      bounds=(1.2, 6.0)),
+    S(ROSTER, "robo.scout", "NEWS_LIMIT", int,
       "How many news items per player the scout reads.",
       "More context per verdict, more tokens per player. The items come back "
       "newest-first, so a low number is recent news and a high number is history.",
       bounds=(1, 25), unit="items"),
-    S(DRAFT_PREP, "robo.scout", "TRUST_LIFT", dict,
+    S(ROSTER, "robo.scout", "TRUST_LIFT", dict,
       "How much a scout verdict multiplies a player's bench value at the extremes.",
-      "Deliberately modest: a model reading a paragraph is one input among ADP, "
-      "projections, depth charts and the crowd, and it must not be able to "
-      "overturn all four. Widen this and one bad read moves the draft.",
+      "Deliberately modest: a model reading a paragraph is one input among the "
+      "projection, the role and the market, and it must not be able to overturn "
+      "all three. Widen this and one bad read moves the roster.",
       bounds=(0.1, 3.0)),
+    S(ROSTER, "robo.injuries", "MAX_AGE_H", float,
+      "How stale the ESPN injury feed may be before the valuation ignores it.",
+      "Sized to the daily refresh with room for one missed run. Too low and one "
+      "failed pull sends the eligibility floor back to being inferred from "
+      "Sleeper's projection, which is what priced men for weeks they are barred "
+      "from playing. Too high and a designation a week old is treated as today's.",
+      bounds=(6.0, 168.0), unit="hours"),
     S(DRAFT_PREP, "robo.rankings", "ECR_WEIGHT", float,
       "How much the expert field counts against our own projection when choosing "
       "between two players for the same starting slot.",
@@ -557,6 +571,40 @@ REGISTRY: list[S] = [
       "feed that does not carries no news at all. `python -m robo.projarchive "
       "--diff` is collecting the answer.",
       bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.expected", "K_CLAMP", tuple,
+      "Bounds on the residual between the structural model and the market.",
+      "k is the part of a man's market value the availability-and-role model "
+      "does NOT explain, and a large one is information rather than an error: "
+      "Carson Beck reads 3.99 because the market prices a handoff no hazard "
+      "rate knows about, which is the whole signal this module was built to "
+      "find. Set narrow and that signal is clamped away; set absurdly wide and "
+      "one stale season row can move a valuation by an order of magnitude. "
+      "16 of 785 players clamp at (0.25, 6.0).",
+      bounds=(0.05, 20.0)),
+    S(ROSTER, "robo.expected", "MIN_RAW_TO_SCALE", float,
+      "Structural total below which a player is priced off the season file alone.",
+      "A man the model gives almost nothing has no per-week SHAPE for the "
+      "market's level to scale, and dividing by it explodes on rounding noise "
+      "instead of on information. Below this he gets the season projection "
+      "spread evenly over the games left, flagged `season-only` -- which is how "
+      "37 players, Michael Penix at 141.5 among them, stop pricing at 0.00. "
+      "Raise it and more men fall back to a flat line; lower it and the "
+      "residual starts amplifying noise.",
+      bounds=(0.0, 25.0), unit="points"),
+    S(ROSTER, "robo.returns", "MIN_EVENTS", int,
+      "Spells a body part needs before it gets its own return curve.",
+      "Same discipline as roles.MIN_EVENTS. Below this the curve is noise and "
+      "falls back to the pooled one across all 2,301 spells; 15 body parts "
+      "clear it. Lower it and a handful of freak injuries start setting a "
+      "return date for everyone who shares the label.",
+      bounds=(5, 200), unit="spells"),
+    S(ROSTER, "robo.returns", "MAX_WEEKS", int,
+      "How far out the return curves are carried.",
+      "Past this the men still out are a different population -- season-ending "
+      "injuries -- and a rest-of-season sum has nothing left to spend on them. "
+      "Extending it does not add information, it adds a tail fitted on the "
+      "handful of spells that reached it.",
+      bounds=(4, 18), unit="weeks"),
     S(ROSTER, "robo.playoffs", "WEEKLY_SD", float,
       "Week-to-week scoring spread used to simulate playoff odds.",
       "This league's own within-team standard deviation, 23.8 across 72 "

@@ -126,12 +126,17 @@ def next_kickoff(season_yr, week: int, now: float | None = None) -> float | None
     return min(ahead) - now
 
 
-def implied_totals(season_yr, week: int) -> dict:
+def implied_totals(season_yr, week: int, record: dict | None = None) -> dict:
     """team -> {own, opp, opponent, home} for every PRICED game that week.
 
     A game with no posted line is absent, not zero. Callers must treat a missing
     team as "no line yet" and fall back to something that does not pretend to
     know the matchup.
+
+    `record` keeps the POSTED LINE each implied total was derived from. An audit
+    of a defence's number wants to see the spread and the total a book actually
+    published, not just the halved figures -- those are two arithmetic steps
+    removed from anything anyone could look up.
     """
     out = {}
     for wk, home, away, spread, total in _schedule(int(season_yr)):
@@ -144,6 +149,12 @@ def implied_totals(season_yr, week: int) -> dict:
                      "opponent": away, "home": True}
         out[away] = {"own": round(a, 2), "opp": round(h, 2),
                      "opponent": home, "home": False}
+        if record is not None:
+            line = {"spread_line": spread, "total_line": total,
+                    "home": home, "away": away, "week": wk,
+                    "source": str(PARQUET)}
+            record.setdefault("lines", {})[home] = line
+            record["lines"][away] = line
     return out
 
 

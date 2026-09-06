@@ -31,6 +31,8 @@ OUT = ROOT / "decision-log" / "code"
 ALLOW = [
     ("robo", "*.py"),
     (".", "admin_gui.py"),
+    (".", "audit_gui.py"),
+    ("pages", "*.py"),
 ]
 
 # Files matching the allowlist that still must not go. Kept tiny on purpose --
@@ -48,7 +50,7 @@ CATEGORIES = [
      "Everything the bot knows comes in through here. All free, all public "
      "except Sleeper's write API, which uses its own account.",
      ["sleeper_read", "sleeper_write", "adp", "adp_live", "fantasypros",
-      "buzz", "scout", "history", "vegas", "projarchive"]),
+      "buzz", "injuries", "scout", "history", "vegas", "projarchive"]),
     ("draft", "The draft",
      "Valuing players, pricing keepers, and the agent that actually sat on the "
      "clock and submitted picks.",
@@ -60,7 +62,7 @@ CATEGORIES = [
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
      ["season", "lineup", "model_proj", "ir", "value", "moves",
-      "ros", "roles", "playoffs", "streaming", "faab"]),
+      "ros", "expected", "returns", "roles", "playoffs", "streaming", "faab"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",
@@ -72,9 +74,10 @@ CATEGORIES = [
      "writes a record before anyone asks for one.",
      ["decisions", "devlog", "status", "publish_code"]),
     ("running", "Keeping it running",
-     "The daily pipeline, the tunable settings behind it, and the local admin "
-     "app that edits them.",
-     ["__init__", "refresh", "settings", "admin_gui"]),
+     "The daily pipeline, the tunable settings behind it, and the two local "
+     "apps: one that edits the settings, one that explains the decisions.",
+     ["__init__", "refresh", "settings", "admin_gui",
+      "audit_gui", "ui", "1_Rest_of_season"]),
 ]
 
 

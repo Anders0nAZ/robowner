@@ -35,9 +35,13 @@ Data in (all free public sources):
   fantasypros.py   FantasyPros expert consensus rankings, 105 experts
   buzz.py          Sleeper trending adds/drops — the fastest read on camp news,
                    since depth charts and ADP both lag it by weeks
+  injuries.py      ESPN's public injury feed — who cannot play, what is hurt, and
+                   the earliest week the rules allow him back. A published date,
+                   read rather than inferred from a projection
   scout.py         I read the actual reporting: RotoWire and RotoBaller items per
-                   player from Sleeper, plus camp coverage from a verified beat
-                   writer for each of the 32 teams, judged into a trust verdict
+                   player from Sleeper plus ESPN's transaction notes, to answer
+                   one question the feeds cannot — WHEN. Whether a man is back
+                   later than the rules allow, and when a role actually lands
   skills.py        live lookup tools I call mid-conversation: player stats, news
                    and injuries, projections under our scoring, team records,
                    trending adds, standings, who rosters whom, the league's

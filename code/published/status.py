@@ -45,7 +45,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from robo import DATA, DRAFT_ID_2026, MODEL_ROOT, RAW, ROOT
+from robo import DATA, DRAFT_ID_2026, MODEL_ROOT, RAW, ROOT, injuries
 
 OUT = ROOT / "decision-log" / "status.html"
 STATE = DATA / "status_state.json"
@@ -433,6 +433,18 @@ SOURCES = [
     # row above.
     ("ros",         "Rest-of-season value", 20 * 3600, "RobonerRefresh"),
     ("playoff-odds", "Playoff odds",        30 * 3600, "RobonerRefresh"),
+    # 54 hours, matching injuries.MAX_AGE_H, so the page goes amber at the same
+    # moment expected.py stops trusting the file -- the same rule as the model
+    # and ros rows. When it does stop, the eligibility floor falls back to being
+    # inferred from Sleeper's projection, which is what priced men on injured
+    # reserve for weeks they are barred from playing.
+    ("injuries",    "ESPN injury report",   54 * 3600, "RobonerRefresh"),
+    # On this list since 5 Sep 2026. It used to be deliberately absent, because
+    # verdicts fed the draft board's bench valuation and nothing else, and
+    # nothing ran scout once the draft was over. Both halves changed together:
+    # expected.py now reads the dated half through role_signal(), and refresh
+    # runs scout daily.
+    ("scout",       "Player news judged",   26 * 3600, "RobonerRefresh"),
     # Produced by the OTHER repo's daily ingest. Before week 1 is played there
     # is nothing to hold and the row reads BAD with "no player_stats yet" --
     # which is the honest state, and the reason roles.py is running on last
@@ -498,7 +510,7 @@ def _refresh_log() -> dict:
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
 MARKED_STEPS = {"players", "projections", "buzz", "board", "model",
-                "ros", "playoff-odds", "usage"}
+                "ros", "playoff-odds", "usage", "injuries", "scout"}
 
 # Sources whose ABSENCE is a normal state at some point in the year, and so must
 # not paint the page red on a perfectly healthy bot. A false alarm that runs for
@@ -586,6 +598,13 @@ def _source_marker(step: str):
         return _mtime(p), "%d rows" % len(_read_json(p, []) or [])
     if step == "players":
         return _mtime(RAW / "players_nfl.json"), "cached 24h"
+    if step == "injuries":
+        p = DATA / "injuries_espn.json"
+        d = _read_json(p, {}) or {}
+        out = sum(1 for r in (d.get("players") or {}).values()
+                  if (r.get("designation") or "") in injuries.ABSENT)
+        return _mtime(p), "%d joined, %d unable to play" % (
+            len(d.get("players") or {}), out)
     if step == "scout":
         d = _read_json(DATA / "news_verdicts.json", {}) or {}
         # COUNTS ONLY. The reasons quote injury reporting and, in one case, a
@@ -966,13 +985,6 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     if not done:
         sources += [("adp-live", "Live ADP current"),
                     ("ecr", "Expert rankings current")]
-    if not done:
-        # Scout's verdicts feed the DRAFT board's bench valuation and nothing
-        # else yet. With the draft over, nothing reads them and nothing runs
-        # scout, so asserting their freshness would age to red and stay there --
-        # a red light for data no longer being used. It comes back when the
-        # rest-of-season valuation starts consuming verdicts (robo/value.py).
-        sources.append(("scout", "Player news judged"))
     for step, label in sources:
         r = by_step.get(step, {})
         add(label, r.get("status") == OK,
