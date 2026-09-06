@@ -399,9 +399,28 @@ def priced(ctx: dict) -> dict:
     decides whether it is judged on its mean or its ceiling.
     """
     from robo import marginal
+    b0 = marginal.board(ctx["league_id"])
+
+    def shortlist(waivers: bool) -> list[str]:
+        """The top of one channel, restricted to men the simulator can price.
+
+        K AND DEF ARE FILTERED OUT HERE, not silently dropped later. They rank
+        at the top of any absolute-value ordering -- a defence that starts all
+        season sums to 118 -- so an unfiltered top ten was eight kickers and
+        defences and left the planner comparing exactly two real candidates.
+        They are refillable from the wire every week and cancel out of the
+        simulation by design; taking a shortlist slot as well was the same
+        mistake twice.
+        """
+        out = []
+        for c in candidates(ctx, waivers=waivers):
+            pid = c["row"]["player_id"]
+            if pid in b0.S and len(out) < SHORTLIST:
+                out.append(pid)
+        return out
+
     drops = [d["row"]["player_id"] for d in droppables(ctx)][:MAX_SLOTS_TO_TURN_OVER]
-    free = [c["row"]["player_id"] for c in candidates(ctx, waivers=False)][:SHORTLIST]
-    wire = [c["row"]["player_id"] for c in candidates(ctx, waivers=True)][:SHORTLIST]
+    free, wire = shortlist(False), shortlist(True)
     b = marginal.Board(ctx["league_id"], extra=free + wire)
     return {"board": b, "drops": drops,
             "free": marginal.price_options(b, drops, free),

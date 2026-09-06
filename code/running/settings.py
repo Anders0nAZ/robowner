@@ -519,11 +519,17 @@ REGISTRY: list[S] = [
       "slot scores zero and anyone startable beats it.",
       bounds=(0.0, 200.0), unit="points"),
     S(ROSTER, "robo.moves", "DROP_FLOOR", float,
-      "Never cut anyone whose HOLD value is above this.",
-      "A backstop against the valuation being wrong, checked in addition to the "
-      "hard rule that nobody in the current starting lineup is droppable. Two "
-      "guards because they fail differently: one catches a bad number, the other "
-      "catches a coherent number applied to a player we are actually starting.",
+      "Never cut anyone whose drop price is above this.",
+      "NOW A BACKSTOP AND LITTLE ELSE. It existed to stop a broken valuation "
+      "cutting a genuine starter, and the simulator answers that directly: a real "
+      "starter prices at 60 to 175 points to drop and a spare part at 0 to 4, "
+      "with a standard error under half a point. The guard doing the work is the "
+      "hard rule that nobody in the current optimal lineup is droppable. THE "
+      "UNITS CHANGED UNDERNEATH IT and that made it weaker, not stricter: drop "
+      "prices now run 0.4 to 120 where hold values ran 0.4 to 302, so a floor of "
+      "120 that used to exclude our top six men now excludes roughly one. Left "
+      "there deliberately, because the starter rule is the guard that matters and "
+      "a second one tuned in stale units would be worse than none.",
       bounds=(0.0, 500.0), unit="points"),
     S(ROSTER, "robo.moves", "MAX_SLOTS_TO_TURN_OVER", int,
       "How many roster spots one waiver run may change.",
