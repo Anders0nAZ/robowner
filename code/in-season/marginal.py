@@ -75,6 +75,12 @@ SIMS = 200
 CONTENDER_ODDS = 0.45
 UPSIDE_PCTL = 75
 
+# What counts as a bench player actually MATTERING in a given season -- the bar
+# p_hit is measured against. Five points over a season is nothing for a starter
+# and is the difference between a dead roster spot and a real contributor for a
+# man who was never going to play.
+HIT_POINTS = 5.0
+
 settings.apply(__name__, globals())
 
 
@@ -284,6 +290,39 @@ class Board:
     def score(self, totals):
         return _score(totals, self.contender)
 
+    def shape(self, totals) -> dict:
+        """The whole distribution of a change, not just its middle.
+
+        THE MEAN CANNOT RANK THE BOTTOM OF A BENCH, and that is not a tuning
+        problem. Every candidate for the last bench spot is worth about nothing
+        in expectation -- he does not play in the median world, by definition --
+        so selecting on the mean is selecting on noise, and it systematically
+        prefers a man who is marginally better than a replacement to one who
+        could become more than just a guy. Measured on this roster: Cooper Kupp
+        means 1.7 against Kaelon Black's 1.2, while Black's ninetieth percentile
+        is 4.8 against Kupp's 4.1 and his ceiling is 17.2 against 11.6. The mean
+        picks Kupp. The bench slot wants Black.
+
+        So a starting-slot upgrade is judged on `mean` -- he plays every week and
+        expected points is exactly the right question -- and a bench slot on
+        `p90` and `p_hit`, which is where the difference between a lottery ticket
+        and a singles hitter actually lives.
+        """
+        import statistics as st
+        d = sorted(a - b for a, b in zip(totals, self.base))
+        n = len(d)
+        # BOTH tails are kept, because which one is the "upside" depends on the
+        # question. Adding a man gives positive deltas and his ceiling is p90;
+        # dropping one gives negative deltas and his ceiling is p10, the world
+        # where losing him hurt most. Reading max for a drop returns the world
+        # where he did not matter at all, which is always zero.
+        return {"mean": sum(d) / n,
+                "se": st.stdev(d) / (n ** 0.5) if n > 1 else 0.0,
+                "p10": d[max(0, int(0.1 * n))],
+                "p90": d[min(n - 1, int(0.9 * n))],
+                "min": d[0], "max": d[-1],
+                "p_hit": sum(1 for x in d if abs(x) > HIT_POINTS) / n}
+
     def _paired(self, totals) -> tuple[float, float]:
         """(delta, standard error) against the baseline, paired by world.
 
@@ -313,9 +352,10 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
     b = Board(league_id, sims)
     rows = []
     for pid in b.mine:
-        v, se = b.drop_price(pid)
+        sh = b.shape(b.totals([p for p in b.mine if p != pid]))
         r = b.S[pid]
-        rows.append((r["name"], r["pos"], r.get("rank"), v, se))
+        rows.append((r["name"], r["pos"], r.get("rank"), -sh["mean"], sh["se"],
+                     -sh["p10"], sh["p_hit"]))
     rows.sort(key=lambda t: t[3])
     L = [f"WHAT EACH MAN IS WORTH TO KEEP - {sims} simulated seasons, "
          f"weeks {b.weeks[0]}-{b.weeks[-1]}",
@@ -324,12 +364,22 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
          f"  baseline season total {b.score(b.base):.0f}"
          f"  (the eight skill slots; K and DEF are refillable every week and"
          f" cancel out of every comparison)", "",
-         f"  {'player':<24}{'pos':<5}{'rank':>5}{'cost to drop':>14}{'+/-':>8}"]
-    for n, pos, rk, v, se in rows:
-        L.append(f"  {n[:24]:<24}{pos:<5}{str(rk or '-'):>5}{v:>14.1f}{se:>8.1f}")
+         f"  {'player':<22}{'pos':<4}{'rk':>3}{'cost to drop':>13}{'+/-':>6}"
+         f"{'worst case':>12}{'P(matters)':>12}"]
+    for n, pos, rk, v, se, ceil, ph in rows:
+        L.append(f"  {n[:22]:<22}{pos:<4}{str(rk or '-'):>3}{v:>13.1f}{se:>6.1f}"
+                 f"{ceil:>12.1f}{ph:>11.0%}")
     L += ["", "  cost to drop is the season points we lose across the simulated",
           "  worlds -- which is where a backup earns his place, since he only",
-          "  ever plays in the ones where somebody ahead of him is gone."]
+          "  ever plays in the ones where somebody ahead of him is gone.",
+          "",
+          "  READ THE LAST TWO COLUMNS FOR THE BOTTOM OF THE BENCH. Down there",
+          "  every man is worth about nothing on average, so the mean is ranking",
+          "  noise; the ceiling and P(matters) are what separate a lottery ticket",
+          f"  from somebody marginally better than the wire. Worst case is the",
+          "  tenth percentile -- what losing him costs in the seasons where it",
+          "  actually bites. P(matters) is the",
+          f"  share of simulated seasons he moves us by more than {HIT_POINTS:.0f} points."]
     return "\n".join(L)
 
 
