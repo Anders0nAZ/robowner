@@ -238,6 +238,12 @@ forecast; he cannot come back sooner, so an earlier week is not a disagreement,
 it is an impossibility. If the reporting is more optimistic than the rule, the
 rule wins and the answer is null.
 
+AND DO NOT RETURN `eligible_week` ITSELF. Reporting that he "must miss four
+games", or is "eligible to return in Week 5", or "should be back for Week 5", is
+restating the rule you were already given. That is not an answer, it is the
+question. Only a week strictly LATER than `eligible_week` tells us anything we do
+not already know; anything else is null.
+
 `role_week` is when a role change takes effect, where the reporting says so, and
 null otherwise. Only ask it of players flagged with a high `k`.
 
@@ -347,12 +353,22 @@ def enforce_floor(verdicts: list[dict], bundles: list[dict],
                   verbose: bool = True) -> list[dict]:
     """Drop any return week earlier than the rules allow, and say so.
 
-    Mechanical, not a judgment: the eligible week is a rule, so a date before it
-    is impossible rather than merely optimistic. It is also the only
-    hallucination detector available here -- there is no ground truth for a date
-    that is merely too LATE -- so a violation is recorded on the row rather than
-    quietly clamped, because the rate of them is how we find out the model has
-    stopped reading and started guessing.
+    Two things are dropped, and they fail differently.
+
+    EARLIER THAN THE FLOOR is impossible rather than merely optimistic, and it is
+    the only hallucination detector available here -- there is no ground truth
+    for a date that is merely too LATE.
+
+    EQUAL TO THE FLOOR is the model restating the rule it was handed. Not wrong,
+    but empty: raw_series overrides only on a strictly later week, so such a date
+    changes nothing while sitting in the file looking like reporting that
+    confirmed something. Four of the first seven dates this ever produced were
+    exactly that -- "must now miss at least four games before becoming eligible"
+    read back as week 5.
+
+    Both are recorded on the row rather than quietly discarded, because the rate
+    of each is how we find out the model has stopped reading the reporting and
+    started paraphrasing the prompt.
     """
     floors = {b["player_id"]: b.get("eligible_week") for b in bundles}
     names = {b["player_id"]: b.get("name") for b in bundles}
@@ -360,13 +376,14 @@ def enforce_floor(verdicts: list[dict], bundles: list[dict],
     for v in verdicts:
         v = dict(v)
         rw, fl = v.get("return_week"), floors.get(v.get("player_id"))
-        if rw is not None and fl is not None and int(rw) < int(fl):
-            if verbose:
+        if rw is not None and fl is not None and int(rw) <= int(fl):
+            impossible = int(rw) < int(fl)
+            if verbose and impossible:
                 print(f"    REJECTED week {rw} for {names.get(v.get('player_id'))}"
                       f" -- eligible week is {fl}", flush=True)
             v["return_week"] = None
             v["return_basis"] = None
-            v["floor_violation"] = int(rw)
+            v["floor_violation" if impossible else "floor_restated"] = int(rw)
         out.append(v)
     return out
 
@@ -470,6 +487,7 @@ def dates_report() -> str:
     v = d.get("verdicts") or {}
     dated = [x for x in v.values() if x.get("return_week") or x.get("role_week")]
     viol = [x for x in v.values() if x.get("floor_violation")]
+    echo = [x for x in v.values() if x.get("floor_restated")]
     L = [f"SCOUT DATES - {len(v)} verdicts, {len(dated)} carry one",
          f"  {d.get('model')}, written {d.get('written_iso')}", ""]
     for x in sorted(dated, key=lambda x: (x.get("return_week") or 99)):
@@ -481,6 +499,10 @@ def dates_report() -> str:
         L += ["", f"  {len(viol)} rejected for preceding the eligible week:"]
         L += [f"    {(x.get('name') or '')[:22]:<22} said week {x['floor_violation']}"
               for x in viol]
+    if echo:
+        L += ["", f"  {len(echo)} dropped for restating the eligible week:"]
+        L += [f"    {(x.get('name') or '')[:22]:<22} said week {x['floor_restated']}"
+              for x in echo]
     return "\n".join(L)
 
 
