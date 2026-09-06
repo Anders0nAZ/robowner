@@ -51,6 +51,7 @@ it, because a difference inside its own noise is not a ranking.
 
 import argparse
 import json
+from functools import lru_cache
 
 from robo import DATA, LEAGUE_ID_2026, lineup, playoffs, roles, ros, season
 from robo import settings
@@ -511,6 +512,93 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
           "  quarterback has a different one: a cliff rather than a slope, so one",
           "  claim cannot fill two QB slots the way it can fill a second receiver."]
     return "\n".join(L)
+
+
+def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
+    """Would he be in the optimal ten if nobody got hurt?
+
+    WHICH TAIL TO READ DEPENDS ON THIS, and nothing else in the output does. A
+    man who starts is judged on his mean, because he plays every week and
+    expected points is exactly the question. A man who does not is judged on his
+    ceiling, because down there every candidate is worth about nothing in
+    expectation and the mean is ranking noise -- it prefers somebody marginally
+    better than the wire to somebody who could become more than that.
+    """
+    for w in b.weeks:
+        cands = []
+        for q in ids:
+            p = b.S.get(q)
+            if not p or w not in p["weeks"]:
+                continue
+            cands.append({"player_id": q, "name": p["name"], "pos": p["pos"],
+                          "pts": _base(p, w), "has_game": True,
+                          "injury": None, "locked": False})
+        for pos, byweek in (b.repl or {}).items():
+            if w in byweek:
+                cands.append({"player_id": f"wire-{pos}", "name": f"wire {pos}",
+                              "pos": pos, "pts": byweek[w], "has_game": True,
+                              "injury": None, "locked": False})
+        saved = lineup.SLOTS
+        try:
+            lineup.SLOTS = SKILL_SLOTS
+            filled, _ = lineup.optimize(cands)
+        finally:
+            lineup.SLOTS = saved
+        if any(c and c.get("player_id") == pid for c in filled):
+            return True
+    return False
+
+
+def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
+    """Every (add, drop) pair, priced and labelled by which slot it fills.
+
+    `excess` is what makes the channel comparison possible in Phase 4: a waiver
+    claim is only worth FAAB if it beats what the free board would have given us
+    for the same slot, and that comparison needs both channels priced the same
+    way against the same drop.
+    """
+    out = []
+    for drop in drops:
+        if drop not in b.S:
+            continue
+        for add in adds:
+            if add not in b.S or add == drop:
+                continue
+            ids = [p for p in b.mine if p != drop] + [add]
+            sh = b.shape(b.totals(ids))
+            out.append({"add": add, "drop": drop,
+                        "gain": sh["mean"], "se": sh["se"],
+                        "ceiling": sh["p90"], "p_hit": sh["p_hit"],
+                        "starter": starts_in_the_median_world(b, ids, add)})
+    return out
+
+
+@lru_cache(maxsize=2)
+def board(league_id: str = LEAGUE_ID_2026, sims: int = SIMS):
+    """The simulated worlds, built once per process.
+
+    Cached because the callers are chatty: droppables() asks for a drop price
+    per man on the roster and the planner then asks for a price per candidate,
+    and each cold build draws every world again. One build, many questions.
+    """
+    return Board(league_id, sims)
+
+
+def drop_price(pid: str, league_id: str = LEAGUE_ID_2026) -> float:
+    """What cutting this man costs us, over the simulated seasons.
+
+    THE SEAM value.hold_of NOW SERVES. ros.hold priced Carson Beck at 0.4 and
+    made him the cheapest man on our roster to drop; this prices him at 37.5 and
+    puts him above six of our starters, because it can see the worlds where our
+    other two quarterbacks are not there. The ordering was exactly inverted.
+
+    Our roster only. Another manager's bench cannot be priced this way -- we do
+    not know who he would start -- so the blocking test keeps ros.hold.
+    """
+    b = board(league_id)
+    if pid not in b.mine:
+        return 0.0
+    return round(b.drop_price(pid)[0], 2)
 
 
 def moves_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS,

@@ -57,14 +57,28 @@ import json
 from robo import LEAGUE_ID_2026, faab, lineup, season, settings, value, vegas
 from robo import sleeper_read as api
 
-# How much better a candidate must be than the man he replaces before it is
-# worth a transaction at all. In rest-of-season points.
+# How much a candidate must add to our STARTING LINEUP, across simulated
+# seasons, before a transaction is worth making. POLICY, NOT MEASUREMENT, and
+# marked as such: this league's history records what an add went on to score in
+# a starting slot, which is not a marginal quantity -- the man he displaced would
+# have scored too, and that counterfactual is not in the data. Recovering it
+# needs the simulator run against a past roster state, which needs the projection
+# snapshots projarchive only began taking in September 2026. Re-derive around
+# week 6. Until then this is a deliberate reluctance to churn, not a fitted bar.
 MIN_GAIN_TO_ADD = 15.0
 
-# Never drop anyone whose HOLD value is above this. A floor, not a judgement: it
-# exists so a broken valuation cannot cut a genuine starter, and it is checked in
-# addition to the hard rule that nobody in the current starting lineup is
-# droppable.
+# How many standard errors a gain must clear before it counts as a gain at all.
+# The simulator reports the paired standard error of every option; a difference
+# inside its own noise is not a ranking, and acting on one is how a bot makes a
+# move a coin flip would have made.
+NOISE_MULTIPLE = 2.0
+
+# Never drop anyone whose value is above this. RETIRED IN PLACE and kept only
+# as a backstop: it existed so a broken valuation could not cut a genuine
+# starter, and the simulator now answers that directly -- a real starter prices
+# at 60 to 175 points to drop and a spare part at 0 to 4, with a standard error
+# under half a point. The guard that does the work is the hard rule that nobody
+# in the current optimal lineup is droppable.
 DROP_FLOOR = 120.0
 
 # How many roster spots we are willing to turn over in one waiver run. This caps
@@ -166,8 +180,19 @@ def holes(ctx: dict) -> list[dict]:
     return out
 
 
-def hold_value(row: dict, ctx: dict) -> float:
-    v, _ = value.hold_of(row, ctx["week"])
+def hold_value(row: dict, ctx: dict, mine: bool = True) -> float:
+    """What we give up by cutting him.
+
+    OUR OWN MEN ARE PRICED BY SIMULATION; everyone else's are not. ros.hold made
+    Carson Beck the cheapest man on our roster to drop at 0.4 while the simulator
+    prices him at 37.5, above six of our starters -- the ordering was inverted,
+    and that is the bug that produced "the bot tried to drop Carson Beck".
+
+    Another manager's bench cannot be priced the same way, because we do not know
+    who he would start, so the blocking test keeps the old number and that is a
+    limit rather than an oversight.
+    """
+    v, _ = value.hold_of(row, ctx["week"], mine=mine)
     return v
 
 
@@ -192,7 +217,8 @@ def droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
         protected = ctx["starters"] | reserve
     else:
         ranked = sorted((p for p in ids if p not in reserve),
-                        key=lambda p: -hold_value(ctx["by_id"].get(p) or {"player_id": p}, ctx))
+                        key=lambda p: -hold_value(ctx["by_id"].get(p) or {"player_id": p},
+                                                  ctx, mine=False))
         protected = set(ranked[:len(lineup.SLOTS)]) | reserve
 
     out = []
@@ -202,7 +228,7 @@ def droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
         row = ctx["by_id"].get(pid)
         if not row:
             continue
-        v = hold_value(row, ctx)
+        v = hold_value(row, ctx, mine=mine)
         # In patch mode a hole in the lineup is a certain loss this week and an
         # inheritance is a maybe, so the floor and the rising-role premium both
         # yield -- but only far enough to reach the cheapest bodies we hold.
@@ -306,24 +332,105 @@ def plan_free(ctx: dict) -> list[dict]:
                 break
         return out
 
-    for d in drops[:max(1, slots)]:
-        for c in pool:
-            pid = c["row"]["player_id"]
-            if pid in used:
-                continue
-            gain = round(c["value"] - d["value"], 1)
-            # A patch is not an upgrade decision: an empty slot scores zero, so
-            # anyone startable beats it and the ordinary bar does not apply.
-            if mode != "patch" and gain < MIN_GAIN_TO_ADD:
-                break  # pool is sorted, so nothing below this clears either
-            used.add(pid)
-            out.append({"add": c["row"], "drop": d["row"], "gain": gain,
-                        "add_value": c["value"], "drop_value": d["value"],
-                        "real": c["real"],
-                        "why": "fills an unfillable starting slot"
-                               if mode == "patch" else ""})
-            break
+    if mode == "patch":
+        # A patch is not an upgrade decision: an empty slot scores zero, so
+        # anyone startable beats it and neither the ordinary bar nor the
+        # simulator applies. Legality is not a matter of degree, and this is the
+        # branch that runs unattended every morning -- it stays cheap and blunt.
+        for d in drops[:max(1, slots)]:
+            for c in pool:
+                pid = c["row"]["player_id"]
+                if pid in used:
+                    continue
+                used.add(pid)
+                out.append({"add": c["row"], "drop": d["row"],
+                            "gain": round(c["value"] - d["value"], 1),
+                            "add_value": c["value"], "drop_value": d["value"],
+                            "real": c["real"],
+                            "why": "fills an unfillable starting slot"})
+                break
+        return out
+
+    # ORDINARY UPGRADES ARE PRICED BY SIMULATION, not by subtracting two absolute
+    # season totals across different positions. That arithmetic put a defence and
+    # a fourth receiver on the same axis and scored a +1.6 swap at +87.
+    P = priced(ctx)
+    for drop in P["drops"][:max(1, slots)]:
+        o = best_free([x for x in P["free"] if x["add"] not in used], drop)
+        if not o:
+            continue
+        used.add(o["add"])
+        out.append(_option_row(ctx, P["board"], o))
     return out
+
+
+def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
+    """One priced option in the shape render_free and run() already expect."""
+    add_row = ctx["by_id"].get(o["add"]) or {"player_id": o["add"],
+                                             "name": board.S[o["add"]]["name"],
+                                             "pos": board.S[o["add"]]["pos"]}
+    drop_row = ctx["by_id"].get(o["drop"]) or {"player_id": o["drop"],
+                                               "name": board.S[o["drop"]]["name"],
+                                               "pos": board.S[o["drop"]]["pos"]}
+    kind = "starting slot" if o["starter"] else "bench, judged on the ceiling"
+    return {"add": add_row, "drop": drop_row,
+            "gain": round(o["gain"], 1),
+            "add_value": round(o["gain"], 1),
+            "drop_value": round(board.drop_price(o["drop"])[0], 1),
+            "real": True,
+            "se": round(o["se"], 2), "ceiling": round(o["ceiling"], 1),
+            "why": why or f"{kind}; +/- {o['se']:.1f}, ceiling {o['ceiling']:.1f}"}
+
+
+SHORTLIST = 10
+
+
+def priced(ctx: dict) -> dict:
+    """Both channels priced against the same drops, by the same simulator.
+
+    THE FREE BOARD IS THE OPPORTUNITY COST OF A BID, and this is the only place
+    that can see it. Planning the two channels separately is how the bot came to
+    bid $8 on the forty-first-best free agent while the best one sat there for
+    nothing: plan_claims only ever looked at players on waivers, so "is there a
+    better man available for free" was a question nobody asked.
+
+    Returns {"free": [...], "wire": [...], "board": Board}, every option carrying
+    the gain, its standard error, and whether it fills a starting slot -- which
+    decides whether it is judged on its mean or its ceiling.
+    """
+    from robo import marginal
+    drops = [d["row"]["player_id"] for d in droppables(ctx)][:MAX_SLOTS_TO_TURN_OVER]
+    free = [c["row"]["player_id"] for c in candidates(ctx, waivers=False)][:SHORTLIST]
+    wire = [c["row"]["player_id"] for c in candidates(ctx, waivers=True)][:SHORTLIST]
+    b = marginal.Board(ctx["league_id"], extra=free + wire)
+    return {"board": b, "drops": drops,
+            "free": marginal.price_options(b, drops, free),
+            "wire": marginal.price_options(b, drops, wire)}
+
+
+def clears(o: dict) -> bool:
+    """Is this option worth a transaction at all?
+
+    Two bars, and which applies depends on the slot. A STARTING upgrade is judged
+    on the mean, and must beat MIN_GAIN_TO_ADD. A BENCH spot is judged on the
+    ceiling against HIT_POINTS -- the median realised contribution of an add in
+    this league -- because down there the mean is ranking noise and would always
+    prefer a safe body to a man who might become something.
+
+    Both are also required to beat the simulator's own noise. A gap inside its
+    standard error is not a ranking, whatever it is a ranking of.
+    """
+    from robo import marginal
+    if o["gain"] <= NOISE_MULTIPLE * o["se"]:
+        return False
+    return (o["gain"] >= MIN_GAIN_TO_ADD if o["starter"]
+            else o["ceiling"] >= marginal.HIT_POINTS)
+
+
+def best_free(opts: list[dict], drop: str) -> dict | None:
+    """The best thing available for nothing, for this slot."""
+    fits = [o for o in opts if o["drop"] == drop and clears(o)]
+    return max(fits, key=lambda o: o["gain"]) if fits else None
 
 
 def plan_claims(ctx: dict) -> list[dict]:
@@ -339,28 +446,36 @@ def plan_claims(ctx: dict) -> list[dict]:
     the man we want, and the cheap rungs sit where the record says claims still
     convert. See robo/faab.py, including why P(win | bid) is not estimated.
     """
-    drops = droppables(ctx)
-    pool = candidates(ctx, waivers=True)
+    P = priced(ctx)
+    board = P["board"]
     slates, used = [], set()
-    for d in drops[:MAX_SLOTS_TO_TURN_OVER]:
+    for drop in P["drops"]:
+        # WHAT THE FREE BOARD WOULD HAVE GIVEN US FOR THIS SLOT is the price of
+        # bidding at all. FAAB buys the DIFFERENCE between the best claim and the
+        # best free agent, never the claim's whole value, and a claim that cannot
+        # beat a free man is not worth a dollar however good he looks alone.
+        alt = best_free(P["free"], drop)
+        floor_gain = alt["gain"] if alt else 0.0
         picks = []
-        for c in pool:
-            if len(picks) >= SLATE_DEPTH:
-                break
-            if c["row"]["player_id"] in used:
+        for o in sorted((x for x in P["wire"] if x["drop"] == drop),
+                        key=lambda x: -x["gain"]):
+            if len(picks) >= SLATE_DEPTH or o["add"] in used:
                 continue
-            gain = round(c["value"] - d["value"], 1)
-            if gain < MIN_GAIN_TO_ADD:
-                break
-            picks.append({"add": c["row"], "gain": gain, "add_value": c["value"],
-                          "real": c["real"]})
+            excess = o["gain"] - floor_gain
+            if not clears(o) or excess <= NOISE_MULTIPLE * o["se"]:
+                continue
+            row = _option_row(ctx, board, o)
+            row["gain"] = round(excess, 1)
+            row["over_free"] = alt["add"] if alt else None
+            picks.append(row)
         if not picks:
             continue
         bids = faab.ladder(ctx["week"], [p["gain"] for p in picks], ctx["faab"])
         for p, b in zip(picks, bids):
             p["bid"] = int(b)
         used |= {p["add"]["player_id"] for p in picks}
-        slates.append({"drop": d["row"], "drop_value": d["value"], "claims": picks})
+        slates.append({"drop": picks[0]["drop"],
+                       "drop_value": picks[0]["drop_value"], "claims": picks})
 
     # seq is assigned across ALL slates by descending bid, matching what this
     # league's own transactions show. Sleeper works our claims in that order, so
@@ -462,8 +577,11 @@ def render_free(ctx: dict, plans: list[dict]) -> str:
         L.append(f"  BLACKED OUT: {block}")
         return "\n".join(L)
     if not plans:
-        L.append("  no add clears the bar (gain >= "
-                 f"{MIN_GAIN_TO_ADD} over the worst droppable player)"
+        from robo import marginal
+        L.append("  nothing clears the bar: a starting upgrade must add "
+                 f"{MIN_GAIN_TO_ADD:g}+ points to the simulated lineup, a bench "
+                 f"spot must reach a ceiling of {marginal.HIT_POINTS:g}, and both "
+                 f"must beat {NOISE_MULTIPLE:g}x the simulator's own error"
                  if ctx["mode"] == "ros" else "  nothing to do in this mode")
     for p in plans:
         L.append(f"  ADD  {p['add']['name']:<24} {p['add']['pos']:<4} "

@@ -312,6 +312,20 @@ REGISTRY: list[S] = [
       "projection, the role and the market, and it must not be able to overturn "
       "all three. Widen this and one bad read moves the roster.",
       bounds=(0.1, 3.0)),
+    S(ROSTER, "robo.moves", "NOISE_MULTIPLE", float,
+      "How many standard errors a simulated gain must clear before it counts.",
+      "The simulator reports the paired standard error of every option, and a "
+      "difference inside its own noise is not a ranking. Set this to 0 and the "
+      "bot starts making moves a coin flip would have made; raise it and it "
+      "waits for gaps the simulation can actually resolve.",
+      bounds=(0.0, 6.0), unit="std errors"),
+    S(ROSTER, "robo.moves", "SHORTLIST", int,
+      "How many candidates per channel get priced by simulation.",
+      "Everything above this is ranked cheaply and only the top of each channel "
+      "is simulated, because each priced option costs a full set of drawn "
+      "seasons. Raise it and the Tuesday job gets slower for candidates a claim "
+      "would never reach.",
+      bounds=(3, 40), unit="players"),
     S(ROSTER, "robo.marginal", "HIT_POINTS", float,
       "Season points a bench player must move us by before he counts as having mattered.",
       "Measured, not chosen: 7.0 is the median realised starting contribution of "

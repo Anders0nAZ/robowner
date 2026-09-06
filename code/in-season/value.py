@@ -86,11 +86,26 @@ def value_of(row: dict, week: int, field: str = "mean") -> tuple[float, bool]:
     return provisional(row), False
 
 
-def hold_of(row: dict, week: int) -> tuple[float, bool]:
-    """What we give up by cutting this man -- his value plus what he may inherit.
+def hold_of(row: dict, week: int, mine: bool = True) -> tuple[float, bool]:
+    """What we give up by cutting this man. (value, is_real).
 
-    Falls back to `mean` when the gate is shut, because the provisional board
-    number has no upside term to add and inventing one would be the placeholder
-    problem all over again.
+    OUR OWN MEN ARE PRICED BY SIMULATION -- robo/marginal.py, which asks what our
+    starting lineup loses across the seasons it draws. ros.hold could not answer
+    that: it made Carson Beck the cheapest man on our roster to cut at 0.4 while
+    the simulator puts him at 37.5, above six of our starters, because only the
+    simulator can see the worlds where our other two quarterbacks are missing.
+    The ordering was not merely imprecise, it was inverted.
+
+    `mine=False` keeps ros.hold, and that is a limit rather than an oversight:
+    the blocking test prices somebody else's bench, and we do not know who he
+    would start. Owning both branches here rather than in moves.py keeps this
+    module what it claims to be -- the one place that decides which number a
+    decision is allowed to use.
     """
+    if mine and ready():
+        try:
+            from robo import marginal
+            return marginal.drop_price(row["player_id"]), True
+        except Exception:
+            pass
     return value_of(row, week, "hold")

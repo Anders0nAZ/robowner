@@ -63,8 +63,13 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
     # this it was roster order, which is arbitrary and would happily strand a
     # starter in an active slot behind a fourth-string body.
     def _keep_rank(pid: str) -> tuple:
+        # Through hold_of, not ros_value, so this asks the same question the drop
+        # decision asks and gets the same answer. Reaching past the seam is how
+        # the IR tiebreak would have kept ranking men by ros.hold long after
+        # moves.py stopped -- and ros.hold had Carson Beck as the cheapest man on
+        # the roster while the simulator has him above six of our starters.
         try:
-            v = value.ros_value(pid, season.current_week(), "hold")
+            v, _ = value.hold_of({"player_id": pid}, season.current_week())
         except Exception:
             v = 0.0
         st = (players.get(pid) or {}).get("injury_status") or ""
