@@ -107,7 +107,8 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
         for w, d in (r.get("by_week") or {}).items():
             wk[int(w)] = (d.get("s1") or 0.0, d.get("s2") or 0.0,
                           d.get("a") or 0.0, d.get("final") or 0.0,
-                          d.get("miss") or 0.0)
+                          d.get("miss") or 0.0, d.get("lead") or 0.0,
+                          d.get("rank"))
         out[pid] = {"name": r.get("name"), "pos": r.get("pos"), "team": r.get("team"),
                     # season-only rows carry no shape, so they are scaled at 1.0
                     # and priced on the flat series expected.py already wrote.
@@ -200,7 +201,7 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
         rate = roles.miss_rate(p["pos"])
         lead = p.get("rank") == 1
         for w in weeks:
-            a = (p["weeks"].get(w) or (0.0, 0.0, 0.0, 0.0, 0.0))[2]
+            a = (p["weeks"].get(w) or (0.0,) * 7)[2]
             # A(w) below 1 is a KNOWN absence the injury feed already priced, so
             # the ordinary hazard must not be stacked on top of it.
             hit = a if a < 1.0 else (1.0 if lead else 1.0 - rate)
@@ -275,7 +276,7 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                     continue
                 if not avail.get((pid, w, s), True):
                     continue
-                s1, s2, a, final, miss = cell
+                s1, s2, a, final, miss, lead_pts, rank_w = cell
                 tm, pos = p["room"]
                 opened = bool(tm) and vac.get((tm, pos, w, s), False)
                 if opened and p.get("rank") == 1:
@@ -289,13 +290,14 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                                   "has_game": True, "injury": None, "locked": False})
                     continue
                 gain = 0.0
-                if opened and p.get("absorbs"):
-                    # s2 is the lead's own number times the MEAN fraction, so
-                    # dividing it back out recovers what the vacated job is
-                    # worth and this world's draw decides how much of it he
-                    # takes. Averaging here is what priced a lottery ticket at
-                    # the same number every week and therefore at nothing.
-                    gain = (s2 / p["absorbs"]) * share.get((pid, s), 0.0)
+                if opened and lead_pts:
+                    # THE LEAD'S OWN NUMBER, CARRIED PER WEEK, times this world's
+                    # drawn fraction. It used to divide s2 back out by a
+                    # season-long absorb, which stopped being recoverable once
+                    # the room started re-ranking week to week -- a man who is
+                    # rank 2 in week 1 and rank 3 in week 5 has no single
+                    # absorb to divide by.
+                    gain = lead_pts * share.get((pid, s), 0.0)
                 pts = p["k"] * (s1 + gain)
                 cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
                               "pts": pts, "has_game": True, "injury": None,
@@ -424,7 +426,7 @@ def _base(p: dict, w: int) -> float:
     cell = p["weeks"].get(w)
     if not cell:
         return 0.0
-    s1, _, a, final, _ = cell
+    s1, _, a, final, _, _, _ = cell
     if p.get("flat"):
         return final / a if a > 0 else final
     return p["k"] * s1

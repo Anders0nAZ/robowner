@@ -625,8 +625,52 @@ def _projected_rooms() -> dict:
     return out
 
 
+@lru_cache(maxsize=32)
+def rooms_for_week(week: int | None = None) -> dict:
+    """The rooms as they stand in one WEEK, with the ineligible left out.
+
+    A ROOM MUST NOT COUNT A MAN WHO CANNOT PLAY. _projected_rooms() is built
+    from SEASON projected volume and was applied unchanged to every week, so
+    Isiah Pacheco held 17.8% of the Detroit backfield and rank 2 through weeks
+    1-4 -- weeks his injured-reserve designation bars him from entirely.
+    expected.py already knew that and set his availability to 0.0; the room
+    simply never asked. Everyone behind him was therefore ranked one place too
+    low for exactly the weeks his carries were going to somebody else:
+
+        DET RB, weeks 1-4     Saylors  rank 3 -> 2, absorbs 0.257 -> 0.451
+                              Vaki     rank 4 -> 3, absorbs 0.171 -> 0.257
+
+    Thirteen of the league's 128 rooms are wrong this way right now, and each
+    mis-ranks everyone below the man who cannot play.
+
+    ELIGIBILITY ONLY, NEVER PROBABILITY. injuries.floor_week() is set only for a
+    man the rules actually bar, so this drops him and nobody else. Extending it
+    to a low availability score would pull Questionable players out of rooms on
+    the strength of a practice report, which is the failure expected.SIDELINED
+    was written to avoid. He returns to the room the week he is eligible, which
+    is what gives the split its second half without any extra machinery.
+    """
+    base = _projected_rooms()
+    if week is None:
+        return base
+    from robo import injuries
+    out = {}
+    for key, room in base.items():
+        keep = [m for m in room
+                if not ((injuries.floor_week(m["player_id"]) or 0) > week)]
+        if len(keep) == len(room):
+            out[key] = room
+            continue
+        total = sum(m["opp"] for m in keep) or 1.0
+        keep = [dict(m) for m in keep]
+        for i, m in enumerate(keep, 1):
+            m["rank"], m["share"] = i, round(m["opp"] / total, 4)
+        out[key] = keep
+    return out
+
+
 def projected_role(sleeper_id: str, team: str, pos: str,
-                   record: dict | None = None) -> dict:
+                   record: dict | None = None, week: int | None = None) -> dict:
     """Where the market expects this man to stand in his own position room.
 
     Returns the same shape role() does, so the two are interchangeable to a
@@ -644,11 +688,13 @@ def projected_role(sleeper_id: str, team: str, pos: str,
     if pos not in PROJ_OPPORTUNITY:
         base["why"] = f"{pos or 'unknown'} has no opportunity model"
         return base
-    room = _projected_rooms().get((tm, pos)) or []
+    room = rooms_for_week(week).get((tm, pos)) or []
     me = next((m for m in room if m["player_id"] == str(sleeper_id)), None)
     if record is not None:
         record.update({"room": room, "me": me, "team": tm, "pos": pos,
-                       "source": "season projection"})
+                       "week": week,
+                       "source": "season projection"
+                                 + ("" if week is None else f", week {week} eligibility")})
     if not me:
         base["why"] = f"no projected {pos} opportunity for {tm}"
         return base

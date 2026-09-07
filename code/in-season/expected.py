@@ -133,7 +133,7 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
                now: int, record: dict | None = None) -> dict:
     """{week: expected points} from the structural model, before calibration."""
     mine = rates.get(pid) or {}
-    r = roles.projected_role(pid, team, pos)
+    r = roles.projected_role(pid, team, pos, week=now)
     # THE JOB HE INHERITS IS THE LEAD'S, NOT THE MAN'S ONE RUNG ABOVE HIM.
     # roles.fit() defines a vacancy as the rank-1 man's opportunity going to
     # zero and measures `absorbs` as a fraction of HIS vacated share, so pairing
@@ -199,11 +199,27 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         # S2 is what he picks up if the job ahead opens. It is a term in the
         # sum, never an addition to the total -- that is the difference between
         # this and ros.upside.
-        p2 = (ahead or {}).get(w, 0.0) * absorb
+        # THE ROOM IS RE-READ EVERY WEEK, because who is ahead of him changes
+        # when a man is barred from playing. Isiah Pacheco holds rank 2 in the
+        # Detroit backfield on the season projection and cannot play until week
+        # 5, so through weeks 1-4 Saylors is the effective RB2 and Vaki the RB3 --
+        # and the carries a vacancy would send them are the ones the static room
+        # was quietly sending to a man on injured reserve.
+        rw = roles.projected_role(pid, team, pos, week=w)
+        ahead_w = rates.get(rw["lead_id"]) if rw.get("lead_id") else ahead
+        absorb_w = min(1.0, rw.get("absorbs") or 0.0)
+        lead_pts = (ahead_w or {}).get(w, 0.0)
+        p2 = lead_pts * absorb_w
         v = a * (p1 + miss * p2)
         out[w] = round(v, 3)
         detail[w] = {"a": round(a, 3), "s1": round(p1, 3),
                      "s2": round(p2, 3), "miss": round(miss, 4),
+                     # Carried per week so the simulator can rebuild the
+                     # inheritance from the lead's own number and its own drawn
+                     # fraction, instead of dividing s2 back out by a season-long
+                     # absorb that no longer applies to every week.
+                     "lead": round(lead_pts, 3), "absorbs": round(absorb_w, 4),
+                     "rank": rw.get("rank"),
                      "avail": arec, "pts": round(v, 3)}
     if record is not None:
         record.update({"role": r, "ahead_id": r.get("ahead_id"),
