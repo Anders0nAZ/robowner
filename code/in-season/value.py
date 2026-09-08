@@ -60,8 +60,71 @@ def may_submit() -> bool:
 
 
 def ros_value(player_id: str, week: int, field: str = "mean") -> float:
-    """What this player is worth from `week` to the end of the season."""
+    """What this player is worth from `week` to the end of the season.
+
+    EXPECTED IS THE VALUATION; ros.json PRICES WHAT IT DOES NOT MODEL. Pointing
+    this at ros.json was the last place the superseded number gated a live
+    decision, and it gated the one that matters most: moves.candidates() ranks
+    the whole wire through here and moves.priced() simulates only the top ten.
+    So a man ros.py rates at zero could never reach the simulator at all. In the
+    week-2 concussion scenario, Mac Jones -- newly San Francisco's starting
+    quarterback, unowned, worth 233 -- sat at position 406 of 424 on a ros.mean
+    of 0.0 and was never evaluated. The new model could re-price candidates the
+    old one liked; it could not surface one the old one missed.
+
+    BOTH FIELDS MAP TO THE SAME NUMBER, and that is the design rather than a
+    shortcut. expected.py folds inheritance INTO the mean instead of adding it
+    on, so there is no separate `hold` to look up -- see hold_of(), which prices
+    OUR men by simulation and only lands here for somebody else's bench.
+
+    Kicker and defence fall through to ros.json, which is not a fallback but the
+    right source: expected.py models neither, and says so.
+    """
+    try:
+        from robo import expected
+        row = (expected.load().get("players") or {}).get(str(player_id))
+        if row and row.get("ros") is not None:
+            return float(row["ros"])
+    except Exception:
+        pass
     return ros.value(player_id, week, field)
+
+
+# How many weeks ahead counts as "now" for a roster decision. Three covers the
+# span a fill-in is actually for: a concussion protocol, a one-week absence that
+# becomes two, a bye. Further out and the wire has turned over anyway, which is
+# the same reasoning behind moves.BYE_LOOKAHEAD_WEEKS.
+NEAR_WEEKS = 3
+
+
+def near_value(player_id: str, week: int, horizon: int = NEAR_WEEKS,
+               table: dict | None = None) -> float:
+    """What he is worth over the next few weeks, not the whole season.
+
+    A REST-OF-SEASON TOTAL CANNOT RANK A FILL-IN, and that is not a matter of
+    degree. The two numbers answer different questions, and a man whose value is
+    concentrated in the next fortnight has a small season total by construction:
+    with our quarterback concussed, his backup was the best free agent in the
+    league for the week the decision was about and the HUNDREDTH by season
+    total. moves.priced() simulates the top ten, so he could not be reached.
+
+    Weighted the same way the season total is, so the two orderings are the same
+    quantity over different horizons rather than two different measures.
+    """
+    try:
+        from robo import expected
+        # `table` is expected.load() hoisted out of the caller's loop. Without
+        # it this re-reads and re-parses a 3MB file once per candidate, which a
+        # 424-man wire turns into ~850 parses of the same bytes.
+        d = table if table is not None else expected.load()
+        row = (d.get("players") or {}).get(str(player_id))
+        if not row:
+            return 0.0
+        by = row.get("by_week") or {}
+        return round(sum(ros.weight_of(d, w) * (by.get(str(w)) or {}).get("final", 0.0)
+                         for w in range(week, week + horizon)), 3)
+    except Exception:
+        return 0.0
 
 
 def provisional(row: dict) -> float:

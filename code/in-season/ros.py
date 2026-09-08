@@ -71,12 +71,40 @@ SCHEMA = 2
 # uniform factor across all players, so it moves the scale rather than the order.
 PLAYOFF_WEIGHTS = {0: 1.0, 1: 0.6, 2: 0.35}
 
-# How much of a scout news verdict to apply to the FUTURE weeks. Halved on
-# purpose while it is unknown whether Sleeper already reprices them: at 1.0 a
+# How much of a scout news verdict to apply to the FUTURE weeks. It was halved
+# while it was unknown whether Sleeper already reprices them -- at 1.0 a
 # repriced feed would count the same injury twice, at 0.0 a stale one would
-# carry no news at all, and 0.5 is the least-wrong place to stand until
-# `python -m robo.projarchive --diff` says which world we are in. Never applied
-# to the current week, where the model and the live feed have already seen it.
+# carry no news at all.
+#
+# OBSERVED 7 SEP 2026: THEY HAVE NOT MOVED YET. Four daily snapshots, 4-7
+# September: week 1 moved for 65 of 886 players while weeks 2 through 18 moved
+# for ZERO of ~850, across roughly fourteen thousand player-weeks. That is not
+# an absence of news -- the week-1 movers are a live backfield story (Kaleb
+# Johnson +2.9, Najee Harris +2.0) -- it is the same news moving the current
+# week and leaving every future week untouched.
+#
+# THAT IS AN OBSERVATION, NOT A PROPERTY OF THE FEED. "Has not repriced in a
+# three-day preseason window" is what the data says; "does not reprice" is a
+# stronger claim nothing here establishes, and the difference decides whether
+# this dial is right in November.
+#
+# HELD AT 0.5 ANYWAY, DELIBERATELY. If the feed really is static after this
+# week then the scout verdict is the only thing that knows anything happened and
+# halving it discards half the sole signal -- so the observation argues for 1.0
+# and the isolated effect is +37.7 on Stafford, +34.1 on Gibbs, -31.0 on
+# Mendoza, 42 of 903 players in all. The reason it stays at 0.5 is that the
+# evidence is three preseason days and the failure mode is silent: at 1.0 a feed
+# that starts repricing counts every injury twice and nothing on the page would
+# say so. Move it once there is in-season evidence, or once the drift check is
+# automatic.
+#
+# THE WINDOW IS ENTIRELY PRE-SEASON, which is when a feed has the least reason
+# to move a future week: there are no actuals to move it with. A feed that begins
+# updating week 9 once there are actuals to update it from would put us back in
+# the double-counting world this dial exists to avoid. Re-run
+# `python -m robo.projarchive --diff` after a few real game weeks; if future
+# weeks start moving, this stays down. Never applied to the current week, where the model and the live feed have
+# already seen it.
 NEWS_APPLY_FUTURE = 0.5
 
 # How hard the rising-role term pulls. This is the rookie-hold dial: at 0 the

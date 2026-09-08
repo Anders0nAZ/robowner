@@ -71,31 +71,79 @@ LOST_ON_PRICE = "this player was claimed by another owner"
 # how often a player is contested and what it takes to win him.
 BUCKETS = ((1, 3), (4, 7), (8, 11), (12, 18))
 
-# What a FAAB dollar is worth in rest-of-season points, at an even spending
-# pace. This is the whole bid policy in one number: at $0 the first dollar buys
-# ten points of win probability and past about $10 a dollar buys a fraction of
-# one, so where this sits decides where on that curve we stop. Lower it to bid
-# harder.
+# What a FAAB dollar is worth in the same units `gain` is measured in, at an
+# even spending pace. This is the whole bid policy in one number: at $0 the
+# first dollar buys ten points of win probability and past about $10 a dollar
+# buys a fraction of one, so where this sits decides where on that curve we
+# stop. Lower it to bid harder.
 #
-# THE BUDGET REALLY IS SCARCE HERE, which is why the number is not near zero:
-# the median team spends $89 of $100 and 24 of 55 team-seasons on record
-# exhausted it outright. It is also WORTHLESS AT THE WHISTLE -- nothing carries
-# over -- so hoarding is its own failure, which is what the pacing below is for.
-MIN_POINTS_PER_DOLLAR = 1.0
+# MEASURED, from this league's own 55 team-seasons: a team wins a median 5
+# auction claims (mean 8.0) for a median $89 of spend, and marginal.HIT_POINTS
+# puts a typical add's realised starting contribution at 7.0. So $89 buys about
+# 35 points and a dollar buys about 0.4 of one.
+#
+# IT WAS 1.0, WHICH WAS THE OLD UNITS. `gain` used to be a difference of two
+# absolute season totals -- tens to hundreds of points -- and is now the change
+# in our optimal starting lineup, where the wire is a floor under every slot and
+# the same move prices at 1.5 instead of 51. Carrying the old number across
+# priced a dollar at two and a half times what the history says it buys, which
+# does not merely shade the bids down: with the cost term that large the argmax
+# sits at $0 for almost anything the simulator will pass, so the ladder collapses
+# to a column of zeroes and the bot never competes for a contested player.
+#
+# 0.4 is the CONSERVATIVE end of its own derivation. HIT_POINTS is a gross
+# starting contribution rather than a gain net of the man he replaced, so the
+# true marginal points per dollar is lower still -- and erring high here errs
+# toward under-bidding, which is the direction an autonomous bot should miss in.
+#
+# THE BUDGET REALLY IS SCARCE, which is why the number is not near zero: the
+# median team spends $89 of $100 and 24 of 55 team-seasons on record exhausted
+# it outright. It is also WORTHLESS AT THE WHISTLE -- nothing carries over -- so
+# hoarding is its own failure, which is what the pacing below is for.
+MIN_POINTS_PER_DOLLAR = 0.4
 
 # How far the pace adjustment may push the price of a dollar. Unclamped, a team
 # that has spent nothing by week 14 would price dollars at almost zero and empty
 # the budget on the first player it saw.
 PACE_BOUNDS = (0.25, 4.0)
 
-# Never bid below this on a rung we actually want. A $0 claim is a real claim
-# here and 18 of 120 contested auctions were won with one -- but a dollar is the
-# single best-value dollar in the whole budget, so it is the floor.
-MIN_LIVE_BID = 1
+# RETIRED IN PLACE. A $0 claim is a real claim in this league -- 18 of 120
+# contested auctions were won with one, and from week 12 the median winning bid
+# IS zero -- so a floor is not a validity rule, it is an opinion about a dollar
+# of separation from everyone who left the field blank.
+#
+# It was removed from best_bid() and left in ladder() on the reasoning that a
+# priority list needs a floor so two rungs do not tie at nothing. That does not
+# survive contact: the ladder it produced was $1 and $1, so the floor relocated
+# the tie rather than preventing it, and ties cost nothing anyway because
+# Sleeper works a slot's claims in the SEQ order we submit, never by price. What
+# it did do was make the same player cost $0 as a single claim and $1 inside a
+# list, so his price depended on who else happened to make the shortlist.
+#
+# Kept as a settable constant so a floor can be reimposed deliberately, and read
+# by nothing while it is zero.
+MIN_LIVE_BID = 0
 
 # Fraction of the remaining budget a single claim may ever commit. A backstop
 # against one bad valuation spending the season.
 MAX_SINGLE_BID_PCT = 0.5
+
+# How many claims a POSITION needs before its own contest rate is trusted over
+# the pooled one. Competition is not uniform across positions and in a superflex
+# league it is least uniform exactly where it matters: measured over 797 claimed
+# players, QB is contested 32% of the time and RB 30%, against WR 18%, DEF 17%,
+# TE 15% and K 6%, versus a pooled 21%. Pricing a startable quarterback's
+# competition off the same number as a bye-week kicker understates the field on
+# the one claim most likely to be fought over. Same thin-cell pooling roles.py
+# uses -- a rate is either measured on enough events or it is not used.
+MIN_POS_CLAIMS = 40
+
+# How many CONTESTED claims a position needs before its own rival-bid level is
+# trusted. Lower than MIN_POS_CLAIMS because only the contested subset carries a
+# rival bid at all -- a position can have 93 claims and 18 contests. Below this
+# the pooled level stands: tight end (11) and kicker (2) pool, quarterback (25),
+# receiver (21), defence (18) and running back (43) do not.
+MIN_POS_RIVALS = 15
 
 # Only pay more than the cheapest good bid when it buys at least this share of
 # what is at stake. The objective is close to flat over wide stretches -- an
@@ -154,31 +202,50 @@ def bucket_of(week: int) -> tuple:
 
 @lru_cache(maxsize=8)
 def auctions() -> tuple:
-    """One row per WON claim: (week, top rival bid or None if uncontested).
+    """One row per WON claim: (week, pos, top rival bid or None if uncontested).
 
     Keyed on the winner because that is the position we will be in: we are
     asking what it would have taken to beat the field for a player somebody did
     in fact win.
+
+    The POSITION rides along because competition is not uniform across them --
+    see MIN_POS_CLAIMS. Resolved through the player dump, and anyone it cannot
+    name keeps a "?" rather than being dropped: he still counts in the pooled
+    rate, which is what a thin or unknown cell falls back to.
     """
     from collections import defaultdict
+    try:
+        from robo import sleeper_read as _api
+        players = _api.players()
+    except Exception:
+        players = {}
     g = defaultdict(list)
     for season, week, pid, bid, won, loss in claims():
         g[(season, week, pid)].append((bid, won, loss))
     out = []
-    for (_, week, _), rows in g.items():
+    for (_, week, pid), rows in g.items():
         if not any(w for _, w, _ in rows):
             continue
         rivals = [b for b, _, l in rows if l]
-        out.append((week, max(rivals) if rivals else None))
+        pos = (players.get(pid) or {}).get("position") or "?"
+        out.append((week, pos, max(rivals) if rivals else None))
     return tuple(out)
 
 
 @lru_cache(maxsize=8)
-def _model(week: int) -> tuple:
+def _model(week: int, pos: str | None = None) -> tuple:
     """(P(contested), sorted top-rival bids) for this week's bucket.
 
     Falls back to the whole record when a bucket is too thin to say anything,
     which matters most in the late-season buckets where contests are rare.
+
+    TWO SEPARATE QUESTIONS, ANSWERED FROM DIFFERENT SLICES. How OFTEN a claim is
+    contested depends on the position -- a quarterback in this superflex league
+    is fought over half again as often as a receiver -- while how MUCH the top
+    rival bid is a question about the week, which is where the budget is. So the
+    rate comes from the positional cell when it is thick enough and the rival
+    distribution stays on the week's bucket, which also keeps the ladder's price
+    curve on the sample size it was fitted with.
     """
     lo, hi = bucket_of(week)
     sub = [a for a in auctions() if lo <= a[0] <= hi]
@@ -186,25 +253,60 @@ def _model(week: int) -> tuple:
         sub = list(auctions())
     if not sub:
         return 0.0, ()
-    rivals = sorted(a[1] for a in sub if a[1] is not None)
-    return len(rivals) / len(sub), tuple(rivals)
+    rivals = sorted(a[2] for a in sub if a[2] is not None)
+    rate = len(rivals) / len(sub)
+    if pos and rivals:
+        # HOW MUCH the field bids is positional too, and pooling it understates
+        # exactly the claim worth winning: a contested quarterback cost a median
+        # $5 and a p75 of $13 against a pooled $2 and $10, while a kicker's
+        # whole distribution is $1. Scaled rather than substituted, for the same
+        # reason the rate is -- the bucket carries the week (budgets deplete and
+        # late contests are cheap) and the position carries the level.
+        every = [a for a in auctions() if a[2] is not None]
+        cell = [a[2] for a in every if a[1] == pos]
+        if len(cell) >= MIN_POS_RIVALS and every:
+            base = sum(a[2] for a in every) / len(every)
+            mine = sum(cell) / len(cell)
+            if base > 0:
+                k = mine / base
+                rivals = sorted(int(round(r * k)) for r in rivals)
+    if pos:
+        # A MULTIPLIER ON THE WEEK'S RATE, NOT A REPLACEMENT FOR IT. Both
+        # signals are real and they are not the same signal: contests run 38% in
+        # weeks 1-3 against 20% from week 12, and across all weeks a QB is
+        # fought over 1.5x as often as the average claim. Slicing week AND
+        # position directly would be right and there is not the data for it --
+        # 91 quarterback claims over four buckets is ~23 a cell -- so the
+        # positional cell supplies a ratio and the bucket keeps the level.
+        # Substituting the all-weeks positional rate outright would have quietly
+        # thrown the week away: in week 2 that swaps a bucket rate of 38% for a
+        # season-average 37% and calls it an improvement.
+        every = auctions()
+        cell = [a for a in every if a[1] == pos]
+        if len(cell) >= MIN_POS_CLAIMS and every:
+            base = sum(1 for a in every if a[2] is not None) / len(every)
+            mine = sum(1 for a in cell if a[2] is not None) / len(cell)
+            if base > 0:
+                rate = max(0.0, min(1.0, rate * mine / base))
+    return rate, tuple(rivals)
 
 
-def p_win(bid: int, week: int) -> float:
+def p_win(bid: int, week: int, pos: str | None = None) -> float:
     """P(nobody else wants him) + P(contested) x P(top rival bids less than us).
 
     Ties go to the OTHER owner. Sleeper breaks an equal-bid tie on waiver
     priority, which we do not control and cannot see, so assuming we lose it is
     the assumption that cannot flatter us.
     """
-    p_contested, rivals = _model(week)
+    p_contested, rivals = _model(week, pos)
     if not rivals:
         return 1.0
     beat = sum(1 for r in rivals if r < bid) / len(rivals)
     return round((1.0 - p_contested) + p_contested * beat, 4)
 
 
-def best_bid(gain: float, week: int, faab_left: int) -> tuple[int, str]:
+def best_bid(gain: float, week: int, faab_left: int,
+             pos: str | None = None) -> tuple[int, str]:
     """The bid maximising P(win) x gain, less MIN_POINTS_PER_DOLLAR per dollar.
 
     The price of a dollar is what it would have bought on some later claim, so
@@ -224,14 +326,21 @@ def best_bid(gain: float, week: int, faab_left: int) -> tuple[int, str]:
         return 0, "no budget to spend"
     lam = dollar_price(week, faab_left)
     tol = max(1e-9, BID_TOLERANCE_PCT * gain)
-    best, best_v = 0, p_win(0, week) * gain
+    best, best_v = 0, p_win(0, week, pos) * gain
     for b in range(1, cap + 1):
-        v = p_win(b, week) * gain - b * lam
+        v = p_win(b, week, pos) * gain - b * lam
         if v > best_v + tol:
             best, best_v = b, v
-    bid = min(cap, max(MIN_LIVE_BID, best)) if cap >= MIN_LIVE_BID else cap
-    return int(bid), (f"P(win) {p_win(bid, week):.0%} at ${bid}; a dollar is "
-                      f"priced at {lam:.2f} pts here (cap ${cap})")
+    # A $0 CLAIM IS A REAL CLAIM AND OFTEN WINS. This used to floor the bid at
+    # MIN_LIVE_BID, which spent a dollar the argmax had explicitly declined --
+    # and this module's own data says $0 takes the player 71% of the time, with
+    # a $0 median winning bid from week 12 on. Forcing a dollar buys about five
+    # points of win probability for a dollar priced at one point, which is a
+    # loss the moment the gain is small. Zero stays zero.
+    bid = min(cap, best)
+    return int(bid), (f"P(win) {p_win(bid, week, pos):.0%} at ${bid}"
+                      f"{' for a ' + pos if pos else ''}; a dollar is priced at "
+                      f"{lam:.2f} pts here (cap ${cap})")
 
 
 def dollar_price(week: int, faab_left: int) -> float:
@@ -257,7 +366,8 @@ def dollar_price(week: int, faab_left: int) -> float:
     return MIN_POINTS_PER_DOLLAR / pace
 
 
-def ladder(week: int, gains: list[float], faab_left: int) -> list[int]:
+def ladder(week: int, gains: list[float], faab_left: int,
+           positions: list | None = None) -> list[int]:
     """Bids for one slot's priority list, top rung first.
 
     Each rung is priced on ITS OWN gain and then held to the rung above it, so
@@ -272,9 +382,13 @@ def ladder(week: int, gains: list[float], faab_left: int) -> list[int]:
     every rung below the first to the floor.
     """
     out, ceiling = [], None
-    for g in gains:
-        b, _ = best_bid(g, week, faab_left)
-        b = max(MIN_LIVE_BID, b)
+    # Per rung, because a slot's list is a set of DIFFERENT players and the
+    # competition for a quarterback is not the competition for a tight end.
+    pos = list(positions or []) + [None] * len(gains)
+    for g, ps in zip(gains, pos):
+        b, _ = best_bid(g, week, faab_left, ps)
+        if MIN_LIVE_BID:
+            b = max(MIN_LIVE_BID, b)
         if ceiling is not None:
             b = min(b, ceiling)
         ceiling = b

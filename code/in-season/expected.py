@@ -62,7 +62,11 @@ from robo import season, settings
 from robo import sleeper_read as api
 
 CACHE = DATA / "expected.json"
-SCHEMA = 1
+# 2: `by_week[w]["miss"]` changed meaning. It was roles.miss_rate(pos), a
+# position-wide constant; it is now the REALISED chance the job ahead was open
+# that week, which for a known absence comes off the lead's own availability. A
+# file written under 1 looks valid and reads wrong, so the bump forces a rebuild.
+SCHEMA = 2
 
 # A full NFL season of games behind the season projection. The league plays
 # through week 17 and the projection covers all 17 games, so a rest-of-season
@@ -129,23 +133,14 @@ def _feed_eligible_week(pid: str, rates: dict, status: str | None) -> int | None
     return None
 
 
-def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
-               now: int, record: dict | None = None) -> dict:
-    """{week: expected points} from the structural model, before calibration."""
-    mine = rates.get(pid) or {}
-    r = roles.projected_role(pid, team, pos, week=now)
-    # THE JOB HE INHERITS IS THE LEAD'S, NOT THE MAN'S ONE RUNG ABOVE HIM.
-    # roles.fit() defines a vacancy as the rank-1 man's opportunity going to
-    # zero and measures `absorbs` as a fraction of HIS vacated share, so pairing
-    # it with the rank above was a mismatched numerator and denominator. It made
-    # no difference at rank 2, where the two are the same man, and gutted every
-    # deep bench player: SF's rank-3 back was priced as inheriting from Jordan
-    # James rather than from McCaffrey, which is the whole of the bet.
-    ahead = rates.get(r["lead_id"]) if r.get("lead_id") else None
-    miss = roles.miss_rate(pos) if pos in roles.OPPORTUNITY else 0.0
-    absorb = min(1.0, r.get("absorbs") or 0.0)
-    status = player.get("injury_status")
+def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
+    """({week: A(w)}, meta) -- when he can play, and what that rests on.
 
+    Split out of raw_series so a man's availability can be read by somebody
+    OTHER than himself. What a backup inherits depends on whether the man ahead
+    of him is on the field, and that number lives here.
+    """
+    status = player.get("injury_status")
     # THE FLOOR IS A RULE, SO IT IS READ RATHER THAN INFERRED. ESPN publishes
     # the date a man is eligible to return; Sleeper's step is a projection that
     # happens to correlate with it, and disagreed for most of the men on injured
@@ -185,8 +180,8 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
     # twice as long as he has.
     served = injuries.since(pid, now)
 
-    out, detail = {}, {}
-    for w, p1 in mine.items():
+    a_by, arecs = {}, {}
+    for w in mine:
         arec: dict = {}
         a = returns.availability(status, body, w, now, missed=served,
                                  eligible_week=elig, record=arec)
@@ -196,6 +191,43 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
                     "eligible_week": elig,
                     "from": "scout" if elig == scout_wk else (floor_src or "feed"),
                     "floor": frec or None}
+        a_by[w], arecs[w] = a, arec
+    return a_by, {"eligible_week": elig, "feed_eligible": feed_elig,
+                  "floor_source": floor_src, "floor": frec or None,
+                  "scout_return": scout_wk,
+                  "scout_basis": sig.get("return_basis"),
+                  "role_change": sig.get("role_change"),
+                  "injury_status": status, "injury": body, "arecs": arecs}
+
+
+def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
+               now: int, avail: dict | None = None,
+               record: dict | None = None) -> dict:
+    """{week: expected points} from the structural model, before calibration.
+
+    `avail` maps player_id -> {week: A(w)} for everyone, so the chance the job
+    ahead of him comes open can be read off THE LEAD'S OWN NUMBER instead of a
+    position-wide constant. See the p_open comment below.
+    """
+    mine = rates.get(pid) or {}
+    r = roles.projected_role(pid, team, pos, week=now)
+    # THE JOB HE INHERITS IS THE LEAD'S, NOT THE MAN'S ONE RUNG ABOVE HIM.
+    # roles.fit() defines a vacancy as the rank-1 man's opportunity going to
+    # zero and measures `absorbs` as a fraction of HIS vacated share, so pairing
+    # it with the rank above was a mismatched numerator and denominator. It made
+    # no difference at rank 2, where the two are the same man, and gutted every
+    # deep bench player: SF's rank-3 back was priced as inheriting from Jordan
+    # James rather than from McCaffrey, which is the whole of the bet.
+    ahead = rates.get(r["lead_id"]) if r.get("lead_id") else None
+    miss = roles.miss_rate(pos) if pos in roles.OPPORTUNITY else 0.0
+    absorb = min(1.0, r.get("absorbs") or 0.0)
+    a_by, meta = (avail or {}).get(pid) or availability(pid, player, mine, now)
+    arecs = meta.get("arecs") or {}
+
+    out, detail = {}, {}
+    for w, p1 in mine.items():
+        a = a_by.get(w, 1.0)
+        arec = arecs.get(w) or {}
         # S2 is what he picks up if the job ahead opens. It is a term in the
         # sum, never an addition to the total -- that is the difference between
         # this and ros.upside.
@@ -210,10 +242,23 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         absorb_w = min(1.0, rw.get("absorbs") or 0.0)
         lead_pts = (ahead_w or {}).get(w, 0.0)
         p2 = lead_pts * absorb_w
-        v = a * (p1 + miss * p2)
+        # HOW OFTEN THE JOB AHEAD IS ACTUALLY OPEN, read off the lead's own
+        # availability rather than a position-wide constant. miss_rate is the
+        # fitted chance that ANY established starter sits out ANY week -- the
+        # right number for a healthy room and badly wrong for a known absence.
+        # With San Francisco's quarterback concussed this build put him at 47.8%
+        # available in week 3 and simultaneously priced his backup as though the
+        # job were 92.7% occupied, which is the same file disagreeing with
+        # itself. Same construction marginal.draws() already uses: a known A(w)
+        # below 1 overrides the hazard, a healthy lead falls back to it.
+        lead_a = ((avail or {}).get(rw.get("lead_id")) or ({},))[0]
+        la = lead_a.get(w)
+        p_open = (1.0 - la) if (la is not None and la < 1.0) else miss
+        v = a * (p1 + p_open * p2)
         out[w] = round(v, 3)
+        # The REALISED chance the door opened, not the nominal constant.
         detail[w] = {"a": round(a, 3), "s1": round(p1, 3),
-                     "s2": round(p2, 3), "miss": round(miss, 4),
+                     "s2": round(p2, 3), "miss": round(p_open, 4),
                      # Carried per week so the simulator can rebuild the
                      # inheritance from the lead's own number and its own drawn
                      # fraction, instead of dividing s2 back out by a season-long
@@ -224,12 +269,8 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
     if record is not None:
         record.update({"role": r, "ahead_id": r.get("ahead_id"),
                        "absorbs": absorb, "miss_rate": miss,
-                       "eligible_week": elig, "feed_eligible": feed_elig,
-                       "floor_source": floor_src, "floor": frec or None,
-                       "scout_return": scout_wk, "scout_basis": sig.get("return_basis"),
-                       "role_change": sig.get("role_change"),
-                       "injury_status": status,
-                       "injury": body, "by_week": detail})
+                       **{k: v for k, v in meta.items() if k != "arecs"},
+                       "by_week": detail})
     return out
 
 
@@ -281,8 +322,14 @@ def calibrate(raw_total: float, target: float, clamp: bool = True,
     clamped = False
     if clamp and not (K_CLAMP[0] <= k <= K_CLAMP[1]):
         k, clamped = min(max(k, K_CLAMP[0]), K_CLAMP[1]), True
+    # ROUND AT THE POINT OF STORAGE, THEN COMBINE. The published k is 3dp, so
+    # multiplying by a full-precision one produces a total nobody can reproduce
+    # from the numbers on the page -- 53 of 799 rows failed a hand check by up
+    # to 0.14. Harmless as arithmetic, fatal as an audit: the one check meant to
+    # build confidence reports a mismatch on a good row.
+    k = round(k, 3)
     if record is not None:
-        record.update({"k": round(k, 3), "raw_total": round(raw_total, 2),
+        record.update({"k": k, "raw_total": round(raw_total, 2),
                        "target": round(target, 2), "clamped": clamped,
                        "source": "ratio"})
     return k, ("ratio" + (" CLAMPED" if clamped else ""))
@@ -306,6 +353,15 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
         if pid:
             spts[pid] = rankings.custom_points(r.get("stats") or {}, sc)
 
+    # EVERYONE'S AVAILABILITY FIRST, because a backup's inheritance is priced
+    # against the man ahead of him and that number is not his own. One pass, so
+    # nothing is computed twice.
+    avail = {}
+    for pid, byweek in rates.items():
+        p = players.get(pid) or {}
+        if (p.get("position") or "DEF") in roles.PROJ_OPPORTUNITY:
+            avail[pid] = availability(pid, p, byweek, wk)
+
     rows = {}
     for pid, byweek in rates.items():
         p = players.get(pid) or {}
@@ -316,7 +372,8 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
         if pos not in roles.PROJ_OPPORTUNITY:
             continue
         rec: dict = {}
-        raw = raw_series(pid, pos, p.get("team") or "", rates, p, wk, record=rec)
+        raw = raw_series(pid, pos, p.get("team") or "", rates, p, wk,
+                         avail=avail, record=rec)
         raw_total = sum(raw.values())
         games_left = len(byweek)
         target = season_target(pid, games_left, spts)
@@ -337,6 +394,9 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             series = {w: per for w in byweek}
         else:
             series = {w: k * v for w, v in raw.items()}
+        # The per-week figure is published at 3dp, so the total is built from
+        # the published figures rather than from their full-precision originals.
+        series = {w: round(v, 3) for w, v in series.items()}
         total = sum(weights.get(w, 0.0) * v for w, v in series.items())
 
         rows[pid] = {
@@ -364,7 +424,7 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "role_change": rec.get("role_change"),
             "min_avail": round(min((d["a"] for d in rec["by_week"].values()),
                                    default=1.0), 3),
-            "by_week": {str(w): {**rec["by_week"][w], "final": round(series[w], 3)}
+            "by_week": {str(w): {**rec["by_week"][w], "final": series[w]}
                         for w in sorted(series)},
         }
     return {"schema": SCHEMA, "computed": time.time(), "week": wk,
@@ -397,12 +457,25 @@ def find(name: str, table: dict | None = None) -> list[str]:
 
 # ------------------------------------------------------------------ the trace
 
-def trace(name: str) -> str:
+def trace(name: str = "", player_id: str | None = None) -> str:
+    """The walkthrough behind one player's number.
+
+    BY ID WHEREVER THE CALLER HAS ONE. Names are not unique and the collisions
+    are not exotic -- "Josh Allen" is a quarterback and a linebacker, and
+    re-resolving a name that a table already resolved picks a different man than
+    the row the reader is looking at. find() stays for the CLI, where a name is
+    all anybody types.
+    """
     d = load()
-    hits = find(name, d)
-    if not hits:
-        return f"no expectation on file for {name!r}"
-    r = d["players"][hits[0]]
+    if player_id:
+        r = (d.get("players") or {}).get(str(player_id))
+        if not r:
+            return f"no expectation on file for player_id {player_id!r}"
+    else:
+        hits = find(name, d)
+        if not hits:
+            return f"no expectation on file for {name!r}"
+        r = d["players"][hits[0]]
     W = d["weights"]
     L = [f"{r['name']}  ({r['pos']} {r['team']})   rest-of-season {r['ros']}", ""]
     L.append(f"[1] HIS ROOM, as the market projects it")

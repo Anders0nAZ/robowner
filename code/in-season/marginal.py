@@ -109,6 +109,27 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
                           d.get("a") or 0.0, d.get("final") or 0.0,
                           d.get("miss") or 0.0, d.get("lead") or 0.0,
                           d.get("rank"))
+        flat = r.get("k_source") == "season-only"
+        # WHAT A FLAT ROW IS WORTH IN A WEEK HE PLAYS, computed ONCE from the
+        # whole availability profile rather than per week.
+        #
+        # expected.build() never applies availability to a season-only row --
+        # `series = {w: per for w in byweek}` -- so `final` is the same number in
+        # every week, including the weeks he is barred from playing. Three call
+        # sites here nonetheless divided it by that week's A(w) to "undo" an
+        # availability that was never applied, which inflates by 1/A and
+        # explodes as A approaches zero: it put a 27.64-point quarterback on the
+        # wire in week 3, above the best real quarterback week in the league.
+        #
+        # The season projection IS availability-weighted, so recovering a
+        # conditional rate is the right idea -- the divisor is just the expected
+        # number of games, sum(A) over the horizon, and not one week's A. Penix
+        # goes from a peak of 32.70 to 12.42, Aiyuk from 9.60 to 3.91, and the
+        # eighteen season-only men who are available throughout are unchanged.
+        rate = 0.0
+        if flat:
+            served = sum(c[2] for c in wk.values())
+            rate = float(r.get("target") or 0.0) / served if served > 0 else 0.0
         out[pid] = {"name": r.get("name"), "pos": r.get("pos"), "team": r.get("team"),
                     # season-only rows carry no shape, so they are scaled at 1.0
                     # and priced on the flat series expected.py already wrote.
@@ -120,7 +141,7 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
                     # k*s1 for those 38 players priced them at nothing -- Michael
                     # Penix, a startable quarterback sitting unowned at 141, read
                     # as worthless and took the QB wire floor down with him.
-                    "flat": r.get("k_source") == "season-only",
+                    "flat": flat, "flat_rate": round(rate, 4),
                     # The MEAN fraction expected.py folded into s2. Kept so the
                     # simulation can recover the lead's own number and redraw the
                     # fraction, instead of spending the average every week.
@@ -130,11 +151,36 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
                                                             ex["weights"].items()}}
 
 
+def weekly_points(p: dict, w: int) -> float:
+    """What he is worth in week `w` IF HE PLAYS. One definition, three callers.
+
+    Availability is NOT applied here. Every caller decides separately whether he
+    is on the field -- the simulation by drawing it, the wire floor by asking
+    what a claim would buy -- and folding it in would charge for the same
+    absence twice.
+
+    This existed three times with three different bugs. The flat branch divided
+    by A(w) (see series() for why that is wrong), and when A(w) was exactly zero
+    it fell through to `k * s1`, which for a season-only row is a `k` defaulted
+    to 1.0 times an s1 of ~0. That is precisely the failure the `flat` flag was
+    added to fix -- a startable quarterback reading as worthless and taking the
+    QB wire floor down with him -- reintroduced by the guard meant to avoid a
+    division by zero.
+    """
+    cell = p["weeks"].get(w)
+    if not cell:
+        return 0.0
+    if p.get("flat"):
+        return p.get("flat_rate") or 0.0
+    return p["k"] * cell[0]
+
+
 def _rooms_of(ids: list[str], S: dict) -> set:
     return {S[p]["room"] for p in ids if p in S and all(S[p]["room"])}
 
 
-def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026) -> dict:
+def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
+                exclude: frozenset = frozenset()) -> dict:
     """{pos: {week: points}} for the best man on the wire at that position.
 
     THE WIRE IS A FLOOR UNDER EVERY SLOT, and in a twelve-team league it is a
@@ -152,18 +198,25 @@ def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026) -> d
     One body per position per week, which is what a waiver claim actually buys.
     The pool is treated as fixed: our own adds and drops would move it slightly,
     and that second-order effect is not modelled.
+
+    `exclude` IS WHAT MAKES AN ACQUISITION PRICEABLE AT ALL. This is a max over
+    UNROSTERED men, and the candidate being priced is unrostered -- so without
+    it the best available player at a position is the floor his own addition is
+    measured against, and every such addition is worth about nothing by
+    construction. Measured: with San Francisco's quarterback concussed, the
+    week-2 QB floor was 13.72 and it WAS Mac Jones, the man being considered.
+    Excluding the candidates makes the floor "the best man we are NOT
+    considering", which is the actual alternative to claiming this one.
     """
     held = season.rostered_ids(league_id)
     out: dict = {}
     for pid, p in S.items():
-        if pid in held:
+        if pid in held or pid in exclude:
             continue
         for w in weeks:
-            cell = p["weeks"].get(w)
-            if cell is None:
+            if p["weeks"].get(w) is None:
                 continue
-            pts = (cell[3] / cell[2] if p.get("flat") and cell[2] > 0
-                   else p["k"] * cell[0])
+            pts = weekly_points(p, w)
             cur = out.setdefault(p["pos"], {}).get(w, 0.0)
             if pts > cur:
                 out[p["pos"]][w] = pts
@@ -282,11 +335,12 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                 if opened and p.get("rank") == 1:
                     continue                # it is HIS job that came open
                 if p.get("flat"):
-                    # No shape: spend the flat number, undoing the availability
-                    # the draw has already decided for us.
+                    # No shape to rebuild, and no door to open: a season-only row
+                    # has no structural model, so there is nothing for a vacancy
+                    # to add. Spend his conditional rate -- the draw above has
+                    # already decided whether he is on the field this week.
                     cands.append({"player_id": pid, "name": p["name"],
-                                  "pos": p["pos"],
-                                  "pts": final / a if a > 0 else final,
+                                  "pos": p["pos"], "pts": weekly_points(p, w),
                                   "has_game": True, "injury": None, "locked": False})
                     continue
                 gain = 0.0
@@ -298,7 +352,7 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                     # rank 2 in week 1 and rank 3 in week 5 has no single
                     # absorb to divide by.
                     gain = lead_pts * share.get((pid, s), 0.0)
-                pts = p["k"] * (s1 + gain)
+                pts = weekly_points(p, w) + p["k"] * gain
                 cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
                               "pts": pts, "has_game": True, "injury": None,
                               "locked": False})
@@ -351,7 +405,11 @@ class Board:
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
         self.vac, self.avail, self.share = draws(pool, self.S, self.weeks, sims)
-        self.repl = replacement(self.S, self.weeks, league_id)
+        # The men under consideration are held OUT of the wire floor. See
+        # replacement(): they are unrostered, so leaving them in makes each one
+        # the baseline his own acquisition is measured against.
+        self.repl = replacement(self.S, self.weeks, league_id,
+                                exclude=frozenset(extra or ()))
         self.p_playoffs = playoffs.p_playoffs(league_id=league_id, default=1.0)
         self.contender = self.p_playoffs >= CONTENDER_ODDS
         self.base = self.totals(self.mine)
@@ -423,13 +481,7 @@ class Board:
 
 def _base(p: dict, w: int) -> float:
     """His ordinary weekly number, before any door opens and before availability."""
-    cell = p["weeks"].get(w)
-    if not cell:
-        return 0.0
-    s1, _, a, final, _, _, _ = cell
-    if p.get("flat"):
-        return final / a if a > 0 else final
-    return p["k"] * s1
+    return weekly_points(p, w)
 
 
 def replaceability(b, league_id: str = LEAGUE_ID_2026) -> list[tuple]:
@@ -516,16 +568,21 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
     return "\n".join(L)
 
 
-def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
-    """Would he be in the optimal ten if nobody got hurt?
+def median_start_profile(b, ids: list[str], pid: str) -> dict:
+    """Where his value actually lands if nobody gets hurt.
 
-    WHICH TAIL TO READ DEPENDS ON THIS, and nothing else in the output does. A
-    man who starts is judged on his mean, because he plays every week and
-    expected points is exactly the question. A man who does not is judged on his
-    ceiling, because down there every candidate is worth about nothing in
-    expectation and the mean is ranking noise -- it prefers somebody marginally
-    better than the wire to somebody who could become more than that.
+    TWO KINDS OF POINTS WEAR THE SAME UNITS AND ARE NOT THE SAME THING. `gain`
+    is one season-total mean, so a man who walks into our lineup this week and a
+    man who appears in week 12 only because somebody ahead of him got hurt add
+    into it at par. The first is a lineup slot we are filling now; the second is
+    contingent on a world that may not happen.
+
+    Returns the weighted weeks he holds a starting slot in the median world, the
+    weighted points he puts in it, and the first such week -- so a decision can
+    say how much of a candidate's value is a real slot and how soon, rather than
+    inferring it from a single scalar that cannot carry the distinction.
     """
+    weeks, pts, first = 0.0, 0.0, None
     for w in b.weeks:
         cands = []
         for q in ids:
@@ -546,9 +603,31 @@ def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
             filled, _ = lineup.optimize(cands)
         finally:
             lineup.SLOTS = saved
-        if any(c and c.get("player_id") == pid for c in filled):
-            return True
-    return False
+        hit = next((c for c in filled if c and c.get("player_id") == pid), None)
+        if hit:
+            wt = b.weights.get(w, 1.0)
+            weeks += wt
+            pts += wt * hit.get("pts", 0.0)
+            if first is None:
+                first = w
+    return {"weeks": round(weeks, 2), "pts": round(pts, 2), "first": first}
+
+
+def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
+    """Would he be in the optimal ten if nobody got hurt?
+
+    WHICH TAIL TO READ DEPENDS ON THIS, and nothing else in the output does. A
+    man who starts is judged on his mean, because he plays every week and
+    expected points is exactly the question. A man who does not is judged on his
+    ceiling, because down there every candidate is worth about nothing in
+    expectation and the mean is ranking noise -- it prefers somebody marginally
+    better than the wire to somebody who could become more than that.
+
+    One definition, in median_start_profile: this is the same walk asking only
+    whether it ever happened, and a second copy of the DP is a second thing to
+    drift.
+    """
+    return median_start_profile(b, ids, pid)["first"] is not None
 
 
 def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
@@ -570,10 +649,15 @@ def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
                 continue
             ids = [p for p in b.mine if p != drop] + [add]
             sh = b.shape(b.totals(ids))
+            prof = median_start_profile(b, ids, add)
             out.append({"add": add, "drop": drop,
                         "gain": sh["mean"], "se": sh["se"],
                         "ceiling": sh["p90"], "p_hit": sh["p_hit"],
-                        "starter": starts_in_the_median_world(b, ids, add)})
+                        # How much of him is a lineup slot we fill with nobody
+                        # hurt, and when it starts. See median_start_profile.
+                        "start_weeks": prof["weeks"], "start_pts": prof["pts"],
+                        "first_start": prof["first"],
+                        "starter": prof["first"] is not None})
     return out
 
 

@@ -511,12 +511,15 @@ REGISTRY: list[S] = [
       "would do and changes nothing. It never fills the slot it frees; signing "
       "somebody is a separate decision the bot cannot make yet."),
     S(ROSTER, "robo.moves", "MIN_GAIN_TO_ADD", float,
-      "How much better a candidate must be than the man he replaces.",
-      "In rest-of-season points, comparing what a candidate is worth (`mean`) "
-      "against what the man he replaces would cost us (`hold`). Lower it and the "
-      "bot churns the bottom of the roster for fractional gains; raise it and it "
-      "sits out real upgrades. Ignored in `patch` mode, where an empty starting "
-      "slot scores zero and anyone startable beats it.",
+      "Extra gain a starting upgrade must show, beyond beating the noise.",
+      "In SIMULATED LINEUP POINTS -- how much our optimal starting lineup gains "
+      "across robo/marginal.py's seasons, not a difference of two season "
+      "totals. Those are different scales: the same proposal reads 51 the old "
+      "way and 1.5 this way. At 0 the only filter is NOISE_MULTIPLE x the "
+      "simulator's own standard error, so a move is made whenever the gain is "
+      "real; raise it and the bot sits out real upgrades, which at the old "
+      "value of 15 meant every one of them. Ignored in `patch` mode, where an "
+      "empty starting slot scores zero and anyone startable beats it.",
       bounds=(0.0, 200.0), unit="points"),
     S(ROSTER, "robo.moves", "DROP_FLOOR", float,
       "Never cut anyone whose drop price is above this.",
@@ -553,7 +556,7 @@ REGISTRY: list[S] = [
       "with it.",
       bounds=(0.0, 1.0)),
     S(ROSTER, "robo.faab", "MIN_POINTS_PER_DOLLAR", float,
-      "What a FAAB dollar is worth in rest-of-season points, at an even pace.",
+      "What a FAAB dollar is worth in simulated lineup points, at an even pace.",
       "THE BID POLICY IN ONE NUMBER -- it decides where on the win-probability "
       "curve we stop. The first dollar buys about ten points of win probability "
       "and everything past $10 buys a fraction of one, so lowering this bids "
@@ -608,11 +611,13 @@ REGISTRY: list[S] = [
       bounds=(0.0, 3.0)),
     S(ROSTER, "robo.ros", "NEWS_APPLY_FUTURE", float,
       "How much of a scout news verdict reaches the FUTURE weeks.",
-      "PROVISIONAL AT 0.5 pending evidence. Sleeper demonstrably reprices the "
-      "CURRENT week on news; whether it reprices week 9 has never been observed. "
-      "At 1.0 a feed that does reprice counts the same injury twice; at 0.0 a "
-      "feed that does not carries no news at all. `python -m robo.projarchive "
-      "--diff` is collecting the answer.",
+      "OBSERVED 7 Sep 2026, still held at 0.5. Over four daily snapshots the "
+      "current week moved for 65 of 886 players and weeks 2-18 moved for zero "
+      "of ~850, with news demonstrably in the window. That argues the feed is "
+      "stale after this week and the scout verdict should carry the news whole "
+      "-- but three preseason days is not a property of the feed, and at 1.0 a "
+      "feed that later reprices counts every injury twice, silently. Raise it "
+      "on in-season evidence from `python -m robo.projarchive --diff`.",
       bounds=(0.0, 1.0)),
     S(ROSTER, "robo.expected", "K_CLAMP", tuple,
       "Bounds on the residual between the structural model and the market.",

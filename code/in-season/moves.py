@@ -65,14 +65,23 @@ from robo import LEAGUE_ID_2026, faab, lineup, season, settings, value, vegas
 from robo import sleeper_read as api
 
 # How much a candidate must add to our STARTING LINEUP, across simulated
-# seasons, before a transaction is worth making. POLICY, NOT MEASUREMENT, and
-# marked as such: this league's history records what an add went on to score in
-# a starting slot, which is not a marginal quantity -- the man he displaced would
-# have scored too, and that counterfactual is not in the data. Recovering it
-# needs the simulator run against a past roster state, which needs the projection
-# snapshots projarchive only began taking in September 2026. Re-derive around
-# week 6. Until then this is a deliberate reluctance to churn, not a fitted bar.
-MIN_GAIN_TO_ADD = 15.0
+# seasons, before a transaction is worth making -- ON TOP of being larger than
+# the simulator's own error. At zero, NOISE_MULTIPLE x se is the only filter and
+# the rule is simply: make the move when the gain is real.
+#
+# IT WAS 15.0, WHICH WAS THE OLD UNITS, and at that level it was not a bar but
+# an off switch. `gain` used to be a difference of two absolute season totals --
+# tens to hundreds of points -- and is now the change in our optimal starting
+# lineup, where the same proposal prices at 1.5 instead of 51. Nothing the
+# simulator produces for a wire add comes close to 15, so no starting upgrade
+# could ever be made: with our quarterback concussed in a superflex league, his
+# recalibrated backup priced at +2.55 and was refused.
+#
+# There is deliberately no fitted level here. This league's history records what
+# an add went on to SCORE in a starting slot, which is not a marginal quantity --
+# the man he displaced would have scored too, and that counterfactual is not in
+# the data. Inventing a number to stand in for it is what produced the 15.
+MIN_GAIN_TO_ADD = 0.0
 
 # How many standard errors a gain must clear before it counts as a gain at all.
 # The simulator reports the paired standard error of every option; a difference
@@ -213,6 +222,23 @@ def hold_value(row: dict, ctx: dict, mine: bool = True) -> float:
 
 
 def droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
+    """Cached for our OWN roster, which is what the planners ask for repeatedly.
+
+    Each entry is a simulated drop price at ~6s, so seven of them is 39 seconds,
+    and plan_free, plan_claims and priced all ask independently. The cache lives
+    on ctx rather than in a module-level dict so it cannot outlive the run that
+    built it -- a stale drop price would be a silently wrong decision, not a
+    slow one. An explicit `roster` is somebody else's bench and never cached.
+    """
+    if roster is None and "_droppables" in ctx:
+        return ctx["_droppables"]
+    out = _droppables(ctx, roster)
+    if roster is None:
+        ctx["_droppables"] = out
+    return out
+
+
+def _droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
     """Who could be cut, worst first, priced on HOLD.
 
     Two independent guards on our own roster, because they fail differently. A
@@ -508,10 +534,33 @@ def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
             "why": why or f"{kind}; +/- {o['se']:.1f}, ceiling {o['ceiling']:.1f}"}
 
 
+# How deep each channel's shortlist goes, per ordering. Two orderings, unioned:
+# see priced().
+#
+# A COMPUTE BUDGET, NOT A MODELLING CLAIM -- which is why the near-term list is
+# the deeper of the two. It exists to catch a man whose value sits in the next
+# fortnight, and those rank below every steady producer by construction: a
+# concussed quarterback's backup, the best free agent in the league for the week
+# in question, came twelfth. A list that misses its own target by two places is
+# too shallow for its purpose, and the cost is linear in the number of options
+# priced.
 SHORTLIST = 10
+SHORTLIST_NEAR = 20
 
 
 def priced(ctx: dict) -> dict:
+    """Both channels priced, computed ONCE per context. See _priced.
+
+    plan_free and plan_claims each need the whole priced board, and moves.run
+    calls both -- so without this the same sixty hypotheticals are simulated
+    twice, at six seconds each. Cached on ctx for the same reason droppables is.
+    """
+    if "_priced" not in ctx:
+        ctx["_priced"] = _priced(ctx)
+    return ctx["_priced"]
+
+
+def _priced(ctx: dict) -> dict:
     """Both channels priced against the same drops, by the same simulator.
 
     THE FREE BOARD IS THE OPPORTUNITY COST OF A BID, and this is the only place
@@ -538,10 +587,23 @@ def priced(ctx: dict) -> dict:
         simulation by design; taking a shortlist slot as well was the same
         mistake twice.
         """
-        out = []
-        for c in candidates(ctx, waivers=waivers):
-            pid = c["row"]["player_id"]
-            if pid in b0.S and len(out) < SHORTLIST:
+        pool = [c["row"]["player_id"] for c in candidates(ctx, waivers=waivers)
+                if c["row"]["player_id"] in b0.S]
+        out = pool[:SHORTLIST]
+        # THE SEASON TOTAL CANNOT SEE A FILL-IN. candidates() orders by
+        # rest-of-season value, which is the right question for an upgrade we
+        # will hold to January and the wrong one for the next three weeks: a man
+        # whose value is concentrated in them has a small season total by
+        # construction. With our quarterback out, his backup was the best free
+        # agent in the league for the week in question and ranked 100th here.
+        # A union rather than a replacement, so nothing the old ordering
+        # surfaced is lost -- it can only ever add candidates to price.
+        from robo import expected
+        tbl = expected.load()
+        near = sorted(pool,
+                      key=lambda p: -value.near_value(p, ctx["week"], table=tbl))
+        for pid in near[:SHORTLIST_NEAR]:
+            if pid not in out:
                 out.append(pid)
         return out
 
@@ -628,7 +690,8 @@ def plan_claims(ctx: dict) -> list[dict]:
             picks.append(row)
         if not picks:
             continue
-        bids = faab.ladder(ctx["week"], [p["gain"] for p in picks], ctx["faab"])
+        bids = faab.ladder(ctx["week"], [p["gain"] for p in picks], ctx["faab"],
+                           [p["add"].get("pos") for p in picks])
         for p, b in zip(picks, bids):
             p["bid"] = int(b)
         used |= {p["add"]["player_id"] for p in picks}
