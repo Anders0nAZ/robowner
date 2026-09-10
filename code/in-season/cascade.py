@@ -238,6 +238,29 @@ def export_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
     return ok, (f"regenerated in {how}" if ok else how)
 
 
+def _checked(result: tuple[bool, str]) -> str:
+    """Turn a (ok, why) return into the only failure signal step() can read.
+
+    THE ONLY SUCCESS SIGNAL step() HAS IS "DID IT RAISE", and _model_cmd is
+    documented never to raise -- it reports failure in a bool and hands back the
+    reason. So `step("capture", lambda: capture_week(wk)[1])` threw the bool away
+    and logged `ok: True` over a timeout, a nonzero exit, or a missing model
+    tree, with the reason sitting in the detail string where nothing reads it.
+
+    That is the worst of the three places this shape appears, because a silently
+    failed capture does not stop the export -- it makes it SUCCEED against a
+    stale snapshot, exactly the schedule dependency capture_week exists to
+    remove, and the lineup is then set on the other repo's cron.
+
+    Both steps are in SOFT_STEPS, so raising marks the step failed and lets the
+    chain continue. _refresh_schedules already consumes its bool this way.
+    """
+    ok, why = result
+    if not ok:
+        raise RuntimeError(why)
+    return why
+
+
 # -------------------------------------------------------------------- the chain
 
 def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
@@ -292,8 +315,8 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     # somebody reads when a lineup went wrong.
     step("scout", (lambda: "skipped: pregame run, no decision here reads it")
          if pregame else (lambda: _scout(prec)))
-    step("capture", lambda: capture_week(wk)[1])
-    step("export", lambda: export_week(wk)[1])
+    step("capture", lambda: _checked(capture_week(wk)))
+    step("export", lambda: _checked(export_week(wk)))
     step("model", lambda: refresh.pull_model())
 
     # BEFORE rebuild, because ros.py reads these odds to weight weeks 15-17 and
@@ -373,14 +396,17 @@ def _scout(pulled: dict) -> str:
     todo, reuse = scout.needs_judging(b)
     if not todo:
         return f"{len(b)} in scope, all fingerprints unchanged"
-    v = scout.judge(todo, verbose=False)
+    v, failed = scout.judge(todo, verbose=False)
     keep = dict((scout.load_verdicts().get("verdicts") or {}))
     for x in todo:
         keep.pop(x["player_id"], None)
     keep.update(reuse)
-    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep)
+    w = scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep,
+                             carry=failed)
     dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
-    return f"{len(todo)} re-read, {dated} carry a date"
+    return (f"{len(v)} of {len(todo)} re-read, {dated} carry a date"
+            + (f", {w['carried']} carried forward after batch failure"
+               if w.get("carried") else ""))
 
 
 def _fmt_pull(p: dict) -> str:
@@ -453,7 +479,21 @@ def _moves(moves, mode: str, apply: bool) -> str:
     who = ", ".join(p["add"]["name"] for p in plans)
     if out.get("gated"):
         return f"{len(plans)} add(s) WOULD be made ({who}) -- gate shut"
-    return f"{len(plans)} add(s): {who}" + ("" if out.get("applied") else " (not submitted)")
+    # REPORT WHAT REACHED SLEEPER. `plans` is what we intended; `submitted` is
+    # what landed. Rendering the intent was how a run whose every mutation
+    # raised read as a clean success in inseason.log.
+    #
+    # Reported rather than raised: patch and fill are not SOFT_STEPS, so
+    # raising here would abort the run and cost lineup3 -- the final legality
+    # check -- over a wire add that can simply be retried. The string is what a
+    # human reads in inseason.log, and it now says what actually happened.
+    sub, fail = out.get("submitted") or [], out.get("failed") or []
+    if fail:
+        why = "; ".join(f"{f['add']} ({f['why']})" for f in fail)
+        return f"{len(sub)} of {len(plans)} submitted -- FAILED: {why}"
+    if not out.get("applied"):
+        return f"{len(plans)} add(s): {who} (not submitted)"
+    return f"{len(sub)} add(s): " + ", ".join(s["add"] for s in sub)
 
 
 def _stream(moves, wk: int, apply: bool, league_id: str) -> str:

@@ -159,9 +159,35 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
         return p
 
     from robo.decisions import record
-    from robo.sleeper_write import set_reserve
+    from robo.sleeper_write import confirm_roster, set_reserve
     r = season.mine(league_id)
     set_reserve(r["roster_id"], p["target"], league_id)
+
+    # Reserve is a SET -- Sleeper imposes no order on it, so only membership is
+    # meaningful here. See lineup.run for why a write that did not raise is not
+    # yet a write that landed.
+    state, why_ok = confirm_roster("reserve", p["target"], league_id=league_id)
+    p["verified"], p["verify_why"] = state, why_ok
+    if state == "mismatch":
+        p["applied"] = False
+        msg = (f"IR NOT CONFIRMED: {why_ok}. No decision-log entry written. "
+               "An unswept reserve is a roster cap that blocks every pickup.")
+        print(f"  ** {msg}")
+        try:
+            from robo import alerts
+            alerts.blast(msg, key="ir-unconfirmed")
+        except Exception:
+            pass
+        return p
+    if state == "unknown":
+        print(f"  ** reserve written but unverified: {why_ok}")
+        try:
+            from robo import alerts
+            alerts.blast(f"IR written but NOT verified: {why_ok}",
+                         key="ir-unverified")
+        except Exception:
+            pass
+
     p["applied"] = True
 
     moved = [f"{m['name']} to injured reserve" for m in p["reserve"]]

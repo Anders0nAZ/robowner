@@ -138,9 +138,22 @@ def audit(league_id: str = LEAGUE_ID_2026) -> list[str]:
 # -------------------------------------------------------------- live rosters
 
 def live_rosters(league_id: str = LEAGUE_ID_2026) -> list[dict]:
-    """Uncached roster truth, via GraphQL. See sleeper_write.live_rosters."""
-    from robo.sleeper_write import live_rosters as _lr
-    return _memo(("rosters", league_id), lambda: _lr(league_id), ttl=30)
+    """Roster truth, via GraphQL. See sleeper_write.live_rosters.
+
+    THE EPOCH IS IN THE KEY, so our own writes invalidate this and a stale read
+    cannot outlive them. It used to say "uncached" and memoize for 30 seconds
+    with no invalidation anywhere -- which was survivable when each roster
+    module was its own scheduled task, and stopped being survivable when the
+    cascade chained them into one process: ir read the starters lineup had just
+    replaced, and fill read the roster ir had just cleared.
+
+    The TTL still does its original job of stopping one run refetching the same
+    rows; what it must never do is outlive a mutation. See
+    sleeper_write.ROSTER_MUTATIONS for why the bump lives at that end.
+    """
+    from robo.sleeper_write import live_rosters as _lr, roster_epoch
+    return _memo(("rosters", league_id, roster_epoch()),
+                 lambda: _lr(league_id), ttl=30)
 
 
 def mine(league_id: str = LEAGUE_ID_2026) -> dict:

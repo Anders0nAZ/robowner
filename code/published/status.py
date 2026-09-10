@@ -787,8 +787,20 @@ def sleeper() -> dict:
         out["rest"] = BAD
         out["rest_error"] = _scrub(repr(e))
     try:
-        from robo import sleeper_write
-        out["graphql"] = OK if sleeper_write.whoami() else BAD
+        from robo import ROBOWNER_USER_ID, sleeper_write
+        # WHICH ACCOUNT, not merely whether one answered. whoami() returns a
+        # {user_id, display_name} dict, so ANY authenticated token was truthy
+        # here and reported green -- including one for somebody else's account,
+        # which is the single worst thing a write path can be pointed at.
+        me = sleeper_write.whoami() or {}
+        who = str(me.get("user_id") or "")
+        if who == ROBOWNER_USER_ID:
+            out["graphql"] = OK
+        else:
+            out["graphql"] = BAD
+            out["graphql_error"] = (
+                f"token authenticates as user {who or 'unknown'}, "
+                f"not Robowner ({ROBOWNER_USER_ID})")
     except Exception as e:
         out["graphql"] = BAD
         out["graphql_error"] = _scrub(repr(e))

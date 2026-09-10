@@ -88,6 +88,18 @@ UPSIDE_PCTL = 75
 # expected gain before it will move is refusing the only distribution on offer.
 HIT_POINTS = 7.0
 
+# How likely a free agent must be to PLAY before he can set the wire floor.
+# replacement() is a max over unrostered men and it read their conditional
+# points without ever looking at availability -- so a man on injured reserve,
+# whose A(w) the ESPN eligibility floor has pinned to 0.0 while Sleeper still
+# projects him, could BE the floor for a week he is barred from. Because it is
+# a max the leak only ever runs one way: it raises the floor, and every roster
+# move is measured against that floor, so it silently suppressed the value of
+# all of them.
+#
+# A claim buys a body who plays. Half is the point where he stops being one.
+WIRE_MIN_AVAIL = 0.5
+
 settings.apply(__name__, globals())
 
 
@@ -214,7 +226,16 @@ def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
         if pid in held or pid in exclude:
             continue
         for w in weeks:
-            if p["weeks"].get(w) is None:
+            cell = p["weeks"].get(w)
+            if cell is None:
+                continue
+            # A CLAIM BUYS A BODY WHO PLAYS. This read conditional points and
+            # never looked at cell[2] at all, so a man the ESPN eligibility
+            # floor has pinned to A(w) = 0.0 -- barred from the week, though
+            # Sleeper still projects him -- could set the floor for it. It is a
+            # max, so the error only ever raised the floor, and the floor is
+            # what every roster move is measured against.
+            if cell[2] < WIRE_MIN_AVAIL:
                 continue
             pts = weekly_points(p, w)
             cur = out.setdefault(p["pos"], {}).get(w, 0.0)
@@ -237,6 +258,26 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
     the room's vacancy -- rolling separately for him as well would charge him for
     the same injury in two places. So rank 1 takes the room draw, everyone else
     takes his own, and a known absence overrides both.
+
+    A RETURN IS ONE EVENT, NOT SEVENTEEN. `a` is returns.back_by read at each
+    future week -- a CUMULATIVE probability, monotone non-decreasing by
+    construction. Drawing an independent coin against it every week produced
+    worlds where a man came back in week 2, vanished in week 3 and returned in
+    week 4. Weekly means survived that; the PATHS did not, and _score reads the
+    upper percentile of season totals for a long-shot roster, which is a
+    statement about paths. One uniform per (player, season) and the recovery
+    week falls out of the curve, monotone for free. The share draw immediately
+    below already reasoned exactly this way -- "drawn ONCE per season so a man
+    who wins the job keeps it" -- and the return curve was simply never given
+    the same treatment.
+
+    THE RANK IS READ PER WEEK. expected.py re-reads the room every week and
+    writes a rank into each cell; this used the single season-level rank for
+    every week of every world. 22 of 802 players change rank during the season,
+    and for them all three rank-sensitive decisions were wrong -- who is the
+    lead, which absorption distribution applies, and whose job it is when the
+    room opens. So the share is drawn as a QUANTILE here and mapped through the
+    week's own distribution in season_totals: same man, same luck, right curve.
     """
     import random
     rng = random.Random(seed)
@@ -246,30 +287,36 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
         for w in weeks:
             for s in range(sims):
                 vac[(tm, pos, w, s)] = rng.random() < rate
-    avail, share = {}, {}
+    avail, quant = {}, {}
     for pid in ids:
         p = S.get(pid)
         if not p:
             continue
         rate = roles.miss_rate(p["pos"])
-        lead = p.get("rank") == 1
+        # ONE recovery draw per season. A(w) >= u is monotone in w because A is,
+        # so this is a single return week rather than a weekly coin.
+        recov = [rng.random() for _ in range(sims)]
         for w in weeks:
-            a = (p["weeks"].get(w) or (0.0,) * 7)[2]
-            # A(w) below 1 is a KNOWN absence the injury feed already priced, so
-            # the ordinary hazard must not be stacked on top of it.
-            hit = a if a < 1.0 else (1.0 if lead else 1.0 - rate)
+            cell = p["weeks"].get(w) or (0.0,) * 7
+            a = cell[2]
+            lead = (cell[6] if cell[6] is not None else p.get("rank")) == 1
             for s in range(sims):
-                avail[(pid, w, s)] = rng.random() < hit
+                if a < 1.0:
+                    # A KNOWN absence the injury feed already priced. The
+                    # ordinary hazard must not be stacked on top of it.
+                    avail[(pid, w, s)] = a >= recov[s]
+                else:
+                    avail[(pid, w, s)] = rng.random() < (1.0 if lead
+                                                         else 1.0 - rate)
         # HOW MUCH HE TAKES IS DRAWN, NOT AVERAGED, and drawn ONCE per season so
         # a man who wins the job keeps it. These distributions are bimodal --
         # roles.py says so outright, and the fit shows RB3 at mean 0.257 with an
         # sd of 0.439 and a median of 0.187 -- so spending the mean every week
         # deletes precisely the tail that makes a late-round back worth holding.
-        # Clipping at zero reproduces the mass the median already reports.
-        m, sd = _absorb_dist(p["pos"], p.get("rank"))
-        for s, v in enumerate(_draw_shares(rng, m, sd, sims)):
-            share[(pid, s)] = v
-    return vac, avail, share
+        # Stored as a quantile so the week's own rank chooses the curve.
+        for s in range(sims):
+            quant[(pid, s)] = rng.random()
+    return vac, avail, quant
 
 
 def _draw_shares(rng, m: float, sd: float, sims: int) -> list[float]:
@@ -300,6 +347,26 @@ def _draw_shares(rng, m: float, sd: float, sims: int) -> list[float]:
     return v
 
 
+@lru_cache(maxsize=None)
+def _share_table(pos: str, rank, sims: int, seed: int = 0) -> tuple:
+    """A sorted sample of the absorbed fraction for one (pos, rank) cell.
+
+    Indexed by a player's stored quantile, so his luck is fixed for the season
+    while the CURVE follows whatever rank he holds that week. Sorting is what
+    makes the quantile meaningful: the same u picks the same place in the
+    distribution whether he is the RB2 in week 3 or the RB1 in week 9.
+    """
+    import random
+    m, sd = _absorb_dist(pos, rank)
+    return tuple(sorted(_draw_shares(random.Random(seed), m, sd, sims)))
+
+
+def _share_of(pos: str, rank, u: float, sims: int) -> float:
+    """This world's absorbed fraction for a man at `rank`, at quantile `u`."""
+    tbl = _share_table(pos, rank, sims)
+    return tbl[min(sims - 1, int(u * sims))]
+
+
 def _absorb_dist(pos: str, rank) -> tuple[float, float]:
     """(mean, sd) of the fraction this rank absorbs. sd 0 where it is unfitted."""
     if not rank or rank <= 1:
@@ -313,13 +380,18 @@ def _absorb_dist(pos: str, rank) -> tuple[float, float]:
 # -------------------------------------------------------------- the simulation
 
 def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
-                  vac, avail, share, sims: int, repl: dict | None = None) -> list[float]:
+                  vac, avail, quant, sims: int, repl: dict | None = None) -> list[float]:
     """One optimal-lineup season total per simulated world."""
     out = []
     for s in range(sims):
         tot = 0.0
         for w in weeks:
             cands = []
+            # PASS ONE: who is on the field, and what fraction of a vacated role
+            # each of them is drawing for. Split from the scoring pass because
+            # the shares have to be capped ACROSS a room before any of them is
+            # spent -- see below.
+            live, raw = [], {}
             for pid in ids:
                 p = S.get(pid)
                 if not p:
@@ -330,9 +402,11 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                 if not avail.get((pid, w, s), True):
                     continue
                 s1, s2, a, final, miss, lead_pts, rank_w = cell
+                # The rank HE HOLDS THIS WEEK, not the one he held in week 1.
+                rank = rank_w if rank_w is not None else p.get("rank")
                 tm, pos = p["room"]
                 opened = bool(tm) and vac.get((tm, pos, w, s), False)
-                if opened and p.get("rank") == 1:
+                if opened and rank == 1:
                     continue                # it is HIS job that came open
                 if p.get("flat"):
                     # No shape to rebuild, and no door to open: a season-only row
@@ -343,15 +417,38 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                                   "pos": p["pos"], "pts": weekly_points(p, w),
                                   "has_game": True, "injury": None, "locked": False})
                     continue
-                gain = 0.0
+                frac = 0.0
                 if opened and lead_pts:
-                    # THE LEAD'S OWN NUMBER, CARRIED PER WEEK, times this world's
-                    # drawn fraction. It used to divide s2 back out by a
-                    # season-long absorb, which stopped being recoverable once
-                    # the room started re-ranking week to week -- a man who is
-                    # rank 2 in week 1 and rank 3 in week 5 has no single
-                    # absorb to divide by.
-                    gain = lead_pts * share.get((pid, s), 0.0)
+                    frac = _share_of(p["pos"], rank, quant.get((pid, s), 0.0), sims)
+                live.append((pid, p, w, lead_pts, (tm, pos) if opened else None))
+                if frac:
+                    raw[pid] = frac
+
+            # A ROOM HAS ONE JOB TO GIVE AWAY. Every backup drew his fraction
+            # independently and clipped only against himself, so two men behind
+            # the same starter could between them absorb more than the whole
+            # vacated role -- with QB rank-2 fitted at a mean of 0.840 that was
+            # routine, and it inflated the ceiling of any roster holding two
+            # backups from one room. Scaled down proportionally so the relative
+            # draws survive and only the impossible total goes.
+            room_tot: dict = {}
+            for pid, frac in raw.items():
+                r = S[pid]["room"]
+                room_tot[r] = room_tot.get(r, 0.0) + frac
+            for pid, frac in list(raw.items()):
+                t = room_tot.get(S[pid]["room"], 0.0)
+                if t > 1.0:
+                    raw[pid] = frac / t
+
+            # PASS TWO: score them.
+            for pid, p, _w, lead_pts, _room in live:
+                # THE LEAD'S OWN NUMBER, CARRIED PER WEEK, times this world's
+                # drawn fraction. It used to divide s2 back out by a
+                # season-long absorb, which stopped being recoverable once
+                # the room started re-ranking week to week -- a man who is
+                # rank 2 in week 1 and rank 3 in week 5 has no single
+                # absorb to divide by.
+                gain = (lead_pts or 0.0) * raw.get(pid, 0.0)
                 pts = weekly_points(p, w) + p["k"] * gain
                 cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
                               "pts": pts, "has_game": True, "injury": None,
@@ -404,7 +501,7 @@ class Board:
         # Every id that could appear in ANY hypothetical is drawn for up front,
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
-        self.vac, self.avail, self.share = draws(pool, self.S, self.weeks, sims)
+        self.vac, self.avail, self.quant = draws(pool, self.S, self.weeks, sims)
         # The men under consideration are held OUT of the wire floor. See
         # replacement(): they are unrostered, so leaving them in makes each one
         # the baseline his own acquisition is measured against.
@@ -416,7 +513,7 @@ class Board:
 
     def totals(self, ids):
         return season_totals(ids, self.S, self.weeks, self.weights,
-                             self.vac, self.avail, self.share, self.sims, self.repl)
+                             self.vac, self.avail, self.quant, self.sims, self.repl)
 
     def score(self, totals):
         return _score(totals, self.contender)

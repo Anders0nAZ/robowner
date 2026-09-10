@@ -96,6 +96,20 @@ MIN_RAW_TO_SCALE = 1.0
 # evidence only above this, and is_puzzle() is the one place that decides.
 K_PUZZLE_MIN_RAW = 5.0
 
+# How stale the cached artifact may be before load() rebuilds instead of
+# serving it. THIS FILE IS THE VALUATION EVERY ROSTER DECISION READS --
+# value.ros_value prefers it over ros.json unconditionally -- and its only
+# acceptance test was schema plus week equality, so a missed refresh served the
+# same numbers for the rest of an NFL week no matter what happened in it.
+# `computed` was being written and never read.
+#
+# Cheaper to enforce here than anywhere else in the repo: unlike the model
+# artifact, which comes from another tree and can only be REFUSED when stale,
+# a stale cache here just falls through to build(), which costs about two
+# seconds. So the gate is self-healing and the number is never merely absent.
+# Sized to match model_proj.MAX_AGE_H, the input that ages fastest underneath it.
+MAX_AGE_H = 30.0
+
 settings.apply(__name__, globals())
 
 
@@ -346,12 +360,26 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
     players = api.players()
     sc = season.scoring(league_id)
 
+    # THE TARGET MUST BE SCORED THE SAME WAY THE SERIES IS. ros.weekly_rates
+    # adds rankings.missing_key_rate into every weekly number -- the 34 scoring
+    # keys Sleeper's feed omits, a QB's sack penalty and the bonus tiers chief
+    # among them -- and calibrate() then divides the summed series by this
+    # target. Built from custom_points alone, the target carried none of that,
+    # so k = target / raw_total cancelled the whole correction back out and the
+    # published level was pinned to the uncorrected market number.
+    #
+    # rankings.build_board, the other consumer of these same projections, adds
+    # it one line after custom_points. Two consumers of one feed disagreeing
+    # about what a season is worth is the bug; this makes them agree.
+    s25 = rankings.stats_2025()
     spts = {}
     for r in rankings.load_projections():
         p = r.get("player") or {}
         pid = str(r.get("player_id") or p.get("player_id") or "")
         if pid:
-            spts[pid] = rankings.custom_points(r.get("stats") or {}, sc)
+            stats = r.get("stats") or {}
+            spts[pid] = (rankings.custom_points(stats, sc)
+                         + rankings.missing_key_points(pid, stats, sc, s25))
 
     # EVERYONE'S AVAILABILITY FIRST, because a backup's inheritance is priced
     # against the man ahead of him and that number is not his own. One pass, so
@@ -432,11 +460,27 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "players": rows}
 
 
+def cache_age_h(d: dict) -> float | None:
+    """Hours since the cached artifact was computed, or None if it cannot say."""
+    try:
+        return (time.time() - float(d["computed"])) / 3600.0
+    except Exception:
+        return None
+
+
 def load(refresh: bool = False) -> dict:
     if not refresh and CACHE.exists():
         try:
             d = json.loads(CACHE.read_text(encoding="utf-8"))
-            if d.get("schema") == SCHEMA and d.get("week") == season.current_week():
+            age = cache_age_h(d)
+            fresh = age is not None and -1.0 <= age <= MAX_AGE_H
+            # A future stamp is a clock problem, not freshness, and a bare
+            # age check would read it as infinitely fresh. A file with no
+            # readable `computed` is refused for the same reason: unknown age
+            # is not young. Both fall through to build(), which is the whole
+            # reason this gate can afford to be strict.
+            if (d.get("schema") == SCHEMA
+                    and d.get("week") == season.current_week() and fresh):
                 return d
         except Exception:
             pass

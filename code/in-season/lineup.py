@@ -314,8 +314,38 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
         return out
 
     from robo.decisions import record
-    from robo.sleeper_write import set_starters
+    from robo.sleeper_write import confirm_roster, set_starters
     set_starters(roster["roster_id"], week, starter_ids, league_id)
+
+    # THE WRITE NOT RAISING IS NOT THE SAME AS THE LINEUP BEING SET. Order is
+    # compared as well as membership: `starters` is positional on Sleeper, so
+    # the right ten men in the wrong slots is a different lineup, not a
+    # rounding difference.
+    state, why_ok = confirm_roster("starters", starter_ids, ordered=True,
+                                   league_id=league_id)
+    out["verified"], out["verify_why"] = state, why_ok
+    if state == "mismatch":
+        out["applied"] = False
+        msg = (f"WEEK {week} LINEUP NOT CONFIRMED: {why_ok}. No decision-log "
+               "entry written; the lineup on Sleeper is not the one we chose.")
+        print(f"  ** {msg}")
+        try:
+            from robo import alerts
+            alerts.blast(msg, key="lineup-unconfirmed")
+        except Exception:
+            pass
+        return out
+    if state == "unknown":
+        # Recorded anyway: the mutation itself succeeded, and reporting it as
+        # failed would invite a retry that sets the same lineup twice.
+        print(f"  ** lineup written but unverified: {why_ok}")
+        try:
+            from robo import alerts
+            alerts.blast(f"Week {week} lineup written but NOT verified: {why_ok}",
+                         key="lineup-unverified")
+        except Exception:
+            pass
+
     out["applied"] = True
     engine = (f"the NFL Model's simulated means for {modelled} of {len(cands)} "
               f"players" if modelled else "Sleeper's weekly projections")

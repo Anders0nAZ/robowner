@@ -197,12 +197,18 @@ def refresh_scout():
     todo, reuse = scout.needs_judging(b)
     if not todo:
         return f"{len(b)} in pool, nothing changed"
-    v = scout.judge(todo, verbose=False)
-    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse)
+    v, failed = scout.judge(todo, verbose=False)
+    w = scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse,
+                             carry=failed)
     dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
     viol = sum(1 for x in v if x.get("floor_violation"))
-    return (f"{len(b)} in pool, {len(todo)} judged, {len(reuse)} reused, "
-            f"{dated} dated, {viol} rejected below the floor")
+    # len(todo) is what we SET OUT to judge, and reporting it as "judged"
+    # is how a run that lost half its batches read as a clean success.
+    return (f"{len(b)} in pool, {len(v)} of {len(todo)} judged, "
+            + (f"{w['carried']} carried forward after batch failure, "
+               if w.get("carried") else "")
+            + f"{len(reuse)} reused, {dated} dated, "
+            f"{viol} rejected below the floor")
 
 
 @step("expected")
@@ -312,14 +318,24 @@ def harvest_history():
     import robo.history as h
     orig = h.league_chain
     try:
-        h.league_chain = lambda start=None: [L]
-        h.harvest(verbose=False)
+        h.league_chain = lambda start=None, record=None: [L]
+        res = h.harvest(verbose=False)
     finally:
         h.league_chain = orig
     c = sqlite3.connect(h.DB)
     n = c.execute("SELECT COUNT(*) FROM matchups WHERE season='2026'").fetchone()[0]
     c.close()
-    return f"2026 refreshed ({n} matchup rows)"
+    # RAISED, NOT RETURNED. step() logs OK for anything that does not raise, so
+    # a returned "INCOMPLETE" string would have read exactly like a success --
+    # which is what the bare row count already did: one unbounded number,
+    # compared against nothing, unable to show a missing week or a truncated
+    # transaction set, and decorative besides.
+    gaps = res.get("gaps") or []
+    if gaps:
+        raise RuntimeError(
+            f"2026 harvest INCOMPLETE -- {len(gaps)} gap(s), {n} matchup rows "
+            "committed anyway: " + "; ".join(gaps[:6]))
+    return f"2026 refreshed ({n} matchup rows, no gaps)"
 
 
 @step("selfdoc")

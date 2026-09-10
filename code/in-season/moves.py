@@ -306,6 +306,9 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
                 league_id)
         except Exception as e:
             print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
+            out.setdefault("failed", []).append(
+                {"add": add["name"], "drop": drop["name"],
+                 "why": f"{type(e).__name__}: {str(e)[:120]}"})
             continue
         out["submitted"].append({"add": add["name"], "drop": drop["name"]})
         _record("free-agent", f"Signed {add['name']}, released {drop['name']}",
@@ -316,7 +319,13 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
                 + (f" {p['why']}." if p.get("why") else ""),
                 {"add": add.get("player_id"), "drop": drop.get("player_id"),
                  "mode": mode, "week": ctx["week"], "gain": p["gain"]})
-    out["applied"] = True
+    # WHAT REACHED SLEEPER, NOT WHAT WE TRIED. This was an unconditional True
+    # sitting outside the loop, so a run in which every mutation raised still
+    # reported applied -- and cascade._moves renders that as a clean
+    # "2 add(s): Name, Name" into inseason.log with `submitted` empty. The
+    # decision log was never falsified (record() sits after the continue); the
+    # summary a human actually reads was.
+    out["applied"] = bool(out["submitted"])
     return out
 
 
@@ -839,6 +848,9 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
                                            c["bid"], league_id)
                 except Exception as e:
                     print(f"  ** CLAIM FAILED {add['name']}: {type(e).__name__}: {e}")
+                    out.setdefault("failed", []).append(
+                        {"add": add["name"], "bid": c["bid"],
+                         "why": f"{type(e).__name__}: {str(e)[:120]}"})
                     continue
                 ok, why = verify_bid(add["player_id"], c["bid"], ctx)
                 out["submitted"].append({"add": add["name"], "bid": c["bid"],
@@ -863,9 +875,46 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
                         alerts.blast(msg, key="waiver-bid-unverified")
                     except Exception:
                         pass
-                    out["applied"] = True
+                    out["applied"] = bool(out["submitted"])
                     return out
-    out["applied"] = True
+    # See submit_free: what reached Sleeper, not what we attempted.
+    out["applied"] = bool(out["submitted"])
+    return out
+
+
+def slate(kind: str, apply: bool = False,
+          league_id: str = LEAGUE_ID_2026) -> dict:
+    """One scheduled roster run: sweep IR, then make the pass.
+
+    THE ORDERING BELONGS HERE, NOT IN A .VBS. Both wrappers chained
+    `robo.ir --apply & robo.moves ...` with cmd's unconditional `&`, and that
+    hand-written chain carried two defects at once: the `&` runs the second
+    command even when the first died, and NEITHER wrapper passed `--apply` to
+    robo.moves -- so the Tuesday waiver task whose own comment says "LIVE.
+    Claims are submitted" planned a slate and threw it away, every week, and
+    would have gone on doing so after the gate opened. Same class of bug the
+    cascade was built to remove: an ordering that matters living in the
+    schedule, where nothing tests it.
+
+    ir first because reserve is three slots ON TOP of the seventeen-man roster,
+    so an unswept IR is a roster cap that silently blocks every pickup and the
+    slate would be built against the wrong number of open slots.
+
+    A failed sweep does not stop the pass -- it is reported and the pass runs
+    against whatever slots are genuinely open, which is strictly better than
+    skipping the week.
+    """
+    from robo import ir
+    out: dict = {"kind": kind, "applied": bool(apply)}
+    try:
+        out["ir"] = ir.run(apply=apply, league_id=league_id)
+    except Exception as e:
+        out["ir_error"] = f"{type(e).__name__}: {str(e)[:160]}"
+        print(f"  ** IR SWEEP FAILED: {out['ir_error']}")
+        print("     continuing to the pass against the slots we can see")
+    out["moves"] = run("claims" if kind == "claims" else "free",
+                       apply=apply, league_id=league_id,
+                       mode="ros" if kind == "ros" else "ros")
     return out
 
 
@@ -874,12 +923,17 @@ def main():
     g = ap.add_mutually_exclusive_group(required=True)
     g.add_argument("--free", action="store_true", help="instant wire adds")
     g.add_argument("--claims", action="store_true", help="the FAAB slate")
+    g.add_argument("--slate", choices=("ros", "claims"),
+                   help="the scheduled run: sweep IR, then the pass. Owns the "
+                        "ordering the .vbs wrappers used to chain by hand")
     ap.add_argument("--mode", default="ros", choices=MODES)
     ap.add_argument("--apply", action="store_true")
     ap.add_argument("--league", default=LEAGUE_ID_2026)
     ap.add_argument("--payloads", action="store_true",
                     help="print the exact GraphQL variables that would be sent")
     args = ap.parse_args()
+    if args.slate:
+        return slate(args.slate, apply=args.apply, league_id=args.league)
     res = run("free" if args.free else "claims", apply=args.apply,
               league_id=args.league, mode=args.mode)
     if args.payloads:
