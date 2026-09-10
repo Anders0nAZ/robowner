@@ -75,9 +75,10 @@ CATEGORIES = [
      "writes a record before anyone asks for one.",
      ["decisions", "devlog", "status", "publish_code"]),
     ("running", "Keeping it running",
-     "The daily pipeline, the tunable settings behind it, and the two local "
-     "apps: one that edits the settings, one that explains the decisions.",
-     ["__init__", "refresh", "settings", "admin_gui",
+     "The daily pipeline, the job that puts a decision run in front of every "
+     "kickoff, the tunable settings behind both, and the two local apps: one "
+     "that edits the settings, one that explains the decisions.",
+     ["__init__", "refresh", "prekick", "settings", "admin_gui",
       "audit_gui", "ui", "1_Rest_of_season"]),
 ]
 

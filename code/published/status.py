@@ -1033,8 +1033,13 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # asserted -- they are supposed to be absent most days, and asserting them
     # would be the same false alarm as asserting on the draft guard that
     # correctly disabled itself.
+    # RobonerPreKickDaily is here for exactly the same reason and with exactly
+    # the same exclusion: it is the producer of every pre-kickoff decision run,
+    # so disabled means the bot silently drops back to three fixed clock times
+    # on a Sunday, while its RobonerPreKick_* one-shots are absent most days by
+    # design and must never be asserted.
     inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers",
-                       "NFLModelCaptureDaily"]
+                       "RobonerPreKickDaily", "NFLModelCaptureDaily"]
                       if done else ["RobonerScout"])
     for name in inseason_tasks:
         t = by_name.get(name)

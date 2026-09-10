@@ -111,6 +111,19 @@ def _kickoffs(season_yr: int) -> tuple:
         return ()
 
 
+def kickoffs(season_yr, week: int | None = None) -> tuple:
+    """Kickoff instants as epoch seconds, ascending. One week, or the season.
+
+    The public read of _kickoffs, so callers that want the times themselves
+    rather than a countdown do not have to reach through the private memo.
+    robo/prekick.py clusters these into the day's game slots; an empty result
+    means the schedule could not be read, and every caller must treat that as
+    unknown rather than as "no games".
+    """
+    rows = _kickoffs(int(season_yr))
+    return tuple(t for w, t in rows if week is None or w == int(week))
+
+
 def next_kickoff(season_yr, week: int, now: float | None = None) -> float | None:
     """Seconds until the next kickoff of `week`, or None if it cannot be read.
 

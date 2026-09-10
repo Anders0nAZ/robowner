@@ -9,8 +9,8 @@ waivers for Tuesday. Every one of those steps existed. The SEQUENCE did not.
 WHAT WAS ACTUALLY HAPPENING. Five gaps, all found by reading the live schedule
 rather than the code:
 
-  * `RobonerMoves` was never registered, so `--mode ros` and `--mode block` had
-    never run at all -- the .vbs existed, the scheduled task did not;
+  * `RobonerMoves` was never registered, so `--mode ros` had never run at all
+    -- the .vbs existed, the scheduled task did not;
   * `--mode patch` returns nothing unless a STARTING slot is unfillable, so a
     freed bench spot filled nothing and no code path anywhere asked "the roster
     is under 17, should we go and get somebody";
@@ -78,7 +78,10 @@ EXPORT_TIMEOUT_S = 120
 # Steps whose failure must NOT stop the chain. A stale weekly projection is
 # survivable and model_proj says so out loud; a lineup that never gets set is
 # not. Anything outside this set aborts the run.
-SOFT_STEPS = ("scout", "capture", "export", "stream", "waivers")
+# A failed odds recompute is soft: playoffs.py already reads the cached file
+# under its own MAX_AGE_H, so ros falls back to the last good odds rather than
+# to nothing, and losing the whole cascade over it would cost the lineup.
+SOFT_STEPS = ("scout", "capture", "export", "stream", "waivers", "odds")
 
 settings.apply(__name__, globals())
 
@@ -95,7 +98,7 @@ def _snapshot() -> dict:
 
 
 def pull(record: dict | None = None) -> dict:
-    """Re-pull every Sleeper input that can go stale between daily refreshes.
+    """Re-pull every input that can go stale between daily refreshes.
 
     THE DELTA IS THE POINT, not the freshness. Anything can be re-fetched; what
     a decision log needs is WHICH player changed and in which direction, and
@@ -106,6 +109,15 @@ def pull(record: dict | None = None) -> dict:
     Rosters and weekly projections are deliberately absent: season.py already
     reads those live through short in-process memos, so they are current on
     every run without anything being done to them.
+
+    SCHEDULES ARE PULLED HERE TOO, and they are not a Sleeper input. The betting
+    lines set every defence's value through streaming.expected, and the kickoff
+    times decide whether a roster move is inside the blackout at all -- so an
+    old schedule does not merely age a number, it mis-states the rule that
+    governs whether the run may act. It used to arrive once a day at 05:00 on a
+    12-hour TTL, which put an eight-hour-old line under a game-day decision;
+    measured on 9 Sep 2026, three of sixteen week-1 games had moved in that
+    window, one of them the game our own streaming target was playing in.
     """
     from robo import injuries, projarchive, refresh
     from robo import sleeper_read as api
@@ -113,6 +125,7 @@ def pull(record: dict | None = None) -> dict:
     before = _snapshot()
     out = {"players": 0, "projections": 0, "injuries": 0}
 
+    out["schedules"] = _pull_schedules()
     out["players"] = len(api.players(refresh=True))
     try:
         out["projections"] = refresh.pull_projections()
@@ -129,6 +142,54 @@ def pull(record: dict | None = None) -> dict:
     if record is not None:
         record.update(out)
     return out
+
+
+SCHEDULES_TIMEOUT_S = 60
+
+
+def _pull_schedules() -> str:
+    """Re-pull nflverse schedules, then forget what we already read from them.
+
+    A SUBPROCESS, NOT AN IMPORT -- the same rule the rest of the model wears
+    here: the artifact is the interface, so a stall next door cannot become a
+    lineup that never gets set. store.cached() writes through a .tmp and keeps
+    the existing file when a fetch fails, so the worst case is the snapshot we
+    already had, whose age the freshness check then reports.
+
+    CLEARING THE MEMOS IS HALF THE JOB. vegas._schedule and vegas._kickoffs are
+    lru_cached and the cascade is one process, so anything that read a line
+    before this ran would hold it for the rest of the run and the new file would
+    change nothing. Same move as marginal.board.cache_clear() below.
+
+    THE EXIT CODE IS NOT THE ANSWER, THE FILE IS. store.cached() catches a fetch
+    failure, keeps the snapshot it already had, prints a warning and returns it
+    -- so the process exits 0 having refreshed nothing. Verified against a dead
+    upstream on 9 Sep 2026: exit 0, "keeping existing snapshot", file untouched.
+    Trusting that would print "refreshed" over a stale line, which is the exact
+    failure this step exists to end, so freshness is read off the file's own
+    mtime and an unmoved file reports its real age.
+    """
+    from robo import vegas
+
+    def age_h() -> float | None:
+        try:
+            return (time.time() - vegas.PARQUET.stat().st_mtime) / 3600.0
+        except OSError:
+            return None
+
+    before = age_h()
+    ok, how = _model_cmd(["nflmodel.ingest.nflverse", "--refresh",
+                          "--only", "schedules"], SCHEDULES_TIMEOUT_S)
+    vegas._schedule.cache_clear()
+    vegas._kickoffs.cache_clear()
+    after = age_h()
+
+    if after is None:
+        return f"MISSING ({how})" if not ok else "MISSING"
+    if before is None or after < before:
+        return "refreshed"
+    why = how if not ok else "upstream unreachable, kept the snapshot we had"
+    return f"KEPT OLD {after:.1f}h ({why})"
 
 
 def _model_cmd(args: list[str], timeout: int) -> tuple[bool, str]:
@@ -180,8 +241,24 @@ def export_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
 # -------------------------------------------------------------------- the chain
 
 def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
-        verbose: bool = True) -> dict:
-    """The whole sequence. Returns what happened at each step."""
+        verbose: bool = True, pregame: bool = False) -> dict:
+    """The whole sequence. Returns what happened at each step.
+
+    `pregame` is the run that fires ten minutes before a kickoff slot, and it
+    skips scout. That is not a cost saving, it is the only step whose output
+    cannot reach any decision this run makes: the lineup does not read scout at
+    all, and `patch` -- the one roster move still permitted this close to a
+    kickoff -- explicitly does not weigh a return date, because an empty slot
+    scores zero and anyone startable beats it. The men scout would re-read are
+    exactly those whose designation just moved, who by definition have no
+    reporting yet. Meanwhile it is the only UNBOUNDED step in the chain, at
+    about seventeen seconds a player against a six-hundred-second budget, and
+    everything it delays -- including a surprise inactive's patch and the free
+    agent that fills the hole -- is the reason the run exists.
+
+    The daily and roster runs keep it, because that is where a date lands in
+    the valuation it was written for.
+    """
     from robo import expected, ir, lineup, model_proj, moves, refresh, ros
 
     log: list = []
@@ -204,14 +281,30 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
 
     wk = season.current_week()
     if verbose:
-        print(f"CASCADE - week {wk}, {'APPLYING' if apply else 'dry run'}\n")
+        kind = "PREGAME, " if pregame else ""
+        print(f"CASCADE - week {wk}, {kind}"
+              f"{'APPLYING' if apply else 'dry run'}\n")
 
     prec: dict = {}
     step("pull", lambda: _fmt_pull(pull(record=prec)))
-    step("scout", lambda: _scout(prec))
+    # Named and logged rather than silently absent: a step that vanishes from
+    # the output looks identical to one that never ran, and this is the log
+    # somebody reads when a lineup went wrong.
+    step("scout", (lambda: "skipped: pregame run, no decision here reads it")
+         if pregame else (lambda: _scout(prec)))
     step("capture", lambda: capture_week(wk)[1])
     step("export", lambda: export_week(wk)[1])
     step("model", lambda: refresh.pull_model())
+
+    # BEFORE rebuild, because ros.py reads these odds to weight weeks 15-17 and
+    # marginal.py reads them as p_playoffs when it prices a move. Recomputed
+    # every run rather than once a day: the odds move on results and on the
+    # lineups every team can now field, and a decision taken on this morning's
+    # odds is taken on last night's league. It is the most expensive step here
+    # -- 6.9s at week 1, of which strength() is 2.6s optimising twelve lineups
+    # across fourteen remaining weeks -- and it gets cheaper every week as the
+    # schedule drains, roughly 0.18s per remaining regular week.
+    step("odds", lambda: refresh.build_playoff_odds())
 
     # Rebuilt here so every decision below reads ONE vintage. Cheap enough that
     # there is no reason not to: expected.build() measures about two seconds.
@@ -294,6 +387,8 @@ def _fmt_pull(p: dict) -> str:
     ch = p.get("changed") or []
     bits = [f"{p['players']} players", f"{p['projections']} projections",
             f"{p['injuries']} injury rows"]
+    if p.get("schedules") and p["schedules"] != "refreshed":
+        bits.append(f"schedules {p['schedules']}")
     if p.get("projections_error"):
         bits.append(f"projections KEPT OLD ({p['projections_error']})")
     if p.get("injuries_error"):
@@ -436,8 +531,10 @@ def main():
     ap = argparse.ArgumentParser(description="the in-season chain, in order")
     ap.add_argument("--apply", action="store_true",
                     help="actually set the lineup and submit roster moves")
+    ap.add_argument("--pregame", action="store_true",
+                    help="minutes before kickoff: skip scout (see run.__doc__)")
     a = ap.parse_args()
-    d = run(apply=a.apply)
+    d = run(apply=a.apply, pregame=a.pregame)
     print(f"\nweekly projection in use: {d['weekly_projection']}")
     bad = [s for s in d["steps"] if not s["ok"]]
     if bad:

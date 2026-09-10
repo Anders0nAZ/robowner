@@ -680,8 +680,8 @@ def drop_price(pid: str, league_id: str = LEAGUE_ID_2026) -> float:
     puts him above six of our starters, because it can see the worlds where our
     other two quarterbacks are not there. The ordering was exactly inverted.
 
-    Our roster only. Another manager's bench cannot be priced this way -- we do
-    not know who he would start -- so the blocking test keeps ros.hold.
+    Our roster only. A man the board does not carry prices at zero here and
+    falls back to ros.hold in value.hold_of.
     """
     b = board(league_id)
     if pid not in b.mine:

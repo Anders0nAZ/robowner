@@ -140,12 +140,12 @@ def capture_projections():
     return f"{len(snap['weeks'])} weeks, {n} player-weeks, {sb} season rows"
 
 
-@step("playoff-odds")
-def refresh_playoff_odds():
+def build_playoff_odds() -> str:
     """P(we make the playoffs), which weights every playoff week in ros.py.
 
-    Before the board, because ros.py reads these odds and the board does not
-    read ros.
+    Split out of the @step wrapper for the same reason pull_projections() was:
+    robo/cascade.py recomputes this on every in-season run, and it needs the
+    detail string and a real exception rather than the wrapper's True/False.
     """
     from robo import playoffs
     d = playoffs.simulate()
@@ -153,6 +153,14 @@ def refresh_playoff_odds():
     playoffs.CACHE.write_text(_json.dumps(d, indent=1), encoding="utf-8")
     ours = (d.get("odds") or {}).get(d.get("ours") or "", 0)
     return f"{len(d.get('odds') or {})} teams, ours {ours:.1%}"
+
+
+@step("playoff-odds")
+def refresh_playoff_odds():
+    """Before the board, because ros.py reads these odds and the board does not
+    read ros.
+    """
+    return build_playoff_odds()
 
 
 @step("injuries")

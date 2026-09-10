@@ -28,8 +28,6 @@ legality is not a matter of degree. It is implemented as four modes:
             lottery ticket belongs. This is the step that catches the slot an IR
             move just freed.
     ros     ordinary upgrades on the rest-of-season number. The default.
-    block   nothing cleared for us, we have a spare turnable slot, and somebody
-            on the wire would visibly improve an opponent.
 
 ADDS AND DROPS ARE PRICED OFF DIFFERENT NUMBERS, ON PURPOSE. An add is judged
 on `mean` -- what he is worth to us. A drop is judged on `hold` -- `mean` plus
@@ -40,8 +38,9 @@ start him in December. See robo/ros.py.
 NO LONG-HORIZON MOVE NEAR KICKOFF. A rest-of-season swap made forty minutes
 before the early games is a decision taken on this week's panic with the season's
 consequences, and there is no reason it could not have been made on Tuesday. So
-`ros` and `block` refuse inside ROS_MOVE_BLACKOUT_H of the next kickoff, and say
-so out loud -- a silent no-op would be indistinguishable from "nothing cleared".
+Everything but `patch` refuses inside ROS_MOVE_BLACKOUT_H of the next kickoff,
+and says so out loud -- a silent no-op would be indistinguishable from "nothing
+cleared".
 `patch` is exempt, because that is the emergency the hour actually justifies.
 
 THE WAIVER MECHANIC THIS IS BUILT AROUND. A losing claim costs nothing: no FAAB,
@@ -106,9 +105,9 @@ MAX_SLOTS_TO_TURN_OVER = 2
 # bounded by how many candidates are plausibly worth the slot, not by risk.
 SLATE_DEPTH = 5
 
-# Hours before the next kickoff inside which `ros` and `block` stop running.
-# Six covers a Sunday morning: the daily job fires at 07:00 local and the early
-# games start at 10:00 Phoenix time.
+# Hours before the next kickoff inside which `ros` stops running. Six covers a
+# Sunday morning: the daily job fires at 07:00 local and the early games start
+# at 10:00 Phoenix time.
 ROS_MOVE_BLACKOUT_H = 6.0
 
 # How far ahead to look for a week we cannot field a legal lineup in. Three is
@@ -116,16 +115,9 @@ ROS_MOVE_BLACKOUT_H = 6.0
 # turned over before it matters.
 BYE_LOOKAHEAD_WEEKS = 3
 
-# How much a free agent must improve an OPPONENT before denying him is worth a
-# roster spot, and the most we will ever bid to do it. Blocking is the third
-# priority and must stay cheap: a slot spent on a player we will never start is
-# a slot we do not have when our own need appears.
-BLOCK_MIN_DENY = 40.0
-BLOCK_MAX_BID = 3
-
 settings.apply(__name__, globals())
 
-MODES = ("patch", "fill", "stream", "ros", "block")
+MODES = ("patch", "fill", "stream", "ros")
 
 
 # ------------------------------------------------------------------ evaluation
@@ -205,63 +197,44 @@ def holes(ctx: dict) -> list[dict]:
     return out
 
 
-def hold_value(row: dict, ctx: dict, mine: bool = True) -> float:
-    """What we give up by cutting him.
+def hold_value(row: dict, ctx: dict) -> float:
+    """What we give up by cutting him, priced by SIMULATION.
 
-    OUR OWN MEN ARE PRICED BY SIMULATION; everyone else's are not. ros.hold made
-    Carson Beck the cheapest man on our roster to drop at 0.4 while the simulator
-    prices him at 37.5, above six of our starters -- the ordering was inverted,
-    and that is the bug that produced "the bot tried to drop Carson Beck".
-
-    Another manager's bench cannot be priced the same way, because we do not know
-    who he would start, so the blocking test keeps the old number and that is a
-    limit rather than an oversight.
+    ros.hold made Carson Beck the cheapest man on our roster to drop at 0.4
+    while the simulator prices him at 37.5, above six of our starters -- the
+    ordering was inverted, and that is the bug that produced "the bot tried to
+    drop Carson Beck".
     """
-    v, _ = value.hold_of(row, ctx["week"], mine=mine)
+    v, _ = value.hold_of(row, ctx["week"])
     return v
 
 
-def droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
-    """Cached for our OWN roster, which is what the planners ask for repeatedly.
+def droppables(ctx: dict) -> list[dict]:
+    """Cached, because the planners ask for it repeatedly.
 
     Each entry is a simulated drop price at ~6s, so seven of them is 39 seconds,
     and plan_free, plan_claims and priced all ask independently. The cache lives
     on ctx rather than in a module-level dict so it cannot outlive the run that
     built it -- a stale drop price would be a silently wrong decision, not a
-    slow one. An explicit `roster` is somebody else's bench and never cached.
+    slow one.
     """
-    if roster is None and "_droppables" in ctx:
-        return ctx["_droppables"]
-    out = _droppables(ctx, roster)
-    if roster is None:
-        ctx["_droppables"] = out
-    return out
+    if "_droppables" not in ctx:
+        ctx["_droppables"] = _droppables(ctx)
+    return ctx["_droppables"]
 
 
-def _droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
+def _droppables(ctx: dict) -> list[dict]:
     """Who could be cut, worst first, priced on HOLD.
 
-    Two independent guards on our own roster, because they fail differently. A
-    current starter is excluded outright -- if the optimizer is starting him this
-    week, cutting him is incoherent regardless of what any number says.
-    DROP_FLOOR is the backstop for the number itself being wrong.
-
-    `roster` prices somebody else's bench for the blocking test. Their starters
-    are not knowable week to week, so their top ten by value stand in; the
-    question there is only "how bad is their worst spare", which does not need
-    to be exact.
+    Two independent guards, because they fail differently. A current starter is
+    excluded outright -- if the optimizer is starting him this week, cutting him
+    is incoherent regardless of what any number says. DROP_FLOOR is the backstop
+    for the number itself being wrong.
     """
-    mine = roster is None
-    r = roster or ctx["roster"]
+    r = ctx["roster"]
     ids = list(r.get("players") or [])
     reserve = set(r.get("reserve") or [])
-    if mine:
-        protected = ctx["starters"] | reserve
-    else:
-        ranked = sorted((p for p in ids if p not in reserve),
-                        key=lambda p: -hold_value(ctx["by_id"].get(p) or {"player_id": p},
-                                                  ctx, mine=False))
-        protected = set(ranked[:len(lineup.SLOTS)]) | reserve
+    protected = ctx["starters"] | reserve
 
     out = []
     for pid in ids:
@@ -270,11 +243,11 @@ def _droppables(ctx: dict, roster: dict | None = None) -> list[dict]:
         row = ctx["by_id"].get(pid)
         if not row:
             continue
-        v = hold_value(row, ctx, mine=mine)
+        v = hold_value(row, ctx)
         # In patch mode a hole in the lineup is a certain loss this week and an
         # inheritance is a maybe, so the floor and the rising-role premium both
         # yield -- but only far enough to reach the cheapest bodies we hold.
-        if mine and ctx["mode"] != "patch" and v > DROP_FLOOR:
+        if ctx["mode"] != "patch" and v > DROP_FLOOR:
             continue
         out.append({"row": row, "value": v})
     return sorted(out, key=lambda d: d["value"])
@@ -299,30 +272,6 @@ def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[di
         v, real = value.value_of(row, ctx["week"])
         out.append({"row": row, "value": v, "real": real})
     return sorted(out, key=lambda d: (-d["value"], d["row"]["player_id"]))
-
-
-def deny_value(ctx: dict, pid: str) -> tuple[float, str]:
-    """How much a free agent would improve the best-placed opponent.
-
-    The blocking test, and the reason it is priority THREE: this is a benefit to
-    us only in the sense that it is a cost to somebody else, and it is priced on
-    their bench, which we can only estimate.
-    """
-    row = ctx["by_id"].get(pid)
-    if not row:
-        return 0.0, ""
-    v, _ = value.value_of(row, ctx["week"])
-    best, who = 0.0, ""
-    for r in season.live_rosters(ctx["league_id"]):
-        if r.get("owner_id") == ctx["roster"].get("owner_id"):
-            continue
-        theirs = droppables(ctx, roster=r)
-        if not theirs:
-            continue
-        gain = v - theirs[0]["value"]
-        if gain > best:
-            best, who = gain, f"roster {r['roster_id']}"
-    return round(best, 1), who
 
 
 # -------------------------------------------------------------------- channels
@@ -460,23 +409,6 @@ def plan_free(ctx: dict) -> list[dict]:
 
     if mode == "fill" and slots <= 0:
         return []
-
-    if mode == "block":
-        for d in drops[:1]:  # blocking only ever spends the LAST turnable slot
-            for c in pool:
-                pid = c["row"]["player_id"]
-                if pid in used:
-                    continue
-                deny, who = deny_value(ctx, pid)
-                if deny < BLOCK_MIN_DENY:
-                    continue
-                used.add(pid)
-                out.append({"add": c["row"], "drop": d["row"],
-                            "gain": round(deny, 1), "add_value": c["value"],
-                            "drop_value": d["value"], "real": c["real"],
-                            "why": f"denies {who} a {deny:.0f}-point upgrade"})
-                break
-        return out
 
     if mode == "patch":
         # A patch is not an upgrade decision: an empty slot scores zero, so

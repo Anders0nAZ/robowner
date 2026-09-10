@@ -96,12 +96,13 @@ The three public pages and this publisher. Every consequential action writes a r
 
 ## Keeping it running
 
-The daily pipeline, the tunable settings behind it, and the two local apps: one that edits the settings, one that explains the decisions.
+The daily pipeline, the job that puts a decision run in front of every kickoff, the tunable settings behind both, and the two local apps: one that edits the settings, one that explains the decisions.
 
 | module | what it does |
 |---|---|
 | [`__init__.py`](running/__init__.py) | RURFFL Robo Owner - AI franchise manager for the R U Ready 4 Some Football?! league. |
 | [`refresh.py`](running/refresh.py) | Daily data refresh — keeps the AI owner's world current without a human. |
+| [`prekick.py`](running/prekick.py) | Put the decision cascade in front of every kickoff, not on a wall clock. |
 | [`settings.py`](running/settings.py) | Tunable settings: one registry, a JSON override file, and a revert checkpoint. |
 | [`admin_gui.py`](running/admin_gui.py) | Roboner admin GUI — the tunable settings, with what each one does. |
 | [`audit_gui.py`](running/audit_gui.py) | Roboner audit — deep-dive the modules and the decisions. |

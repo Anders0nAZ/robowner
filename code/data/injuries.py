@@ -300,6 +300,22 @@ def since(pid: str, week: int, season_yr=None) -> int:
     return max(0, int(week) - int(w0))
 
 
+def _is_status_token(text: str) -> bool:
+    """ESPN's placeholder for a player it has no reporting on.
+
+    Where ESPN has nothing written, both comment fields come back as the status
+    itself -- 'questionable', 'ir', 'out', 'nfi-r', 'reserve-sus'. Measured over
+    the whole feed on 9 Sep 2026: 116 of 800 items are this, every one a single
+    token with shortComment == longComment, and no genuine comment is a single
+    token -- the shortest real one, "The Lions signed Conklin on Tuesday.", has
+    spaces. Whitespace is therefore the entire test, and it does not depend on
+    the token matching `designation`, which it does not always do ('ir' against
+    IR-R, 'nfi-r' against ESPN's own status of 'out').
+    """
+    t = (text or "").strip()
+    return bool(t) and not any(c.isspace() for c in t)
+
+
 def prose(pid: str) -> list[dict]:
     """ESPN's own reporting on him, in the shape scout.py's corpus uses.
 
@@ -307,11 +323,22 @@ def prose(pid: str) -> list[dict]:
     reporter who broke it, `longComment` is the analyst's read of what it means
     for his role. They answer different questions and the second is where a
     date beyond the eligibility floor actually appears.
+
+    A PLACEHOLDER IS NOT REPORTING, and passing one on costs twice. It reaches
+    scout.py as an item whose whole text is the designation, which the bundle
+    has already stated as structured fact -- so the model is invited to
+    re-derive from "prose" the one thing the prompt tells it is settled. And it
+    carries the feed's refresh time, so it moves the fingerprint and buys a full
+    re-judge that can only return what was already on file. Egbuka on 9 Sep:
+    'questionable' twice, newest real reporting two days older, verdict
+    unchanged at neutral. The designation still reaches the fingerprint on its
+    own, so dropping this loses no signal -- an IR placement with no story
+    attached still re-judges him.
     """
     r = row(pid)
     out = []
     for key, kind in (("short", "report"), ("long", "analysis")):
-        if r.get(key):
+        if r.get(key) and not _is_status_token(r[key]):
             out.append({"source": f"ESPN ({kind})", "published": r.get("as_of"),
                         "title": r[key]})
     return out

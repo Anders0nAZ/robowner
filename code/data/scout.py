@@ -323,6 +323,28 @@ def _prompt(bundles: list[dict]) -> str:
             + "\n\nReturn a verdict for every player_id above, and only those.")
 
 
+def _substantive(n: dict) -> bool:
+    """Does this item carry reporting, or is it a status wearing a headline?
+
+    An item with a body is always reporting. One with only a title is reporting
+    only if that title is prose: a single token is a designation echo, which
+    arrives stamped with the source feed's refresh time rather than a report
+    time, so hashing it re-judges a player every time the feed is touched in
+    order to re-derive a fact `designation` already carries. Eighteen of the 94
+    players re-judged on the morning of 9 Sep 2026 had no other new input.
+
+    This is a filter on the FINGERPRINT, not on the corpus. A screen over the
+    corpus was measured the same day and refuted -- the tightest one that saved
+    real time dropped 7 of 38 signal-carrying rows -- and the difference is that
+    a player skipped here keeps the verdict he already has, while a player
+    dropped from the corpus has none at all.
+    """
+    if n.get("description") or n.get("analysis"):
+        return True
+    t = (n.get("title") or "").strip()
+    return bool(t) and any(c.isspace() for c in t)
+
+
 def fingerprint(b: dict) -> str:
     """Stable hash of what we know about a player, so an unchanged man is free.
 
@@ -330,13 +352,27 @@ def fingerprint(b: dict) -> str:
     reserve with no accompanying story is the single most important thing that
     can happen to his valuation, and a fingerprint over the roto wire alone
     would call that "nothing has changed" and reuse a verdict formed while he
-    was healthy.
+    was healthy. That is also what makes it safe to ignore an empty news item
+    below: the designation reaches this hash on its own, by the front door.
+
+    FACTS ONLY, NO TIMESTAMPS. `as_of` used to be hashed here and it is the date
+    ESPN last touched the row, not a claim about the player -- so it moved on a
+    restamp of a row whose readable content was identical, and it moved in
+    lockstep with the placeholder comment stamped from it, which is how one
+    empty item bought a re-judge through two doors at once. Everything a restamp
+    could actually be telling us is already hashed as a fact: the designation,
+    the eligibility floor, whether he is done for the year, and any real prose,
+    which arrives through `news`. `injury` replaces it because it was in neither
+    hash and is a genuine change -- Egbuka went from Sleeper's 'Undisclosed' to
+    ESPN's 'Toe', which is worth re-reading and used to trigger nothing.
+    (`injuries.since()` still dates the survival curve from `as_of`; this is
+    only what counts as news.)
     """
     import hashlib
     news = "|".join(sorted(f"{n.get('published')}:{n.get('title')}"
-                           for n in (b.get("news") or [])))
+                           for n in (b.get("news") or []) if _substantive(n)))
     key = "|".join(str(x) for x in (news, b.get("designation"),
-                                    b.get("eligible_week"), b.get("as_of"),
+                                    b.get("eligible_week"), b.get("injury"),
                                     b.get("out_for_season")))
     return hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
 
@@ -445,7 +481,18 @@ def write_verdicts(verdicts: list[dict], model: str,
                    bundles: list[dict] | None = None,
                    reuse: dict | None = None) -> dict:
     """Persist with provenance. The provenance is not decoration: it is what
-    distinguishes a verdict the bot formed from one somebody typed."""
+    distinguishes a verdict the bot formed from one somebody typed.
+
+    WRITTEN THROUGH A TEMP FILE, because a torn write here fails SILENTLY and
+    catastrophically. load_verdicts() swallows a parse error and returns {}, so
+    a truncated file does not raise -- it reads as "no verdicts exist", which
+    resets every news multiplier to 1.000 and drops every return date on file,
+    with nothing anywhere reporting it. This is not hypothetical: scout runs for
+    thirty to fifty minutes inside RobonerRefresh, and that task has already
+    been terminated mid-pipeline once by its own ExecutionTimeLimit. Same rule
+    as the NFL Model's store.cached() and robo/refresh.py: never leave a
+    half-written file where a whole one used to be.
+    """
     fps = {b["player_id"]: fingerprint(b) for b in (bundles or [])}
     now = time.time()
     fresh = {}
@@ -460,7 +507,9 @@ def write_verdicts(verdicts: list[dict], model: str,
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "judged_now": len(fresh), "reused": len(reuse or {}),
            "verdicts": merged}
-    VERDICTS.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp = VERDICTS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp.replace(VERDICTS)
     return out
 
 

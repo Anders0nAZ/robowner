@@ -496,6 +496,22 @@ REGISTRY: list[S] = [
       "export, so the pre-kickoff refreshes tighten it in practice without "
       "this having to know the kickoff schedule.",
       bounds=(1.0, 168.0), unit="hours"),
+    S(LINEUP, "robo.prekick", "LEAD_MIN", int,
+      "How long before a kickoff slot the decision cascade runs.",
+      "The whole point of the pre-kickoff run is to decide on data that is "
+      "minutes old rather than hours, so lowering this buys freshness. It "
+      "cannot go too low: the cascade takes about twenty seconds and Sleeper "
+      "locks each player at his own kickoff, so anything under a couple of "
+      "minutes risks deciding after the lock. Kept just behind the NFL Model's "
+      "own fifteen-minute capture so the two jobs do not contend.",
+      bounds=(2, 120), unit="minutes"),
+    S(LINEUP, "robo.prekick", "SLOT_WINDOW_MIN", int,
+      "How close two kickoffs must be to count as one slot.",
+      "A Sunday 16:05 and 16:25 are one run at thirty. Lowering it splits them "
+      "into separate runs, which is more current for the later games and more "
+      "work for no gain on the earlier ones; raising it eventually folds the "
+      "afternoon into the morning and decides the late games on stale data.",
+      bounds=(0, 120), unit="minutes"),
     S(LINEUP, "robo.lineup", "SLOTS", list,
       "The starting lineup's slots, in Sleeper's order.",
       "STRUCTURAL -- a fact about the league. The submitted starters array is "
@@ -582,7 +598,7 @@ REGISTRY: list[S] = [
       "Hours before kickoff when long-horizon roster moves stop.",
       "A rest-of-season swap made an hour before the early games is this week's "
       "panic with the season's consequences, and nothing about it could not have "
-      "waited for Tuesday. Only `ros` and `block` are held; `patch` still runs, "
+      "waited for Tuesday. Everything but `patch` is held; that one still runs, "
       "because an unfillable starting slot is the emergency the hour justifies. "
       "Set to 0 to remove the brake entirely.",
       bounds=(0.0, 48.0), unit="hours"),
@@ -591,17 +607,6 @@ REGISTRY: list[S] = [
       "Raising it pre-empts byes earlier at the cost of holding cover we may not "
       "need; the wire turns over, so cover bought five weeks out is often wasted.",
       bounds=(0, 6), unit="weeks"),
-    S(ROSTER, "robo.moves", "BLOCK_MIN_DENY", float,
-      "How much a free agent must improve an OPPONENT before denying him.",
-      "Blocking is the third priority and buys us nothing directly -- the gain is "
-      "purely somebody else's loss, priced on a bench we can only estimate. Set "
-      "it low and the bot spends roster spots on players it will never start.",
-      bounds=(0.0, 300.0), unit="points"),
-    S(ROSTER, "robo.moves", "BLOCK_MAX_BID", int,
-      "The most FAAB a purely defensive claim may spend.",
-      "Denial is worth a roster spot occasionally and real budget almost never. "
-      "Budget spent here is budget missing when our own need appears.",
-      bounds=(0, 50), unit="FAAB"),
     S(ROSTER, "robo.ros", "UPSIDE_WEIGHT", float,
       "How hard the rising-role premium protects a player from being dropped.",
       "THE ROOKIE-HOLD DIAL. At 0 an add and a drop are priced off the same "
