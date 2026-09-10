@@ -26,6 +26,8 @@ import requests
 from robo import DATA, MODEL_ROOT, RAW, ROOT
 
 LOG = ROOT / "refresh.log"
+FAILURES = DATA / "refresh_failures.json"
+ALERT_AFTER_FAILURES = 2
 
 
 def _log(msg: str) -> None:
@@ -35,16 +37,56 @@ def _log(msg: str) -> None:
         f.write(line + "\n")
 
 
+def _track_failure(name: str, ok: bool) -> int:
+    """Persist consecutive refresh failures so a stale input cannot be silent."""
+    try:
+        state = json.loads(FAILURES.read_text(encoding="utf-8")) if FAILURES.exists() else {}
+        if not isinstance(state, dict):
+            state = {}
+    except Exception:
+        state = {}
+    if ok:
+        state.pop(name, None)
+        count = 0
+    else:
+        count = int(state.get(name, 0)) + 1
+        state[name] = count
+    try:
+        FAILURES.write_text(json.dumps(state, indent=1), encoding="utf-8")
+    except Exception:
+        pass
+    return count
+
+
+def _alert_repeated_failure(name: str, count: int, detail: str) -> None:
+    """Escalate only repeated failures; alerts.blast itself never raises."""
+    if count < ALERT_AFTER_FAILURES:
+        return
+    try:
+        from robo import alerts
+        alerts.blast(
+            f"Roboner refresh alert: {name} failed {count} consecutive runs: {detail[:120]}",
+            key=f"refresh-{name}", cooldown=23 * 3600,
+            channels=alerts.INSEASON_CHANNELS,
+        )
+    except Exception:
+        pass
+
+
 def step(name):
     def deco(fn):
         def wrapped(*a, **kw):
             t0 = time.time()
             try:
                 out = fn(*a, **kw)
+                _track_failure(name, True)
                 _log(f"{name}: OK {out if out is not None else ''} ({time.time()-t0:.1f}s)")
                 return True
             except Exception as e:
-                _log(f"{name}: FAILED — {str(e)[:200]}")
+                detail = str(e)[:200]
+                count = _track_failure(name, False)
+                _log(f"{name}: FAILED — {detail} (consecutive {count})")
+                _alert_repeated_failure(name, count, detail)
                 return False
         return wrapped
     return deco
@@ -290,10 +332,23 @@ def rebuild_board():
 
 @step("chat-memory")
 def ingest_chat():
+    """Ingest new chat, then embed EVERYTHING still missing an embedding.
+
+    THE BACKLOG USED TO BE UNREACHABLE. This ran build_embeddings only when the
+    ingest brought something new, which is fine on the happy path and a trap on
+    any other: a batch that failed to embed left messages in the table with no
+    vector, and the next quiet day skipped the retry rather than finishing the
+    job. Thirty-two messages sat unembedded and unsearchable for two days for
+    exactly that reason, and nothing would have picked them up until new chat
+    happened to arrive.
+
+    build_embeddings only ever looks at what is missing, so calling it
+    unconditionally costs one indexed query when there is nothing to do.
+    """
     from robo import chat_memory
     gm = chat_memory.ingest_groupme()
     sl = chat_memory.ingest_sleeper_chat()
-    emb = chat_memory.build_embeddings() if (gm or sl) else 0
+    emb = chat_memory.build_embeddings()
     return f"+{gm} groupme, +{sl} sleeper, {emb} embedded"
 
 

@@ -250,7 +250,10 @@ def week_points(week: int, season: str = SEASON,
         out[row["player_id"]] = {
             "pts": custom_points(stats, sc) if gid else 0.0,
             "has_game": bool(gid) and gs.get(gid) != "canceled",
-            "locked": bool(gid) and gs.get(gid, MOVABLE_GAME_STATUS) != MOVABLE_GAME_STATUS,
+            # A canceled game has no kickoff and therefore cannot freeze a
+            # lineup slot.  It is still correctly reported as no game above.
+            "locked": (bool(gid) and gs.get(gid) != "canceled"
+                       and gs.get(gid, MOVABLE_GAME_STATUS) != MOVABLE_GAME_STATUS),
             "opponent": row.get("opponent"),
             "game_id": gid,
             "date": row.get("date"),

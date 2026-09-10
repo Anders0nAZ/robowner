@@ -519,7 +519,7 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     thirty-two; in week 1 the top two were both rostered and the best gettable
     was fourth. A streamer on the raw board proposes moves Sleeper refuses.
     """
-    from robo import streaming, value
+    from robo import season, streaming, value
     from robo import sleeper_read as api
     ctx = moves._context(league_id, mode="stream")
     players = ctx["players"]
@@ -527,7 +527,12 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
             if (players.get(p) or {}).get("position") == "DEF"]
     if not held:
         return "we hold no defence; patch owns an empty slot"
-    ours = (players.get(held[0]) or {}).get("team") or held[0]
+    # `starters` is positional, so prefer the defence currently occupying the
+    # slot over arbitrary roster order when a team has two defences.
+    ours_id = next((pid for pid in held if pid in set(ctx["roster"].get("starters") or [])), held[0])
+    ours = (players.get(ours_id) or {}).get("team") or ours_id
+    if (season.week_points(wk).get(ours_id) or {}).get("locked"):
+        return f"hold {ours}: locked in the current DEF slot and cannot be dropped"
     d = streaming.swap(wk, ours, league_id)
     if not d.get("best"):
         return d["why"]
@@ -537,8 +542,8 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     best = d["best"]["team"]
     plan = [{"add": {"player_id": best, "name": api.player_name(players, best),
                      "pos": "DEF"},
-             "drop": {"player_id": held[0],
-                      "name": api.player_name(players, held[0]), "pos": "DEF"},
+             "drop": {"player_id": ours_id,
+                      "name": api.player_name(players, ours_id), "pos": "DEF"},
              "gain": d["gain"], "add_value": round(d["best"]["pts"], 2),
              "drop_value": round(d["mine"]["pts"], 2), "real": True,
              "why": d["why"]}]

@@ -125,17 +125,20 @@ def kickoffs(season_yr, week: int | None = None) -> tuple:
 
 
 def next_kickoff(season_yr, week: int, now: float | None = None) -> float | None:
-    """Seconds until the next kickoff of `week`, or None if it cannot be read.
+    """Seconds until the next kickoff; infinity means this week's games ended.
 
-    None means UNKNOWN, and every caller must treat unknown as "too close to
-    risk it" rather than "plenty of time" -- the whole point of the rule this
-    feeds is to not make a long-horizon decision minutes before a game.
+    None means UNKNOWN (the schedule could not be read), and every caller must
+    treat that as "too close to risk it".  A readable week with no kickoff
+    ahead is distinct: its games are done and the blackout is clear.
     """
     import time as _time
     now = now if now is not None else _time.time()
-    ahead = [t for w, t in _kickoffs(int(season_yr)) if w == week and t > now]
-    if not ahead:
+    rows = _kickoffs(int(season_yr))
+    if not rows:
         return None
+    ahead = [t for w, t in rows if w == week and t > now]
+    if not ahead:
+        return float("inf")
     return min(ahead) - now
 
 

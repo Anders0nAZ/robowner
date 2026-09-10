@@ -68,7 +68,8 @@ def may_submit() -> bool:
     return bool(VALUATION_READY and SUBMIT_ENABLED)
 
 
-def ros_value(player_id: str, week: int, field: str = "mean") -> float:
+def ros_value(player_id: str, week: int, field: str = "mean",
+              table: dict | None = None) -> float:
     """What this player is worth from `week` to the end of the season.
 
     EXPECTED IS THE VALUATION; ros.json PRICES WHAT IT DOES NOT MODEL. Pointing
@@ -91,7 +92,8 @@ def ros_value(player_id: str, week: int, field: str = "mean") -> float:
     """
     try:
         from robo import expected
-        row = (expected.load().get("players") or {}).get(str(player_id))
+        d = table if table is not None else expected.load()
+        row = (d.get("players") or {}).get(str(player_id))
         if row and row.get("ros") is not None:
             return float(row["ros"])
     except Exception as e:
@@ -163,10 +165,11 @@ def provisional(row: dict) -> float:
     return float(row.get("blend_pts") or row.get("proj_pts") or 0.0)
 
 
-def value_of(row: dict, week: int, field: str = "mean") -> tuple[float, bool]:
+def value_of(row: dict, week: int, field: str = "mean",
+             table: dict | None = None) -> tuple[float, bool]:
     """(value, is_real). Callers must surface `is_real` to the reader."""
     if ready():
-        return ros_value(row["player_id"], week, field), True
+        return ros_value(row["player_id"], week, field, table=table), True
     return provisional(row), False
 
 

@@ -501,7 +501,8 @@ def find(name: str, table: dict | None = None) -> list[str]:
 
 # ------------------------------------------------------------------ the trace
 
-def trace(name: str = "", player_id: str | None = None) -> str:
+def trace(name: str = "", player_id: str | None = None,
+          table: dict | None = None) -> str:
     """The walkthrough behind one player's number.
 
     BY ID WHEREVER THE CALLER HAS ONE. Names are not unique and the collisions
@@ -510,7 +511,12 @@ def trace(name: str = "", player_id: str | None = None) -> str:
     the row the reader is looking at. find() stays for the CLI, where a name is
     all anybody types.
     """
-    d = load()
+    # Audit callers pass the exact snapshot they rendered. Calling load() here
+    # can self-heal a stale cache by rebuilding it, which would make the trace
+    # explain a different vintage from the row above it and make a nominally
+    # read-only audit page write data/expected.json. CLI callers still get the
+    # normal freshness gate by omitting `table`.
+    d = table if table is not None else load()
     if player_id:
         r = (d.get("players") or {}).get(str(player_id))
         if not r:

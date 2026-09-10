@@ -186,8 +186,24 @@ def rank_week(week: int, season_yr=None, pos: str = "DEF") -> list[dict]:
     drv = DRIVER.get(pos)
     if not drv:
         return []
+    # Market lines persist after a game ends.  They are useful history, but not
+    # a streamable matchup; only a Sleeper pre-game team can be ranked here.
+    states = {}
+    try:
+        for game in _season.schedule(str(yr)):
+            if int(game.get("week", -1)) != week:
+                continue
+            state = game.get("status")
+            for team in (game.get("home"), game.get("away")):
+                if team:
+                    states[vegas.team_code(team)] = state
+    except Exception:
+        # A missing status feed must not discard the market board entirely.
+        states = {}
     out = []
     for team, d in vegas.implied_totals(yr, week).items():
+        if states.get(vegas.team_code(team), "pre_game") != "pre_game":
+            continue
         e = expected(pos, d[drv])
         if e is None:
             continue

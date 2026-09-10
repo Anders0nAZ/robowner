@@ -12,10 +12,12 @@ value.py warns about for the gate itself.
 Kickers and team defences are absent, because expected.py models neither -- they
 refill from the wire every week and are priced by robo/streaming.py instead.
 
-The one thing this page computes live is the inheritance chain, because
-roles.py's panel is lru_cached and cheap. It is recorded through the real code
-path (`upside_of(..., record=...)`), not reimplemented.
+The page reads the file directly rather than through expected.load(). That
+loader may rebuild and overwrite a stale artifact; an audit must keep one
+snapshot under the table and its trace, and this app promises not to change it.
 """
+
+import json
 
 import pandas as pd
 import streamlit as st
@@ -27,11 +29,11 @@ ui.gate_banner(st)
 
 
 @st.cache_data(ttl=600, show_spinner="Reading the rest-of-season table…")
-def board() -> tuple[list, dict]:
-    d = expected.load()
+def board() -> tuple[list, dict, dict]:
+    d = json.loads(expected.CACHE.read_text(encoding="utf-8"))
     rows = list((d.get("players") or {}).values())
     meta = {k: v for k, v in d.items() if k != "players"}
-    return rows, meta
+    return rows, meta, d
 
 
 @st.cache_data(ttl=600, show_spinner="Reading rosters from Sleeper…")
@@ -51,23 +53,26 @@ def ownership() -> dict:
 
 
 @st.cache_data(ttl=600, show_spinner="Walking the calculation…")
-def trace_for(pid: str) -> str:
+def trace_for(pid: str, table: dict) -> str:
     # By ID, never by name. "Josh Allen" is a quarterback and a linebacker, and
     # re-resolving the name here picked the linebacker while the table above
     # showed the quarterback.
-    #
-    # reasons=True because this app is local and unredacted by design -- it is
-    # where the sentence behind a scout verdict is supposed to be readable. The
-    # default is off for skills.py, which answers the same question in the
-    # league chat.
-    return expected.trace(player_id=pid)
+    return expected.trace(player_id=pid, table=table)
 
 
-rows, meta = board()
+try:
+    rows, meta, snapshot = board()
+except Exception as e:
+    st.error(f"data/expected.json is unreadable: {type(e).__name__}: {e}")
+    st.stop()
 if not rows:
-    st.error("data/expected.json is empty or unreadable. Rebuild with "
+    st.error("data/expected.json is empty. Rebuild with "
              "`python -m robo.expected --rebuild`.")
     st.stop()
+if meta.get("schema") != expected.SCHEMA:
+    st.warning(f"This is schema {meta.get('schema', '?')}; the running engine "
+               f"expects schema {expected.SCHEMA}. The page is showing the "
+               "snapshot as-is and will not rebuild it.")
 
 own = ownership()
 wk = meta.get("week")
@@ -77,9 +82,9 @@ c[0].metric("Week", wk)
 c[1].metric("Players", len(rows))
 c[2].metric("Computed", ui.fmt_age(meta.get("computed")))
 c[3].metric("Playoff weeks weighted",
-            " / ".join(f"{ros.weight_of(meta, w):.2f}" for w in (15, 16, 17)))
+            "·".join(f"{ros.weight_of(meta, w):.2f}" for w in (15, 16, 17)))
 st.caption(
-    f"Built from Sleeper's weekly feed for weeks {wk}-17, each week's role read "
+    f"Built for week {wk} onward from Sleeper's weekly feed, each week's role read "
     f"from robo/roles.py and each week's availability from the ESPN floor, then "
     f"calibrated to the season projection. Kickers and defences are absent by "
     f"design: they refill from the wire weekly and robo/streaming.py prices them.")
@@ -259,4 +264,4 @@ with st.expander("Show the full trace", expanded=False):
     st.caption("Every stage from the feeds to the printed total, with the file "
                "each value came from. Same text as "
                f"`python -m robo.expected --explain \"{pick}\"`.")
-    ui.trace_block(st, trace_for(row["player_id"]))
+    ui.trace_block(st, trace_for(row["player_id"], snapshot))

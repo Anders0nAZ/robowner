@@ -143,6 +143,7 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
             served = sum(c[2] for c in wk.values())
             rate = float(r.get("target") or 0.0) / served if served > 0 else 0.0
         out[pid] = {"name": r.get("name"), "pos": r.get("pos"), "team": r.get("team"),
+                    "ros": r.get("ros"),
                     # season-only rows carry no shape, so they are scaled at 1.0
                     # and priced on the flat series expected.py already wrote.
                     "k": r.get("k") or 1.0, "rank": r.get("rank"),
@@ -159,8 +160,12 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
                     # fraction, instead of spending the average every week.
                     "absorbs": r.get("absorbs") or 0.0,
                     "room": (r.get("team"), r.get("pos")), "weeks": wk}
-    return {"players": out, "week": ex["week"], "weights": {int(k): v for k, v in
-                                                            ex["weights"].items()}}
+    return {"players": out, "week": ex["week"],
+            "weights": {int(k): v for k, v in ex["weights"].items()},
+            # Carried into Board and the decision snapshot so an audit can
+            # identify the exact expected.json generation the worlds used.
+            "expected_computed": ex.get("computed"),
+            "expected_schema": ex.get("schema")}
 
 
 def weekly_points(p: dict, w: int) -> float:
@@ -490,10 +495,13 @@ class Board:
     """The simulated worlds plus our roster, so hypotheticals share both."""
 
     def __init__(self, league_id: str = LEAGUE_ID_2026, sims: int = SIMS,
-                 extra: list[str] | None = None):
+                 extra: list[str] | None = None,
+                 p_playoffs: float | None = None):
         d = series(league_id)
         self.S, self.weights = d["players"], d["weights"]
         self.week = d["week"]
+        self.expected_computed = d.get("expected_computed")
+        self.expected_schema = d.get("expected_schema")
         self.weeks = sorted(self.weights)
         self.sims = sims
         self.mine = [p for p in (season.mine(league_id).get("players") or [])
@@ -507,7 +515,18 @@ class Board:
         # the baseline his own acquisition is measured against.
         self.repl = replacement(self.S, self.weeks, league_id,
                                 exclude=frozenset(extra or ()))
-        self.p_playoffs = playoffs.p_playoffs(league_id=league_id, default=1.0)
+        # Audit callers pin the odds snapshot beside expected.json so viewing a
+        # stale artifact cannot trigger playoffs.load()'s rebuild-and-write.
+        # Production omits it and keeps the normal self-healing freshness gate.
+        self.playoff_computed = None
+        if p_playoffs is None:
+            odds = playoffs.load(league_id=league_id)
+            self.playoff_computed = odds.get("computed") if odds else None
+            key = odds.get("ours") if odds else None
+            got = (odds.get("odds") or {}).get(key) if key is not None else None
+            self.p_playoffs = 1.0 if got is None else float(got)
+        else:
+            self.p_playoffs = float(p_playoffs)
         self.contender = self.p_playoffs >= CONTENDER_ODDS
         self.base = self.totals(self.mine)
 
@@ -745,11 +764,17 @@ def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
             if add not in b.S or add == drop:
                 continue
             ids = [p for p in b.mine if p != drop] + [add]
-            sh = b.shape(b.totals(ids))
+            totals = b.totals(ids)
+            sh = b.shape(totals)
             prof = median_start_profile(b, ids, add)
             out.append({"add": add, "drop": drop,
                         "gain": sh["mean"], "se": sh["se"],
                         "ceiling": sh["p90"], "p_hit": sh["p_hit"],
+                        # The audit GUI is a reader. Persisting these paired
+                        # changes here lets it plot the exact common-random-world
+                        # distribution the policy consumed without simulating.
+                        "outcomes": [round(a - z, 3)
+                                     for a, z in zip(totals, b.base)],
                         # How much of him is a lineup slot we fill with nobody
                         # hurt, and when it starts. See median_start_profile.
                         "start_weeks": prof["weeks"], "start_pts": prof["pts"],

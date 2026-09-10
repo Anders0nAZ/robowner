@@ -149,8 +149,11 @@ def optimize(candidates: list[dict],
     # Fixing the exploration order makes that arbitrary-but-harmless choice
     # STABLE, so the same roster never produces two different published lineups.
     # Same reasoning as choose_pick's tie ordering in draft_agent.
+    pinned_ids = {p["player_id"] for p in pinned.values()}
+    # A locked bench player is just as immovable as a locked starter.  The
+    # latter survives through `pinned`; the former must not enter the DP at all.
     pool = sorted((c for c in candidates
-                   if c["player_id"] not in {p["player_id"] for p in pinned.values()}),
+                   if c["player_id"] not in pinned_ids and not c.get("locked")),
                   key=lambda c: (-c["pts"], bool(c["injury"]), c["player_id"]))
 
     full = (1 << len(SLOTS)) - 1
@@ -215,9 +218,15 @@ def illegal_starters(current: list[str], cands: list[dict]) -> list[str]:
         if c is None:
             bad.append(f"{pid} no longer active on our roster")
         elif not c["has_game"]:
-            bad.append(f"{c['name']} (bye)")
+            suffix = "bye"
+            if c.get("locked"):
+                suffix += "; locked and cannot be moved"
+            bad.append(f"{c['name']} ({suffix})")
         elif (c["injury"] or "") in NEVER_START:
-            bad.append(f"{c['name']} ({c['injury']})")
+            suffix = c["injury"]
+            if c.get("locked"):
+                suffix += "; locked and cannot be moved"
+            bad.append(f"{c['name']} ({suffix})")
     return bad
 
 
@@ -389,8 +398,12 @@ def compare(week: int | None = None, season_yr: str = season.SEASON,
     shadow = [{**c, "pts": c["sleeper_pts"], "pts_source": "sleeper"}
               for c in cands]
 
-    model_lu, model_total = optimize(cands)
-    sleeper_lu, sleeper_total = optimize(shadow)
+    # Both engines see the same pins, so a locked starter is held in place on
+    # each side rather than dropped from both -- the comparison stays
+    # apples-to-apples and the totals stay real.
+    current = [x for x in (roster.get("starters") or [])]
+    model_lu, model_total = optimize(cands, pin_locked(cands, current))
+    sleeper_lu, sleeper_total = optimize(shadow, pin_locked(shadow, current))
 
     print(f"week {week} - {provenance or 'model not in use'}")
     print()
