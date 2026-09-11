@@ -238,29 +238,6 @@ def export_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
     return ok, (f"regenerated in {how}" if ok else how)
 
 
-def _checked(result: tuple[bool, str]) -> str:
-    """Turn a (ok, why) return into the only failure signal step() can read.
-
-    THE ONLY SUCCESS SIGNAL step() HAS IS "DID IT RAISE", and _model_cmd is
-    documented never to raise -- it reports failure in a bool and hands back the
-    reason. So `step("capture", lambda: capture_week(wk)[1])` threw the bool away
-    and logged `ok: True` over a timeout, a nonzero exit, or a missing model
-    tree, with the reason sitting in the detail string where nothing reads it.
-
-    That is the worst of the three places this shape appears, because a silently
-    failed capture does not stop the export -- it makes it SUCCEED against a
-    stale snapshot, exactly the schedule dependency capture_week exists to
-    remove, and the lineup is then set on the other repo's cron.
-
-    Both steps are in SOFT_STEPS, so raising marks the step failed and lets the
-    chain continue. _refresh_schedules already consumes its bool this way.
-    """
-    ok, why = result
-    if not ok:
-        raise RuntimeError(why)
-    return why
-
-
 # -------------------------------------------------------------------- the chain
 
 def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
@@ -315,8 +292,8 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     # somebody reads when a lineup went wrong.
     step("scout", (lambda: "skipped: pregame run, no decision here reads it")
          if pregame else (lambda: _scout(prec)))
-    step("capture", lambda: _checked(capture_week(wk)))
-    step("export", lambda: _checked(export_week(wk)))
+    step("capture", lambda: capture_week(wk)[1])
+    step("export", lambda: export_week(wk)[1])
     step("model", lambda: refresh.pull_model())
 
     # BEFORE rebuild, because ros.py reads these odds to weight weeks 15-17 and
@@ -396,17 +373,14 @@ def _scout(pulled: dict) -> str:
     todo, reuse = scout.needs_judging(b)
     if not todo:
         return f"{len(b)} in scope, all fingerprints unchanged"
-    v, failed = scout.judge(todo, verbose=False)
+    v = scout.judge(todo, verbose=False)
     keep = dict((scout.load_verdicts().get("verdicts") or {}))
     for x in todo:
         keep.pop(x["player_id"], None)
     keep.update(reuse)
-    w = scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep,
-                             carry=failed)
+    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep)
     dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
-    return (f"{len(v)} of {len(todo)} re-read, {dated} carry a date"
-            + (f", {w['carried']} carried forward after batch failure"
-               if w.get("carried") else ""))
+    return f"{len(todo)} re-read, {dated} carry a date"
 
 
 def _fmt_pull(p: dict) -> str:
@@ -479,21 +453,7 @@ def _moves(moves, mode: str, apply: bool) -> str:
     who = ", ".join(p["add"]["name"] for p in plans)
     if out.get("gated"):
         return f"{len(plans)} add(s) WOULD be made ({who}) -- gate shut"
-    # REPORT WHAT REACHED SLEEPER. `plans` is what we intended; `submitted` is
-    # what landed. Rendering the intent was how a run whose every mutation
-    # raised read as a clean success in inseason.log.
-    #
-    # Reported rather than raised: patch and fill are not SOFT_STEPS, so
-    # raising here would abort the run and cost lineup3 -- the final legality
-    # check -- over a wire add that can simply be retried. The string is what a
-    # human reads in inseason.log, and it now says what actually happened.
-    sub, fail = out.get("submitted") or [], out.get("failed") or []
-    if fail:
-        why = "; ".join(f"{f['add']} ({f['why']})" for f in fail)
-        return f"{len(sub)} of {len(plans)} submitted -- FAILED: {why}"
-    if not out.get("applied"):
-        return f"{len(plans)} add(s): {who} (not submitted)"
-    return f"{len(sub)} add(s): " + ", ".join(s["add"] for s in sub)
+    return f"{len(plans)} add(s): {who}" + ("" if out.get("applied") else " (not submitted)")
 
 
 def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
@@ -519,7 +479,7 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     thirty-two; in week 1 the top two were both rostered and the best gettable
     was fourth. A streamer on the raw board proposes moves Sleeper refuses.
     """
-    from robo import season, streaming, value
+    from robo import streaming, value
     from robo import sleeper_read as api
     ctx = moves._context(league_id, mode="stream")
     players = ctx["players"]
@@ -527,12 +487,7 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
             if (players.get(p) or {}).get("position") == "DEF"]
     if not held:
         return "we hold no defence; patch owns an empty slot"
-    # `starters` is positional, so prefer the defence currently occupying the
-    # slot over arbitrary roster order when a team has two defences.
-    ours_id = next((pid for pid in held if pid in set(ctx["roster"].get("starters") or [])), held[0])
-    ours = (players.get(ours_id) or {}).get("team") or ours_id
-    if (season.week_points(wk).get(ours_id) or {}).get("locked"):
-        return f"hold {ours}: locked in the current DEF slot and cannot be dropped"
+    ours = (players.get(held[0]) or {}).get("team") or held[0]
     d = streaming.swap(wk, ours, league_id)
     if not d.get("best"):
         return d["why"]
@@ -542,8 +497,8 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     best = d["best"]["team"]
     plan = [{"add": {"player_id": best, "name": api.player_name(players, best),
                      "pos": "DEF"},
-             "drop": {"player_id": ours_id,
-                      "name": api.player_name(players, ours_id), "pos": "DEF"},
+             "drop": {"player_id": held[0],
+                      "name": api.player_name(players, held[0]), "pos": "DEF"},
              "gain": d["gain"], "add_value": round(d["best"]["pts"], 2),
              "drop_value": round(d["mine"]["pts"], 2), "real": True,
              "why": d["why"]}]

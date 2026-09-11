@@ -418,6 +418,12 @@ REGISTRY: list[S] = [
       "happens if the agent dies mid-draft. Deeper is free and the fallback should "
       "never run dry.",
       bounds=(5, 700), unit="players"),
+    S(LIVE_DRAFT, "robo.draft_agent", "QUEUE_REFRESH_SECS", int,
+      "How often the fallback queue is rebuilt and pushed.",
+      "Refreshed off the clock, never on it: a SET QUEUE BLOCKS LIVE PICKS. "
+      "Sleeper autopicks from the queue the moment our clock opens and rejects the "
+      "pick the agent submits a second later.",
+      bounds=(10, 600), unit="seconds"),
     S(LIVE_DRAFT, "robo.draft_agent", "QUEUE_MAX_AT_POS", dict,
       "Hard ceiling on what the fallback queue may contain, per position.",
       "A frozen queue cannot know we already drafted three quarterbacks. Without "

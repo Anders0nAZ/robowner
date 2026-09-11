@@ -79,7 +79,7 @@ CATEGORIES = [
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
      ["__init__", "refresh", "prekick", "settings", "admin_gui",
-      "audit_gui", "ui", "1_Rest_of_season", "2_Roster_value_and_moves"]),
+      "audit_gui", "ui", "1_Rest_of_season"]),
 ]
 
 

@@ -132,25 +132,6 @@ def plan_day(season_yr=None, week: int | None = None, lead_min: int = LEAD_MIN,
     season_yr = season_yr or season.SEASON
     week = week if week is not None else season.current_week()
 
-    # READ BEFORE DELETING. The sweep is unconditional and irreversible, and it
-    # ran FIRST -- so an unreadable schedule (or an exception inside slots(),
-    # which propagates) wiped today's remaining pre-kickoff runs and installed
-    # no replacement, with the next repair opportunity a day away. Nothing is
-    # removed now until there is something to put back.
-    #
-    # Same rule vegas.next_kickoff() already follows: an unreadable schedule
-    # counts as "change nothing", never as "there is nothing there".
-    try:
-        found = slots(season_yr, week)
-    except Exception as e:
-        print(f"kickoff schedule unreadable ({type(e).__name__}: {str(e)[:100]}) "
-              "-- existing one-shots left exactly as they are")
-        return []
-    if not found:
-        print(f"no readable kickoff times for {season_yr} week {week} -- "
-              "nothing queued, existing one-shots left alone")
-        return []
-
     swept = sweep(install)
     if swept:
         print(f"swept {swept} stale one-shot task(s)")
@@ -158,6 +139,12 @@ def plan_day(season_yr=None, week: int | None = None, lead_min: int = LEAD_MIN,
     now_dt = (dt.datetime.fromtimestamp(now) if now is not None
               else dt.datetime.now()).astimezone()
     today = now_dt.date()
+
+    found = slots(season_yr, week)
+    if not found:
+        print(f"no readable kickoff times for {season_yr} week {week} -- "
+              "nothing queued")
+        return []
 
     queued = []
     for slot in found:

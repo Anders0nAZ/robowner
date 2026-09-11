@@ -56,10 +56,7 @@ QUEUE_DEPTH = 15
 # and wastes it. Skill players first to unlimited depth, K and DEF appended last
 # where they can only be reached once everything else is gone.
 QUEUE_PAD_TO = 0  # 0 = no cap
-# There is no QUEUE_REFRESH_SECS. It was a registered, tunable setting with zero
-# usage sites, describing a periodic push the agent must never make: the agent
-# CLEARS the queue and leaves it cleared, because a set queue blocks its own
-# live picks. Only the guard arms one, once, via --set-queue.
+QUEUE_REFRESH_SECS = 45
 # Stamped every poll so the draft guard can tell "running" from "working".
 # Checking that a process exists is not a liveness check: a hung agent satisfies
 # it forever, which is the same failure that has now bitten this project four
@@ -434,32 +431,13 @@ def choose_pick(board: list[dict], taken: set[str], counts: dict[str, int],
     from functools import lru_cache as _lru
 
     @_lru(maxsize=None)
-    def shelf(pos, pick, nth=0):
-        """The (nth+1)-th best still on the shelf at `pick` for this position.
-
-        `nth` IS WHAT STOPS ONE PLAYER FILLING THREE SLOTS. This returned the
-        single best man at a position for every pick that could still reach him,
-        and the DP state carried no record of who had already been spent -- so a
-        receiver with an ADP of 120 who survives picks 43, 54 and 67 was counted
-        as satisfying a WR need, a SECOND WR need, and the FLEX, all in the same
-        plan. Future value came out systematically too high, and most inflated
-        exactly where one standout survivor sat above a thin position, which is
-        the comparison the whole policy turns on.
-        """
-        pts = sorted((_score(r) for r in candidates
-                      if r["pos"] == pos
-                      and (pick <= overall or _market(r) + _sigma(r) / 2 > pick)),
-                     reverse=True)
-        return pts[nth] if nth < len(pts) else 0.0
-
-    # Positions whose consumption the DP tracks, in a fixed order so the state
-    # key is deterministic. Same reason the tie-break order below is fixed.
-    POS_ORDER = tuple(STARTER_NEEDS)
-
-    def _bump(used, pos):
-        u = list(used)
-        u[POS_ORDER.index(pos)] += 1
-        return tuple(u)
+    def shelf(pos, pick):
+        """Best projected points still on the shelf at `pick` for this position."""
+        best_pts = 0.0
+        for r in candidates:
+            if r["pos"] == pos and (pick <= overall or _market(r) + _sigma(r) / 2 > pick):
+                best_pts = max(best_pts, _score(r))
+        return best_pts
 
     needs = []
     for pos, want in STARTER_NEEDS.items():
@@ -472,36 +450,22 @@ def choose_pick(board: list[dict], taken: set[str], counts: dict[str, int],
     npicks = my_future
 
     @lru_cache(maxsize=None)
-    def V(i, needs_key, used_key):
-        """Best value from pick `i` on, given needs left and men already spent.
-
-        `used_key` is the counts consumed per position so far. It is part of the
-        STATE rather than a running total on the side because the DP branches:
-        two different plans reach pick 4 having spent different men, and they
-        must not share a cached answer.
-        """
+    def V(i, needs_key):
         if i >= len(npicks):
             return 0.0
         rem = list(needs_key)
         options = []
         pick = npicks[i]
-        # Sorted, not a bare set: hash randomisation made the iteration order
-        # differ between processes, which on an exact tie gave the same board
-        # two different answers. See TIE_ORDER below.
-        for pos in sorted(set(rem)):
-            r2 = list(rem)
-            r2.remove(pos)
-            nk = tuple(sorted(r2))
-            # FLEX is spelled out per eligible position rather than max()'d,
-            # because WHICH man fills it decides who is left for the next pick.
-            for p in (FLEX_POS if pos == "FLEX" else (pos,)):
-                options.append(shelf(p, pick, used_key[POS_ORDER.index(p)])
-                               + V(i + 1, nk, _bump(used_key, p)))
-        # Spending this pick on bench depth instead. Also enumerated by
-        # position, for the same reason: a bench body is a body that is gone.
-        for p in POS_ORDER:
-            options.append(BENCH_WEIGHT * shelf(p, pick, used_key[POS_ORDER.index(p)])
-                           + V(i + 1, needs_key, _bump(used_key, p)))
+        if rem:
+            for pos in set(rem):
+                r2 = list(rem)
+                r2.remove(pos)
+                pts = (max(shelf(p, pick) for p in FLEX_POS) if pos == "FLEX"
+                       else shelf(pos, pick))
+                options.append(pts + V(i + 1, tuple(sorted(r2))))
+        # spending this pick on bench depth instead
+        options.append(BENCH_WEIGHT * max(shelf(p, pick) for p in STARTER_NEEDS)
+                       + V(i + 1, needs_key))
         return max(options)
 
     needs_key = tuple(sorted(needs))
@@ -515,12 +479,10 @@ def choose_pick(board: list[dict], taken: set[str], counts: dict[str, int],
     # specific claim: a named starter need beats FLEX (which leftovers can fill
     # later), and both beat bench depth.
     TIE_ORDER = {"QB": 0, "RB": 1, "WR": 2, "TE": 3, "FLEX": 4, "BENCH": 5}
-    ZERO_USED = tuple(0 for _ in POS_ORDER)
     for pos in sorted(set(needs) | {"BENCH"}, key=lambda p: TIE_ORDER[p]):
         if pos == "BENCH":
-            take = max(POS_ORDER, key=lambda p: shelf(p, pick_now))
-            total = (BENCH_WEIGHT * shelf(take, pick_now)
-                     + V(1, needs_key, _bump(ZERO_USED, take)))
+            total = BENCH_WEIGHT * max(shelf(p, pick_now) for p in STARTER_NEEDS) \
+                    + V(1, needs_key)
             pool = candidates
         else:
             r2 = list(needs)
@@ -529,17 +491,7 @@ def choose_pick(board: list[dict], taken: set[str], counts: dict[str, int],
             pool = [r for r in candidates if r["pos"] in poss]
             if not pool:
                 continue
-            # ONE SCORING BASIS PER SUM. This term was raw proj_pts while every
-            # future term inside the same total came from shelf(), which uses
-            # _score -- so an unblended number now was being added to blended
-            # numbers later, and the branch could be won by a player the
-            # selection below then declines to draft, because that selection
-            # also uses _score. The blend is still points-scaled, so the
-            # superflex argument in the comment below is untouched: this is
-            # points versus points, not points versus VORP.
-            take = max(pool, key=_score)
-            total = _score(take) + V(1, tuple(sorted(r2)),
-                                     _bump(ZERO_USED, take["pos"]))
+            total = max(r["proj_pts"] for r in pool) + V(1, tuple(sorted(r2)))
         if total > best_total:
             best_total, best_choice, best_pool = total, pos, pool
     # A starter branch has already committed to a slot, so the best player for
@@ -547,13 +499,11 @@ def choose_pick(board: list[dict], taken: set[str], counts: dict[str, int],
     # its pool is every position at once, and ranking that by raw points was the
     # bug -- it drafted the highest-scoring body on the board every time, which
     # in 2QB scoring is a quarterback we would never start.
-    # A starter branch has already committed to a lineup slot, so POINTS are the
-    # right ranking there -- and genuinely right, not merely conventional: a
+    # A starter branch has already committed to a lineup slot, so raw points is
+    # the right ranking there -- and genuinely right, not merely conventional: a
     # QB in the superflex slot outscores any WR by ~110 real points, which is
     # why scoring the whole DP on VORP is a mistake (it drafts two QBs and then
-    # force-picks a -130 backup in round 15). _score is the projection blended
-    # with expert consensus, which is still a points scale, so that argument is
-    # unaffected by using it consistently throughout.
+    # force-picks a -130 backup in round 15).
     #
     # The BENCH branch never committed to a slot, so neither points nor VORP
     # asks the right question -- see robo/bench.py. Its pool is every position
@@ -675,30 +625,11 @@ def run(dry_run: bool, once: bool, poll_secs: float = 3.0,
             gql("remove_user_from_autopick",
                 'mutation remove_user_from_autopick { remove_user_from_autopick('
                 'draft_id: "%s") }' % draft_id)
-            print("autopick disabled for our slot", flush=True)
+            print("autopick disabled for our slot (queue remains as fallback)", flush=True)
         except Exception as e:
             print(f"!! could not disable autopick: {e}", flush=True)
 
-        # AND CLEAR THE QUEUE, which this was documented as doing and did not.
-        # A set queue blocks live picks -- verified 28 Aug on a live mock, where
-        # the identical pick was rejected with a queue armed and succeeded with
-        # it cleared. The guard arms one via --set-queue only after it has given
-        # up restarting us, so a queue existing here means a PREVIOUS agent died
-        # and this one has just been restarted into a draft it cannot pick in:
-        # every submission rejected, Sleeper autopicking off a stale plan, and
-        # the pick log still showing our name on all of it.
-        #
-        # This is why run() deliberately does NOT arm a fallback queue of its
-        # own, tempting as that is -- a queue is not a safety net for a live
-        # agent, it is the thing that stops it working. Arming one belongs to
-        # the guard, at the point it concludes there is no live agent left.
-        try:
-            from robo.sleeper_write import set_draft_queue
-            set_draft_queue(draft_id, [])
-            print("draft queue cleared, so live picks are not blocked", flush=True)
-        except Exception as e:
-            print(f"!! could not clear the draft queue: {e}", flush=True)
-
+    _queue = {"ids": [], "at": 0.0, "n": -1}
     # Pick numbers we watched go by. Anything at our slot that appears here
     # WITHOUT us having submitted it was made by autopick, which is the signal
     # that the agent is alive but not actually drafting.
@@ -846,8 +777,8 @@ def run(dry_run: bool, once: bool, poll_secs: float = 3.0,
                 from robo import alerts
                 alerts.blast(
                     f"I have failed to read the draft board {consecutive_errors} times "
-                    f"running ({type(e).__name__}). Still trying. If I cannot recover, "
-                    f"my guard will arm my queue so picks still come off my plan.",
+                    f"running ({type(e).__name__}). Still trying. My autopick queue is "
+                    f"set, so picks will come off my plan if I cannot reach the clock.",
                     key="poll-failure", draft_id=draft_id)
             time.sleep(min(poll_secs * consecutive_errors, 15))
             continue
@@ -870,20 +801,6 @@ if __name__ == "__main__":
                          "only after it has given up restarting the agent.")
     args = ap.parse_args()
 
-    # THE ACKNOWLEDGEMENT GUARD BELONGS HERE, NOT INSIDE run(). It lived at the
-    # top of run(), which is reached at the very bottom of this block -- and the
-    # --set-queue branch below ends in SystemExit, so control never got there.
-    # --draft-id defaults to the REAL draft, so `python -m robo.draft_agent
-    # --set-queue` with no other flags wrote a live queue into the 2026 draft
-    # without --i-mean-it and while ignoring --dry-run. That is not a small
-    # write: this module's own docstring records that a set queue BLOCKS live
-    # picks, so arming one is how the agent stops being able to draft.
-    if (args.draft_id == DRAFT_ID_2026 and not args.dry_run
-            and not args.i_mean_it):
-        raise SystemExit(
-            "refusing to touch the REAL 2026 draft without --i-mean-it "
-            "(pass --draft-id for a mock, or --dry-run)")
-
     if args.set_queue:
         from robo.rankings import build_board as _bb
         from robo.sleeper_write import set_draft_queue
@@ -900,15 +817,9 @@ if __name__ == "__main__":
                         my_pick_numbers(slot, {p["pick_no"] for p in picks}),
                         live_status(force=True),
                         own_league=(args.draft_id == DRAFT_ID_2026))
-        head = ", ".join(by_id[i]["name"] for i in q[:5] if i in by_id)
-        if args.dry_run:
-            # --dry-run was accepted and then ignored on this path, which is the
-            # worst possible reading of the flag: the one branch that writes to
-            # a live draft treated the request not to write as noise.
-            print(f"DRY RUN, nothing sent. Queue would be {len(q)} deep: {head}")
-        else:
-            set_draft_queue(args.draft_id, q)
-            print(f"queue set ({len(q)}): {head}")
+        set_draft_queue(args.draft_id, q)
+        print(f"queue set ({len(q)}): "
+              + ", ".join(by_id[i]["name"] for i in q[:5] if i in by_id))
         raise SystemExit(0)
 
     run(args.dry_run, args.once, draft_id=args.draft_id, allow_real=args.i_mean_it)

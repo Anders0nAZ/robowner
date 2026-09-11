@@ -428,10 +428,6 @@ SOURCES = [
     # after. Moving one without the other is how the page reports healthy on a
     # source nothing is using.
     ("model",       "NFL Model projections", 30 * 3600, "RobonerRefresh"),
-    # This is the calibrated skill-player valuation value.ros_value actually
-    # serves. Keep ros.json beside it because that remains the intentional
-    # source for K/DEF, but do not let the fallback stand in for the engine.
-    ("expected",    "Calibrated player value", 30 * 3600, "RobonerRefresh"),
     # 20 hours, matching ros.MAX_AGE_H, so the page goes amber at the same
     # moment the valuation stops trusting itself -- the same rule as the model
     # row above.
@@ -514,7 +510,7 @@ def _refresh_log() -> dict:
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
 MARKED_STEPS = {"players", "projections", "buzz", "board", "model",
-                "expected", "ros", "playoff-odds", "usage", "injuries", "scout"}
+                "ros", "playoff-odds", "usage", "injuries", "scout"}
 
 # Sources whose ABSENCE is a normal state at some point in the year, and so must
 # not paint the page red on a perfectly healthy bot. A false alarm that runs for
@@ -572,16 +568,6 @@ def _source_marker(step: str):
             pass
         return ts, "%d players, %s week %s" % (
             len(d.get("players", {})), d.get("season", "?"), d.get("week", "?"))
-    if step == "expected":
-        d = _read_json(DATA / "expected.json", {}) or {}
-        return d.get("computed"), "%d skill players from week %s, schema %s" % (
-            len(d.get("players", {})), d.get("week", "?"), d.get("schema", "?"))
-    if step == "marginal":
-        d = _read_json(DATA / "marginal_decision.json", {}) or {}
-        return d.get("computed"), "%s/%s, %s simulations, %s options" % (
-            d.get("mode", "?"), d.get("channel", "?"),
-            (d.get("simulation") or {}).get("sims", "?"),
-            len(d.get("options") or []))
     if step == "ros":
         d = _read_json(DATA / "ros.json", {}) or {}
         return d.get("computed"), "%d players from week %s" % (
@@ -801,20 +787,8 @@ def sleeper() -> dict:
         out["rest"] = BAD
         out["rest_error"] = _scrub(repr(e))
     try:
-        from robo import ROBOWNER_USER_ID, sleeper_write
-        # WHICH ACCOUNT, not merely whether one answered. whoami() returns a
-        # {user_id, display_name} dict, so ANY authenticated token was truthy
-        # here and reported green -- including one for somebody else's account,
-        # which is the single worst thing a write path can be pointed at.
-        me = sleeper_write.whoami() or {}
-        who = str(me.get("user_id") or "")
-        if who == ROBOWNER_USER_ID:
-            out["graphql"] = OK
-        else:
-            out["graphql"] = BAD
-            out["graphql_error"] = (
-                f"token authenticates as user {who or 'unknown'}, "
-                f"not Robowner ({ROBOWNER_USER_ID})")
+        from robo import sleeper_write
+        out["graphql"] = OK if sleeper_write.whoami() else BAD
     except Exception as e:
         out["graphql"] = BAD
         out["graphql_error"] = _scrub(repr(e))

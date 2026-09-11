@@ -16,7 +16,6 @@ python -m robo.chat_memory search "<query>"
 import json
 import sqlite3
 import sys
-import time
 from datetime import datetime, timezone
 
 import requests
@@ -101,45 +100,12 @@ def ingest_sleeper_chat() -> int:
 
 # ------------------------------------------------------------------ search
 
-# MUST EXCEED THE VRAM GATE'S HOLD, AND 120 DID NOT. Port 11434 is not Ollama;
-# it is C:\VRAMMonitor\vram_monitor.py, which queues any request that would load
-# a model until the VRAM to hold it actually exists, and after MAX_HOLD_SECONDS
-# (120) gives up waiting and forwards it anyway. That fail-open is the whole
-# point of the gate -- its own comment sizes it "under the historian 240s
-# timeout" -- but this caller asked for exactly 120s, so the client hung up at
-# the very moment the gate was about to let it through. The one caller in this
-# repo that could never benefit from the design: the responder waits 240s and
-# scout waits 900s.
-#
-# The symptom is a Read timed out that looks like Ollama being slow and is not:
-# nomic-embed-text is a 0.3GB model that answers a 32-text batch in about three
-# seconds once it is in.
-EMBED_TIMEOUT_S = 240
-
-
 def _embed(texts: list[str], prefix: str) -> list[list[float]]:
-    """Embed a batch, surviving one spell of VRAM contention.
-
-    Retried once because the expensive part is the QUEUE, not the work. This
-    runs in refresh.py directly behind scout, which holds a 17.7GB model for
-    thirty minutes after an hour-long run, so the embed arrives at the worst
-    moment of the day for free VRAM -- and losing the whole step to one held
-    batch put the chat index two days behind.
-    """
-    last = None
-    for attempt in range(2):
-        try:
-            r = requests.post(
-                f"{OLLAMA}/api/embed",
-                json={"model": EMBED_MODEL, "input": [prefix + t for t in texts]},
-                timeout=EMBED_TIMEOUT_S)
-            r.raise_for_status()
-            return r.json()["embeddings"]
-        except requests.Timeout as e:
-            last = e
-            if attempt == 0:
-                time.sleep(5)
-    raise last
+    r = requests.post(f"{OLLAMA}/api/embed",
+                      json={"model": EMBED_MODEL, "input": [prefix + t for t in texts]},
+                      timeout=120)
+    r.raise_for_status()
+    return r.json()["embeddings"]
 
 
 def build_embeddings(batch: int = 64) -> int:

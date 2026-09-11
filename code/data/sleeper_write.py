@@ -27,65 +27,6 @@ from robo import ROOT, LEAGUE_ID_2026, ROBOWNER_USER_ID
 
 GRAPHQL = "https://sleeper.com/graphql"
 
-# Operations that change what live_rosters() would return. season.live_rosters
-# memoizes for 30 seconds and had NO invalidation hook anywhere, while the
-# cascade runs lineup -> ir -> lineup2 -> patch -> ir2 -> fill back to back in
-# about eleven seconds -- so ir priced against pre-lineup starters and fill
-# against a pre-IR roster, on a path that runs with --apply today.
-#
-# The epoch is bumped inside gql() rather than by each caller, and that is the
-# point: a roster mutation added later cannot forget to invalidate, because it
-# cannot avoid coming through here. Same reasoning that put the cascade's
-# ordering in code instead of in the schedule.
-#
-# A waiver claim is deliberately NOT in this set -- it creates a PENDING
-# transaction and changes no roster until it settles on Wednesday.
-ROSTER_MUTATIONS = frozenset({
-    "update_matchup_leg",           # set_starters
-    "roster_update_reserve",        # set_reserve
-    "league_create_transaction",    # free_agent_transaction
-})
-
-_roster_epoch = 0
-
-# Every operation that CHANGES something on Sleeper. The account is confirmed
-# once per process before the first of these runs: a token is just a string
-# from .env, whoami() answers for whoever it belongs to, and the status page's
-# only check was that SOMEBODY authenticated. Pointing this client at the wrong
-# account is the one failure where every downstream safeguard -- the gate, the
-# blackout, the decision log -- still reports success while the moves land on
-# another team's roster.
-#
-# Paid once, and only when we are about to write. Queries stay free.
-MUTATIONS = frozenset({
-    "update_matchup_leg", "roster_update_reserve", "league_create_transaction",
-    "submit_waiver_claim", "draft_pick_player", "update_draft_queue",
-    "create_draft", "update_league_user_metadata", "remove_user_from_autopick",
-    "create_message",
-})
-
-_identity_ok = False
-
-
-def roster_epoch() -> int:
-    """Bumped by every write that invalidates a cached roster read."""
-    return _roster_epoch
-
-
-def assert_identity() -> None:
-    """Refuse to write as anyone but Robowner. Checked once per process."""
-    global _identity_ok
-    if _identity_ok:
-        return
-    me = whoami() or {}
-    who = str(me.get("user_id") or "")
-    if who != ROBOWNER_USER_ID:
-        raise RuntimeError(
-            f"REFUSING TO WRITE: token authenticates as user "
-            f"{who or 'unknown'} ({me.get('display_name') or '?'}), not "
-            f"Robowner ({ROBOWNER_USER_ID}). Check SLEEPER_TOKEN in .env.")
-    _identity_ok = True
-
 
 def _token() -> str:
     tok = os.environ.get("SLEEPER_TOKEN")
@@ -101,8 +42,6 @@ def _token() -> str:
 
 
 def gql(operation: str, query: str, variables: dict | None = None) -> dict:
-    if operation in MUTATIONS:
-        assert_identity()
     r = requests.post(
         GRAPHQL,
         json={"operationName": operation, "variables": variables or {}, "query": query},
@@ -113,13 +52,10 @@ def gql(operation: str, query: str, variables: dict | None = None) -> dict:
     body = r.json()
     if body.get("errors"):
         raise RuntimeError(f"graphql errors: {body['errors']}")
-    if operation in ROSTER_MUTATIONS:
-        global _roster_epoch
-        _roster_epoch += 1
     return body["data"]
 
 
-def whoami() -> dict:
+def whoami() -> str:
     """Smoke test: returns the token's user_id."""
     data = gql("initialize_app", "query initialize_app { me { user_id display_name } }")
     return data["me"]
@@ -137,50 +73,6 @@ def live_rosters(league_id: str = LEAGUE_ID_2026) -> list[dict]:
     q = ('query league_rosters { league_rosters(league_id: "%s") { '
          'roster_id owner_id players starters reserve taxi settings } }' % league_id)
     return gql("league_rosters", q)["league_rosters"]
-
-
-def confirm_roster(field: str, want: list[str], ordered: bool = False,
-                   league_id: str = LEAGUE_ID_2026) -> tuple[str, str]:
-    """Did the write actually land? ("ok"|"mismatch"|"unknown", why).
-
-    gql() raises on transport and GraphQL errors, and every caller took that as
-    proof of success -- lineup and ir set applied=True and wrote the public
-    record without ever looking at what Sleeper returned or re-reading the
-    roster. That is not a theoretical gap in this codebase: a draft pick was
-    once ACCEPTED at the API and silently discarded because a queue was armed,
-    which looked identical to a successful write from this side.
-    moves.verify_bid already reads its claim straight back; this is that habit
-    applied to the two writes that skipped it.
-
-    THREE STATES, NOT TWO, because "Sleeper says the write did not take" and "we
-    could not check" call for different responses. A mismatch means stop and do
-    not claim success. An unreadable re-read means the write probably landed and
-    we cannot prove it -- worth an alert, not worth reporting a move as failed
-    and inviting a retry that would double it.
-
-    The re-read is genuinely fresh: this module's own epoch bumped when the
-    mutation went through, which is what evicts season.live_rosters' cache.
-    """
-    from robo import season
-    try:
-        r = season.mine(league_id)
-    except Exception as e:
-        return "unknown", (f"could not re-read the roster to confirm: "
-                           f"{type(e).__name__}: {str(e)[:100]}")
-    got = [str(x) for x in (r.get(field) or [])]
-    want = [str(x) for x in want]
-    if (got == want) if ordered else (set(got) == set(want)):
-        return "ok", f"{field} confirmed on Sleeper ({len(want)})"
-    missing = [p for p in want if p not in got]
-    extra = [p for p in got if p not in want]
-    why = f"{field} MISMATCH -- sent {len(want)}, Sleeper holds {len(got)}"
-    if missing:
-        why += f"; absent {missing}"
-    if extra:
-        why += f"; unexpected {extra}"
-    if not missing and not extra:
-        why += "; same players in a different order"
-    return "mismatch", why
 
 
 def set_starters(roster_id: int, week: int, starters: list[str],

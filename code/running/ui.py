@@ -1,11 +1,9 @@
 """Shared furniture for the local audit app. No logic lives here.
 
-WHAT THIS IS FOR. audit_gui.py and its pages are read-only: they never change a
-setting or send a transaction. The player page renders the exact cached
-valuation; the roster page renders the marginal simulation persisted by the
-production decision run. Everything a page needs twice -- the gate banner,
-artifact freshness, position colours, a trace block -- lives here so each page
-file stays about the thing it audits.
+WHAT THIS IS FOR. audit_gui.py and its pages are readers: they render what the
+bot computed and never compute anything themselves. Everything a page needs
+twice -- the gate banner, artifact freshness, position colours, a trace block --
+lives here so the second page is a page file rather than a project.
 
 WHY A READER AND NOT A CONTROL PANEL. admin_gui.py tunes policy and says so;
 this app explains decisions. The split matters most for the one thing it must
@@ -27,6 +25,19 @@ import time
 # family when they are open side by side.
 POS_COLOR = {"QB": "#e45756", "RB": "#4c78a8", "WR": "#54a24b",
              "TE": "#f58518", "K": "#b279a2", "DEF": "#79706e"}
+
+# The source tags ros.py stamps on each week, and what each one means to a
+# reader who has not read the module.
+SOURCE_HELP = {
+    "model": "the NFL Model's simulated week -- all 57 scoring keys off 4,000 "
+             "stat lines. Only ever the current week.",
+    "sleeper": "Sleeper's weekly projection, scored under this league, plus an "
+               "estimate of the 22 scoring keys its feed omits.",
+    "vegas": "priced off the opponent's implied point total from the betting "
+             "market. Defences only.",
+    "fallback": "no posted line for that week, so his own season rate over the "
+                "games left. Knows nothing about the matchup.",
+}
 
 
 def fmt_age(ts) -> str:
@@ -61,24 +72,18 @@ def gate_banner(st) -> None:
                    "number here is the provisional preseason board.")
 
 
-def artifacts(steps=("marginal", "expected", "ros", "playoff-odds", "model", "injuries",
-                     "scout", "usage")) -> list:
+def artifacts(steps=("ros", "playoff-odds", "model", "board", "usage")) -> list:
     """Freshness for the files a page reads, from the status page's collector.
 
     Reuses status._source_marker rather than re-reading each file: the budgets
-    there are pinned to the code constants they belong to, and a second
-    freshness implementation would be free to disagree with the page the
-    league actually sees. `expected` is the current skill-player engine;
-    `ros` remains because value.py intentionally uses it for K and DEF.
+    there are pinned to the code constants they belong to (ros.MAX_AGE_H and
+    model_proj.MAX_AGE_H), and a second freshness implementation would be free
+    to disagree with the page the league actually sees.
     """
     from robo import status
     out = []
     labels = {s: lbl for s, lbl, _, _ in status.SOURCES}
     budgets = {s: b for s, _, b, _ in status.SOURCES}
-    labels["marginal"] = "Latest decision simulation"
-    # The full pass is scheduled weekly. Exact age is always shown; this only
-    # marks it stale after it has missed the next weekly decision window.
-    budgets["marginal"] = 8 * 86400
     for step in steps:
         try:
             ts, detail = status._source_marker(step)

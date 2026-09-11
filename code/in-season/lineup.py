@@ -149,11 +149,8 @@ def optimize(candidates: list[dict],
     # Fixing the exploration order makes that arbitrary-but-harmless choice
     # STABLE, so the same roster never produces two different published lineups.
     # Same reasoning as choose_pick's tie ordering in draft_agent.
-    pinned_ids = {p["player_id"] for p in pinned.values()}
-    # A locked bench player is just as immovable as a locked starter.  The
-    # latter survives through `pinned`; the former must not enter the DP at all.
     pool = sorted((c for c in candidates
-                   if c["player_id"] not in pinned_ids and not c.get("locked")),
+                   if c["player_id"] not in {p["player_id"] for p in pinned.values()}),
                   key=lambda c: (-c["pts"], bool(c["injury"]), c["player_id"]))
 
     full = (1 << len(SLOTS)) - 1
@@ -218,15 +215,9 @@ def illegal_starters(current: list[str], cands: list[dict]) -> list[str]:
         if c is None:
             bad.append(f"{pid} no longer active on our roster")
         elif not c["has_game"]:
-            suffix = "bye"
-            if c.get("locked"):
-                suffix += "; locked and cannot be moved"
-            bad.append(f"{c['name']} ({suffix})")
+            bad.append(f"{c['name']} (bye)")
         elif (c["injury"] or "") in NEVER_START:
-            suffix = c["injury"]
-            if c.get("locked"):
-                suffix += "; locked and cannot be moved"
-            bad.append(f"{c['name']} ({suffix})")
+            bad.append(f"{c['name']} ({c['injury']})")
     return bad
 
 
@@ -323,38 +314,8 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
         return out
 
     from robo.decisions import record
-    from robo.sleeper_write import confirm_roster, set_starters
+    from robo.sleeper_write import set_starters
     set_starters(roster["roster_id"], week, starter_ids, league_id)
-
-    # THE WRITE NOT RAISING IS NOT THE SAME AS THE LINEUP BEING SET. Order is
-    # compared as well as membership: `starters` is positional on Sleeper, so
-    # the right ten men in the wrong slots is a different lineup, not a
-    # rounding difference.
-    state, why_ok = confirm_roster("starters", starter_ids, ordered=True,
-                                   league_id=league_id)
-    out["verified"], out["verify_why"] = state, why_ok
-    if state == "mismatch":
-        out["applied"] = False
-        msg = (f"WEEK {week} LINEUP NOT CONFIRMED: {why_ok}. No decision-log "
-               "entry written; the lineup on Sleeper is not the one we chose.")
-        print(f"  ** {msg}")
-        try:
-            from robo import alerts
-            alerts.blast(msg, key="lineup-unconfirmed")
-        except Exception:
-            pass
-        return out
-    if state == "unknown":
-        # Recorded anyway: the mutation itself succeeded, and reporting it as
-        # failed would invite a retry that sets the same lineup twice.
-        print(f"  ** lineup written but unverified: {why_ok}")
-        try:
-            from robo import alerts
-            alerts.blast(f"Week {week} lineup written but NOT verified: {why_ok}",
-                         key="lineup-unverified")
-        except Exception:
-            pass
-
     out["applied"] = True
     engine = (f"the NFL Model's simulated means for {modelled} of {len(cands)} "
               f"players" if modelled else "Sleeper's weekly projections")
@@ -398,12 +359,8 @@ def compare(week: int | None = None, season_yr: str = season.SEASON,
     shadow = [{**c, "pts": c["sleeper_pts"], "pts_source": "sleeper"}
               for c in cands]
 
-    # Both engines see the same pins, so a locked starter is held in place on
-    # each side rather than dropped from both -- the comparison stays
-    # apples-to-apples and the totals stay real.
-    current = [x for x in (roster.get("starters") or [])]
-    model_lu, model_total = optimize(cands, pin_locked(cands, current))
-    sleeper_lu, sleeper_total = optimize(shadow, pin_locked(shadow, current))
+    model_lu, model_total = optimize(cands)
+    sleeper_lu, sleeper_total = optimize(shadow)
 
     print(f"week {week} - {provenance or 'model not in use'}")
     print()

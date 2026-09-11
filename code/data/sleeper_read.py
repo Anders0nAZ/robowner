@@ -5,21 +5,11 @@ import time
 from pathlib import Path
 
 import requests
-from requests.adapters import HTTPAdapter
-from urllib3.util.retry import Retry
 
 from robo import RAW
 
 BASE = "https://api.sleeper.app/v1"
 _session = requests.Session()
-# Sleeper (or an intermediary) can close an idle keep-alive while a long local
-# step is running.  A Session otherwise reuses that dead socket and the next
-# read fails instantly; retrying connection errors opens a fresh one.
-_session.mount("https://", HTTPAdapter(max_retries=Retry(
-    total=3, backoff_factor=0.5,
-    status_forcelist=(429, 500, 502, 503, 504),
-    allowed_methods=frozenset(("GET",)),
-)))
 
 
 def get(path: str):

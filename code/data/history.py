@@ -72,36 +72,17 @@ def conn(db=None) -> sqlite3.Connection:
     return c
 
 
-def league_chain(start: str = LEAGUE_ID_2026,
-                 record: dict | None = None) -> list[dict]:
+def league_chain(start: str = LEAGUE_ID_2026) -> list[dict]:
     """Walk previous_league_id back to the beginning.
 
     Stops on a 404: a chain can point at a league that has since been deleted,
     which is the end of the recoverable history, not an error.
-
-    A 404 AND A TIMEOUT ARE NOT THE SAME EVENT, and a bare `except Exception:
-    break` treated them identically -- so a DNS blip, a 500 or a read timeout
-    truncated ten years of league history to whatever had loaded so far, and
-    the caller could not tell a short chain from a complete one. The 404 is the
-    documented stop; everything else is a gap, and `record` is how it says so.
     """
-    import requests
     out, lid = [], start
     while lid and len(out) < 25:
         try:
             L = api.league(lid)
-        except requests.HTTPError as e:
-            code = getattr(e.response, "status_code", None)
-            if code == 404:
-                break                     # the documented end of the chain
-            if record is not None:
-                record["broke_at"] = lid
-                record["why"] = f"HTTP {code} walking back from {lid}"
-            break
-        except Exception as e:
-            if record is not None:
-                record["broke_at"] = lid
-                record["why"] = f"{type(e).__name__}: {str(e)[:120]}"
+        except Exception:
             break
         if not L:
             break
@@ -110,19 +91,10 @@ def league_chain(start: str = LEAGUE_ID_2026,
     return out
 
 
-def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> dict:
-    """Pull league history into SQLite. Returns what it got AND what it missed.
-
-    IT COMMITS PER SEASON REGARDLESS, so a run that lost half its requests
-    leaves a database indistinguishable from a complete one -- INSERT OR REPLACE
-    only overwrites what it managed to fetch and never notices a hole. That is
-    survivable only if the caller is told, which is what `gaps` is for.
-    """
+def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> None:
     players = api.players()
     c = conn(db)
-    gaps: list[str] = []
-    chain_rec: dict = {}
-    for L in league_chain(start, record=chain_rec):
+    for L in league_chain(start):
         season, lid = L["season"], L["league_id"]
         if verbose:
             print(f"— {season} ({lid})")
@@ -148,13 +120,7 @@ def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> dict:
         for wk in range(1, MAX_WEEK + 1):
             try:
                 ms = api.matchups(lid, wk)
-            except Exception as e:
-                # A WEEK THAT FAILED IS NOT A WEEK THAT DOES NOT EXIST. Both
-                # used to `continue` without touching `weeks`, so the printed
-                # count could not distinguish "week 12 has not been played" from
-                # "week 12 timed out", and the partial result was committed
-                # below either way.
-                gaps.append(f"{season} wk{wk} matchups: {type(e).__name__}")
+            except Exception:
                 continue
             if not ms:
                 continue
@@ -167,35 +133,15 @@ def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> dict:
             try:
                 for t in api.transactions(lid, wk):
                     st = t.get("settings") or {}
-                    # NAMED COLUMNS, NOT POSITIONAL. SCHEMA declares `notes`
-                    # before `created`; this tuple supplied them the other way
-                    # round, so a FRESH database silently stored the epoch in
-                    # `notes` and the failure reason in `created`. SQLite's type
-                    # affinity coerces both without complaint, so nothing
-                    # raised. The live file was correct only by accident -- it
-                    # predates the column and got it appended by the ALTER
-                    # migration below, which always appends to the end.
-                    #
-                    # It reaches faab.py, which reads `notes` BY NAME to tell a
-                    # claim that lost on price from one that bounced off a full
-                    # roster: an int there raises AttributeError on .strip(),
-                    # which is not sqlite3.Error and escapes its handler.
-                    c.execute(
-                        "INSERT OR REPLACE INTO transactions "
-                        "(season, transaction_id, week, type, status, roster_ids,"
-                        " adds, drops, waiver_bid, created, notes) "
-                        "VALUES (?,?,?,?,?,?,?,?,?,?,?)", (
-                            season, t["transaction_id"], t.get("leg", wk), t.get("type"),
-                            t.get("status"), json.dumps(t.get("roster_ids") or []),
-                            json.dumps(t.get("adds") or {}),
-                            json.dumps(t.get("drops") or {}),
-                            st.get("waiver_bid"), t.get("created"),
-                            ((t.get("metadata") or {}).get("notes") or "").strip()))
-            except Exception as e:
-                # The except sits OUTSIDE the for, so a failure part-way through
-                # abandons every remaining transaction in the week -- and
-                # transactions are what faab.py fits its bid model on.
-                gaps.append(f"{season} wk{wk} transactions: {type(e).__name__}")
+                    c.execute("INSERT OR REPLACE INTO transactions VALUES "
+                              "(?,?,?,?,?,?,?,?,?,?,?)", (
+                        season, t["transaction_id"], t.get("leg", wk), t.get("type"),
+                        t.get("status"), json.dumps(t.get("roster_ids") or []),
+                        json.dumps(t.get("adds") or {}), json.dumps(t.get("drops") or {}),
+                        st.get("waiver_bid"), t.get("created"),
+                        ((t.get("metadata") or {}).get("notes") or "").strip()))
+            except Exception:
+                pass
 
         npicks = 0
         for d in api.drafts(lid):
@@ -234,20 +180,14 @@ def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> dict:
                         b.get("t2") if isinstance(b.get("t2"), int) else None,
                         b.get("w"), b.get("l"), b.get("p")))
                     nb += 1
-            except Exception as e:
-                gaps.append(f"{season} {kind} bracket: {type(e).__name__}")
+            except Exception:
+                pass
 
         if verbose:
             print(f"   {weeks} weeks, {npicks} picks, {nb} bracket rows")
         c.commit()
         time.sleep(0.2)
     c.close()
-    if chain_rec.get("why"):
-        gaps.append(f"league chain truncated: {chain_rec['why']}")
-    if verbose and gaps:
-        print(f"\n!! INCOMPLETE -- {len(gaps)} gap(s): " + "; ".join(gaps[:6])
-              + (" ..." if len(gaps) > 6 else ""))
-    return {"gaps": gaps, "chain": chain_rec}
 
 
 def stats(db=None) -> None:

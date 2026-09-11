@@ -451,23 +451,10 @@ def enforce_floor(verdicts: list[dict], bundles: list[dict],
 
 
 def judge(bundles: list[dict], model: str = LOCAL_MODEL,
-          verbose: bool = True) -> tuple[list[dict], list[str]]:
-    """Read the prose, return (verdicts, the ids we could not judge).
-
-    A SHORT LIST AND A COMPLETE ONE USED TO BE INDISTINGUISHABLE, and that is
-    what made a failed batch destructive rather than merely unproductive. This
-    returns a bare list, write_verdicts persists exactly what it is handed, and
-    a player in `todo` is by definition NOT in `reuse` -- so a man whose batch
-    failed appeared in neither map and lost his verdict outright: return week,
-    basis, confidence and fingerprint, replaced by a news multiplier of 1.000
-    with nothing anywhere reporting it. With --force and Ollama down, that was
-    the whole file.
-
-    Naming the casualties is what lets the caller carry their PRIOR verdict
-    forward, fingerprint included, so the next run retries them automatically.
-    """
+          verbose: bool = True) -> list[dict]:
+    """Read the prose, return the dates. One batch failing costs that batch."""
     import requests
-    out, failed = [], []
+    out = []
     for i in range(0, len(bundles), LOCAL_BATCH):
         chunk = bundles[i:i + LOCAL_BATCH]
         t0 = time.time()
@@ -482,25 +469,17 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
             got = json.loads(r.json()["message"]["content"]).get("verdicts", [])
         except Exception as e:
             print(f"  batch {i // LOCAL_BATCH + 1} FAILED: {str(e)[:120]}", flush=True)
-            failed += [b["player_id"] for b in chunk]
             continue
         out += enforce_floor(got, chunk, verbose=verbose)
         if verbose:
             print(f"  batch {i // LOCAL_BATCH + 1}/{(len(bundles) - 1) // LOCAL_BATCH + 1}"
                   f"  {len(got)} verdicts  {time.time() - t0:.0f}s", flush=True)
-    # A batch that came back short is a casualty too: the model answered, but
-    # not about him, and he is just as absent from `fresh` as one whose request
-    # never returned.
-    answered = {v.get("player_id") for v in out}
-    failed += [b["player_id"] for b in bundles
-               if b["player_id"] not in answered and b["player_id"] not in failed]
-    return out, failed
+    return out
 
 
 def write_verdicts(verdicts: list[dict], model: str,
                    bundles: list[dict] | None = None,
-                   reuse: dict | None = None,
-                   carry: list[str] | None = None) -> dict:
+                   reuse: dict | None = None) -> dict:
     """Persist with provenance. The provenance is not decoration: it is what
     distinguishes a verdict the bot formed from one somebody typed.
 
@@ -513,15 +492,6 @@ def write_verdicts(verdicts: list[dict], model: str,
     been terminated mid-pipeline once by its own ExecutionTimeLimit. Same rule
     as the NFL Model's store.cached() and robo/refresh.py: never leave a
     half-written file where a whole one used to be.
-
-    `carry` IS THE OTHER HALF OF THAT RULE, and it was missing. A torn write was
-    guarded; a COMPLETE write of truncated content was not -- and that is worse,
-    because it is durable, it parses, and nothing reports it. This persists
-    exactly what it is handed, and a player judge() could not reach is in
-    neither `reuse` (he changed, so he was never in it) nor `fresh` (his batch
-    died) -- so he was silently deleted. Their PRIOR verdicts come forward here
-    unchanged, OLD FINGERPRINT INCLUDED, so needs_judging sees the mismatch and
-    retries them next run rather than treating the gap as settled.
     """
     fps = {b["player_id"]: fingerprint(b) for b in (bundles or [])}
     now = time.time()
@@ -533,20 +503,10 @@ def write_verdicts(verdicts: list[dict], model: str,
         fresh[v["player_id"]] = v
     merged = dict(reuse or {})
     merged.update(fresh)
-    carried = 0
-    if carry:
-        prior = load_verdicts().get("verdicts") or {}
-        for pid in carry:
-            # `fresh` wins where both exist: a late batch that answered about
-            # him is a real verdict, not a casualty.
-            if pid in merged or pid not in prior:
-                continue
-            merged[pid] = prior[pid]
-            carried += 1
     out = {"model": model, "written": now,
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "judged_now": len(fresh), "reused": len(reuse or {}),
-           "carried": carried, "verdicts": merged}
+           "verdicts": merged}
     tmp = VERDICTS.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
     tmp.replace(VERDICTS)
@@ -656,15 +616,11 @@ def main():
             print("  nothing new to judge")
             return
         print(f"  judging {len(todo)}")
-        v, failed = judge(todo)
-        w = write_verdicts(v, LOCAL_MODEL, bundles=todo, reuse=reuse,
-                           carry=failed)
+        v = judge(todo)
+        write_verdicts(v, LOCAL_MODEL, bundles=todo, reuse=reuse)
         dated = [x for x in v if x.get("return_week") or x.get("role_week")]
-        if w.get("carried"):
-            print(f"  !! {len(failed)} could not be judged; "
-                  f"{w['carried']} prior verdict(s) carried forward")
-        print(f"\n{len(v)} of {len(todo)} judged ({len(dated)} carry a date), "
-              f"{len(reuse)} reused, {time.time() - t0:.0f}s")
+        print(f"\n{len(v)} judged ({len(dated)} carry a date), {len(reuse)} reused, "
+              f"{time.time() - t0:.0f}s")
         for x in dated:
             print(f"  wk {str(x.get('return_week') or x.get('role_week')):<4}"
                   f" {(x.get('name') or '')[:22]:<22} "

@@ -259,10 +259,7 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
         wp = season.week_points(w, yr, league_id)
         raw = {r["player_id"]: (r.get("stats") or {}) for r in season.weekly_raw(w, yr)}
         for pid, v in wp.items():
-            # A locked week is banked, not remaining.  Leaving it in made a
-            # finished projection count once directly and again by inflating
-            # calibrated rates over the weeks that actually remain.
-            if not v.get("has_game") or v.get("locked"):
+            if not v.get("has_game"):
                 continue
             p = players.get(pid) or {}
             pos = p.get("position") or "DEF"

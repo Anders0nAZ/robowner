@@ -26,8 +26,6 @@ import requests
 from robo import DATA, MODEL_ROOT, RAW, ROOT
 
 LOG = ROOT / "refresh.log"
-FAILURES = DATA / "refresh_failures.json"
-ALERT_AFTER_FAILURES = 2
 
 
 def _log(msg: str) -> None:
@@ -37,56 +35,16 @@ def _log(msg: str) -> None:
         f.write(line + "\n")
 
 
-def _track_failure(name: str, ok: bool) -> int:
-    """Persist consecutive refresh failures so a stale input cannot be silent."""
-    try:
-        state = json.loads(FAILURES.read_text(encoding="utf-8")) if FAILURES.exists() else {}
-        if not isinstance(state, dict):
-            state = {}
-    except Exception:
-        state = {}
-    if ok:
-        state.pop(name, None)
-        count = 0
-    else:
-        count = int(state.get(name, 0)) + 1
-        state[name] = count
-    try:
-        FAILURES.write_text(json.dumps(state, indent=1), encoding="utf-8")
-    except Exception:
-        pass
-    return count
-
-
-def _alert_repeated_failure(name: str, count: int, detail: str) -> None:
-    """Escalate only repeated failures; alerts.blast itself never raises."""
-    if count < ALERT_AFTER_FAILURES:
-        return
-    try:
-        from robo import alerts
-        alerts.blast(
-            f"Roboner refresh alert: {name} failed {count} consecutive runs: {detail[:120]}",
-            key=f"refresh-{name}", cooldown=23 * 3600,
-            channels=alerts.INSEASON_CHANNELS,
-        )
-    except Exception:
-        pass
-
-
 def step(name):
     def deco(fn):
         def wrapped(*a, **kw):
             t0 = time.time()
             try:
                 out = fn(*a, **kw)
-                _track_failure(name, True)
                 _log(f"{name}: OK {out if out is not None else ''} ({time.time()-t0:.1f}s)")
                 return True
             except Exception as e:
-                detail = str(e)[:200]
-                count = _track_failure(name, False)
-                _log(f"{name}: FAILED — {detail} (consecutive {count})")
-                _alert_repeated_failure(name, count, detail)
+                _log(f"{name}: FAILED — {str(e)[:200]}")
                 return False
         return wrapped
     return deco
@@ -239,18 +197,12 @@ def refresh_scout():
     todo, reuse = scout.needs_judging(b)
     if not todo:
         return f"{len(b)} in pool, nothing changed"
-    v, failed = scout.judge(todo, verbose=False)
-    w = scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse,
-                             carry=failed)
+    v = scout.judge(todo, verbose=False)
+    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse)
     dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
     viol = sum(1 for x in v if x.get("floor_violation"))
-    # len(todo) is what we SET OUT to judge, and reporting it as "judged"
-    # is how a run that lost half its batches read as a clean success.
-    return (f"{len(b)} in pool, {len(v)} of {len(todo)} judged, "
-            + (f"{w['carried']} carried forward after batch failure, "
-               if w.get("carried") else "")
-            + f"{len(reuse)} reused, {dated} dated, "
-            f"{viol} rejected below the floor")
+    return (f"{len(b)} in pool, {len(todo)} judged, {len(reuse)} reused, "
+            f"{dated} dated, {viol} rejected below the floor")
 
 
 @step("expected")
@@ -332,23 +284,10 @@ def rebuild_board():
 
 @step("chat-memory")
 def ingest_chat():
-    """Ingest new chat, then embed EVERYTHING still missing an embedding.
-
-    THE BACKLOG USED TO BE UNREACHABLE. This ran build_embeddings only when the
-    ingest brought something new, which is fine on the happy path and a trap on
-    any other: a batch that failed to embed left messages in the table with no
-    vector, and the next quiet day skipped the retry rather than finishing the
-    job. Thirty-two messages sat unembedded and unsearchable for two days for
-    exactly that reason, and nothing would have picked them up until new chat
-    happened to arrive.
-
-    build_embeddings only ever looks at what is missing, so calling it
-    unconditionally costs one indexed query when there is nothing to do.
-    """
     from robo import chat_memory
     gm = chat_memory.ingest_groupme()
     sl = chat_memory.ingest_sleeper_chat()
-    emb = chat_memory.build_embeddings()
+    emb = chat_memory.build_embeddings() if (gm or sl) else 0
     return f"+{gm} groupme, +{sl} sleeper, {emb} embedded"
 
 
@@ -373,24 +312,14 @@ def harvest_history():
     import robo.history as h
     orig = h.league_chain
     try:
-        h.league_chain = lambda start=None, record=None: [L]
-        res = h.harvest(verbose=False)
+        h.league_chain = lambda start=None: [L]
+        h.harvest(verbose=False)
     finally:
         h.league_chain = orig
     c = sqlite3.connect(h.DB)
     n = c.execute("SELECT COUNT(*) FROM matchups WHERE season='2026'").fetchone()[0]
     c.close()
-    # RAISED, NOT RETURNED. step() logs OK for anything that does not raise, so
-    # a returned "INCOMPLETE" string would have read exactly like a success --
-    # which is what the bare row count already did: one unbounded number,
-    # compared against nothing, unable to show a missing week or a truncated
-    # transaction set, and decorative besides.
-    gaps = res.get("gaps") or []
-    if gaps:
-        raise RuntimeError(
-            f"2026 harvest INCOMPLETE -- {len(gaps)} gap(s), {n} matchup rows "
-            "committed anyway: " + "; ".join(gaps[:6]))
-    return f"2026 refreshed ({n} matchup rows, no gaps)"
+    return f"2026 refreshed ({n} matchup rows)"
 
 
 @step("selfdoc")

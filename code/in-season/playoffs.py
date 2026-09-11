@@ -92,11 +92,7 @@ def standings(league_id: str = LEAGUE_ID_2026) -> dict:
             "wins": int(st.get("wins") or 0), "losses": int(st.get("losses") or 0),
             "ties": int(st.get("ties") or 0),
             "fpts": float(st.get("fpts") or 0) + float(st.get("fpts_decimal") or 0) / 100.0,
-            "owner_id": r.get("owner_id"), "players": r.get("players") or [],
-            # Carried so strength() can pin a locked starter. Without it, a man
-            # whose game has kicked off drops out of his own team's optimal
-            # lineup and understates them for the current week.
-            "starters": r.get("starters") or []}
+            "owner_id": r.get("owner_id"), "players": r.get("players") or []}
     return out
 
 
@@ -141,8 +137,7 @@ def strength(weeks: list[int], league_id: str = LEAGUE_ID_2026) -> dict:
         for w in weeks:
             cands, _ = lineup.project_roster(r["players"], season.SEASON, w,
                                              players, league_id)
-            _, total = lineup.optimize(
-                cands, lineup.pin_locked(cands, r.get("starters") or []))
+            _, total = lineup.optimize(cands)
             per_week[w] = total
         out[rid] = per_week
     return out

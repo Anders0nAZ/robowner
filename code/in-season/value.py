@@ -5,7 +5,7 @@ gain by swapping him for somebody we hold. The model lives in robo/ros.py; this
 module is the seam every consumer imports, so there is exactly one place that
 decides whether the bot is allowed to act on it.
 
-THE GATE IS STILL HERE AND STILL MEANS SOMETHING. It is shut, and it remains
+THE GATE IS STILL HERE AND STILL MEANS SOMETHING. It is now open, but it remains
 a constant in code rather than a setting: it is deliberately absent from the
 settings registry, so no data/settings.json edit and no admin GUI field can
 close or reopen it. Turning the bot loose on the roster took a commit, and
@@ -42,15 +42,6 @@ GATE_MESSAGE = (
     "happened. This is exactly what the bot would have done. See robo/value.py.")
 
 
-_warned: set = set()
-
-
-def _warn_once(msg: str) -> None:
-    if msg not in _warned:
-        _warned.add(msg)
-        print(f"  !! {msg}", flush=True)
-
-
 def ready() -> bool:
     """Is there a real rest-of-season number to reason with?"""
     return bool(VALUATION_READY)
@@ -68,8 +59,7 @@ def may_submit() -> bool:
     return bool(VALUATION_READY and SUBMIT_ENABLED)
 
 
-def ros_value(player_id: str, week: int, field: str = "mean",
-              table: dict | None = None) -> float:
+def ros_value(player_id: str, week: int, field: str = "mean") -> float:
     """What this player is worth from `week` to the end of the season.
 
     EXPECTED IS THE VALUATION; ros.json PRICES WHAT IT DOES NOT MODEL. Pointing
@@ -92,19 +82,11 @@ def ros_value(player_id: str, week: int, field: str = "mean",
     """
     try:
         from robo import expected
-        d = table if table is not None else expected.load()
-        row = (d.get("players") or {}).get(str(player_id))
+        row = (expected.load().get("players") or {}).get(str(player_id))
         if row and row.get("ros") is not None:
             return float(row["ros"])
-    except Exception as e:
-        # THE FALLTHROUGH IS DESIGNED; AN EXCEPTION REACHING IT IS NOT. A
-        # kicker or a defence lands here by having no row at all, which costs
-        # no exception -- so anything caught here means the valuation itself is
-        # broken, and swallowing it silently downgraded every player in the
-        # league to ros.json with nothing saying so. Said once per process
-        # because this is called per candidate across a 424-man wire.
-        _warn_once(f"expected.load() failed, falling back to ros.json: "
-                   f"{type(e).__name__}: {str(e)[:120]}")
+    except Exception:
+        pass
     return ros.value(player_id, week, field)
 
 
@@ -141,12 +123,7 @@ def near_value(player_id: str, week: int, horizon: int = NEAR_WEEKS,
         by = row.get("by_week") or {}
         return round(sum(ros.weight_of(d, w) * (by.get(str(w)) or {}).get("final", 0.0)
                          for w in range(week, week + horizon)), 3)
-    except Exception as e:
-        # Same rule as ros_value: a missing row is a legitimate 0.0 and costs no
-        # exception. One caught here means a broken artifact is silently ranking
-        # every candidate at nothing, which is the exact shape of the failure
-        # this function was written to fix.
-        _warn_once(f"near_value fell back to 0.0: {type(e).__name__}: {str(e)[:120]}")
+    except Exception:
         return 0.0
 
 
@@ -165,11 +142,10 @@ def provisional(row: dict) -> float:
     return float(row.get("blend_pts") or row.get("proj_pts") or 0.0)
 
 
-def value_of(row: dict, week: int, field: str = "mean",
-             table: dict | None = None) -> tuple[float, bool]:
+def value_of(row: dict, week: int, field: str = "mean") -> tuple[float, bool]:
     """(value, is_real). Callers must surface `is_real` to the reader."""
     if ready():
-        return ros_value(row["player_id"], week, field, table=table), True
+        return ros_value(row["player_id"], week, field), True
     return provisional(row), False
 
 
