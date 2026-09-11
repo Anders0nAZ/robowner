@@ -13,13 +13,10 @@ ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
 RAW = DATA / "raw"
 
-# The NFL Model repo, which supplies the weekly projections. Hardcoded the same
-# way that project hardcodes its way back here (nflmodel/__init__.py ROBO_ROOT):
-# two local repos on one machine, bootstrapped rather than packaged. It lives
-# here and not in refresh.py because status.py needs it too -- the name has a
-# SPACE in it, which is exactly the shape that defeats the path pattern
-# redacting tracebacks on the public page.
-MODEL_ROOT = Path(r"C:\NFL Model")
+# Roboner's private NFL model owns a separate data subtree while sharing this
+# repository and Python environment. The production handoff remains
+# data/model_week.json; this is the model's inputs, caches, and export staging.
+MODEL_DATA = DATA / "nflmodel"
 
 LEAGUE_ID_2026 = "1383503237683879936"
 LEAGUE_ID_2025 = "1255710645953773568"

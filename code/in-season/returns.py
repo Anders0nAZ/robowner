@@ -56,9 +56,9 @@ import json
 import time
 from functools import lru_cache
 
-from robo import DATA, MODEL_ROOT, roles, settings
+from robo import DATA, MODEL_DATA, roles, settings
 
-PARQUET = MODEL_ROOT / "data" / "parquet"
+PARQUET = MODEL_DATA / "parquet"
 FIT_FILE = DATA / "returns_fit.json"
 SCHEMA = 1
 

@@ -128,10 +128,10 @@ SRC_COL = 62
 
 SOURCES = {
     "sleeper": "Sleeper's weekly projection feed, scored under this league",
-    "model": "data/model_week.json  (the NFL Model's simulated week)",
-    "vegas": r"C:\NFL Model\data\parquet\schedules.parquet  (posted lines)",
+    "model": "data/model_week.json  (the Roboner NFL model's simulated week)",
+    "vegas": "data/nflmodel/parquet/schedules.parquet  (posted lines)",
     "fallback": "data/board_2026.csv  season rate over the games left",
-    "roles": r"C:\NFL Model\data\parquet\player_stats_*.parquet  (usage)",
+    "roles": "data/nflmodel/parquet/player_stats_*.parquet  (usage)",
     "roles fit": "data/roles_fit.json  (1,242 measured vacancies)",
     "odds": "data/playoff_odds.json",
     "scout": "data/news_verdicts.json",
@@ -279,7 +279,7 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
             sources.setdefault(pid, []).append(src)
             detail.setdefault(pid, {})[w] = d
 
-    # The current week is the one the NFL Model actually simulated, and it scores
+    # The current week is the one the Roboner NFL model actually simulated, and it scores
     # all 57 keys off 4,000 stat lines rather than 35 keys off a point estimate.
     # Absence means keep Sleeper's number, never zero -- the rule lineup.py
     # documents, for the same reason.

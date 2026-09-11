@@ -45,7 +45,7 @@ import subprocess
 import time
 from datetime import datetime, timedelta, timezone
 
-from robo import DATA, DRAFT_ID_2026, MODEL_ROOT, RAW, ROOT, injuries
+from robo import DATA, DRAFT_ID_2026, RAW, ROOT, injuries
 
 OUT = ROOT / "decision-log" / "status.html"
 STATE = DATA / "status_state.json"
@@ -94,11 +94,8 @@ _WINPATH = re.compile(r"[A-Za-z]:\\[^\s\"'<>|]*")
 # own it would publish " Robo Owner\robo\groupme.py" out of a real traceback.
 # All three spellings, because a path reaches us raw from an OSError, escaped
 # from a repr()'d traceback, and slash-separated from anything pathlib touched.
-# BOTH repo roots. The NFL Model's directory name has a space in it too, so a
-# traceback naming its export file published everything after "C:\NFL " until
-# this covered it.
 _ROOT_FORMS = tuple(
-    form for base in (ROOT, MODEL_ROOT)
+    form for base in (ROOT,)
     for form in (str(base).replace("\\", "\\\\"), str(base),
                  str(base).replace("\\", "/")))
 
@@ -427,7 +424,7 @@ SOURCES = [
     # same moment the lineup stops trusting the file, not before it and not
     # after. Moving one without the other is how the page reports healthy on a
     # source nothing is using.
-    ("model",       "NFL Model projections", 30 * 3600, "RobonerRefresh"),
+    ("model",       "Roboner NFL model projections", 30 * 3600, "RobonerRefresh"),
     # 20 hours, matching ros.MAX_AGE_H, so the page goes amber at the same
     # moment the valuation stops trusting itself -- the same rule as the model
     # row above.
@@ -449,7 +446,7 @@ SOURCES = [
     # is nothing to hold and the row reads BAD with "no player_stats yet" --
     # which is the honest state, and the reason roles.py is running on last
     # season's shares until then.
-    ("usage",       "nflverse usage data",  30 * 3600, "NFLModelCaptureDaily"),
+    ("usage",       "nflverse usage data",  30 * 3600, "RobonerModelCaptureDaily"),
     ("chat-memory", "League chat index",    26 * 3600, "RobonerRefresh"),
     ("media-pool",  "Reaction image pool",  26 * 3600, "RobonerRefresh"),
     # ADP and ECR are deliberately absent, for the same reason and with the same
@@ -580,8 +577,8 @@ def _source_marker(step: str):
             "%.0f%%" % (ours * 100) if ours is not None else "?")
     if step == "usage":
         # nflverse's CURRENT-season player_stats, which roles.py reads to work
-        # out who actually has the job. It is refreshed by the NFL Model's
-        # ingest, not ours -- hence the NFLModelCaptureDaily attribution -- and
+        # out who actually has the job. It is refreshed by Roboner's model
+        # ingest -- hence the RobonerModelCaptureDaily attribution -- and
         # it legitimately does not exist until week 1 has been played, which the
         # detail says rather than the dot pretending it is broken.
         try:
@@ -678,14 +675,11 @@ def ingests() -> list:
     return rows
 
 
-# BOTH projects. The job that PRODUCES the weekly model artifact
-# (NFLModelCaptureDaily, plus the NFLModelCapture_* one-shots it queues before
-# each kickoff slot) lives in the NFL Model repo, so a Roboner-only query left
-# the page able to show the artifact going stale but never why: every visible
-# job read green while the one that actually failed was not on the list.
+# Every scheduled producer now belongs to Roboner, including the daily model
+# capture and the one-shots it queues before kickoff slots.
 _PS_TASKS = (
-    "Get-ScheduledTask | Where-Object { $_.TaskName -like 'Roboner*' "
-    "-or $_.TaskName -like 'NFLModel*' } | ForEach-Object { "
+    "Get-ScheduledTask | Where-Object { $_.TaskName -like 'Roboner*' } "
+    "| ForEach-Object { "
     "$i = $_ | Get-ScheduledTaskInfo; [PSCustomObject]@{ "
     "name = $_.TaskName; state = [string]$_.State; "
     "last = $(if ($i.LastRunTime) { $i.LastRunTime.ToString('o') } else { '' }); "
@@ -1027,7 +1021,7 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # of the draft-day tasks, so asserting on it would be the same false alarm
     # as the guard. Run it by hand, or schedule it again when something in
     # season actually consumes its verdicts.
-    # NFLModelCaptureDaily is in this list because the weekly lineup is decided
+    # RobonerModelCaptureDaily is in this list because the weekly lineup is decided
     # on what it produces: a disabled producer is a readiness failure, not just
     # a data row that will go amber in thirty hours. Its ONE-SHOTS are NOT
     # asserted -- they are supposed to be absent most days, and asserting them
@@ -1039,7 +1033,7 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # on a Sunday, while its RobonerPreKick_* one-shots are absent most days by
     # design and must never be asserted.
     inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers",
-                       "RobonerPreKickDaily", "NFLModelCaptureDaily"]
+                       "RobonerPreKickDaily", "RobonerModelCaptureDaily"]
                       if done else ["RobonerScout"])
     for name in inseason_tasks:
         t = by_name.get(name)
@@ -1358,7 +1352,7 @@ def _proj_source(ins) -> str:
     KEYED ON HOW MANY PLAYERS THE MODEL ACTUALLY PRICED, not on whether
     proj_source is set: that field carries the REASON when the model is not in
     use, so it is truthy either way and testing it rendered a missing artifact
-    as "NFL Model, 0 of 17 players" -- the one reading this row exists to
+    as "Roboner NFL model, 0 of 17 players" -- the one reading this row exists to
     prevent.
     """
     n = ins.get("proj_modelled") or 0
@@ -1366,7 +1360,7 @@ def _proj_source(ins) -> str:
         why = ins.get("proj_source") or "the model is not in use"
         return "Sleeper weekly projections - %s" % why
     age = ins.get("proj_age_h")
-    return "NFL Model, %s of %s players%s" % (
+    return "Roboner NFL model, %s of %s players%s" % (
         n, ins.get("proj_of_roster"),
         ", %.1fh old" % age if age is not None else "")
 

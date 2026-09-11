@@ -116,7 +116,7 @@ def season_block(season_yr: str = season.SEASON) -> dict:
 def capture(season_yr: str = season.SEASON, weeks=None) -> dict:
     """Snapshot every remaining week, plus the season projection behind them.
 
-    The current week is included even though ros.py prefers the NFL Model for
+    The current week is included even though ros.py prefers the Roboner NFL model for
     it: it is the only week whose movement we can already verify, so it is the
     control that says the capture itself is working.
     """

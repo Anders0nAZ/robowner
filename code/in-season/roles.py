@@ -4,13 +4,13 @@ WHAT THIS REPLACES. bench.py priced inheritance off Sleeper's depth_chart_order
 with four invented constants (INHERIT_P = {2: .55, 3: .25, 4: .15, 5: .10}, one
 curve for every position). Both repos already say the input is bad: this one
 calls depth_chart_order "a roster formality [that] says nothing about a position
-battle", and the NFL Model's notes say the nflverse depth-chart schema broke at
+battle", and the Roboner NFL model's notes say the nflverse depth-chart schema broke at
 2025 and recommend snap or target share instead. It was the right call at draft
 time -- a stated assumption beats a fabricated regression -- but the rookie-hold
 rule in ros.py is only as good as this number, so it gets built properly.
 
 WHAT REPLACES IT. Ten seasons of nflverse player_stats, already on disk in the
-NFL Model's parquet cache. Two things are measured rather than assumed:
+Roboner NFL model's local parquet cache. Two things are measured rather than assumed:
 
   * WHO IS AHEAD OF HIM -- rolling share of the team's positional opportunity,
     so the ordering is whoever actually gets the touches.
@@ -54,9 +54,9 @@ import json
 import time
 from functools import lru_cache
 
-from robo import DATA, MODEL_ROOT, vegas
+from robo import DATA, MODEL_DATA, vegas
 
-PARQUET = MODEL_ROOT / "data" / "parquet"
+PARQUET = MODEL_DATA / "parquet"
 FIT_FILE = DATA / "roles_fit.json"
 # 2: carries the takeover fit alongside the absorption curve.
 SCHEMA = 2
@@ -392,7 +392,7 @@ def _crosswalk() -> dict:
             continue
         # espn_id arrives as a float in the parquet and as a string in ESPN's
         # URLs. Normalising here rather than at the join keeps the two
-        # vocabularies from meeting anywhere else -- the same trap the NFL Model
+        # vocabularies from meeting anywhere else -- the same trap the Roboner NFL model
         # hit comparing an integer sleeper_id against Sleeper's string one.
         espn = r["espn_id"]
         out[str(sid)] = {"gsis": r["gsis_id"],

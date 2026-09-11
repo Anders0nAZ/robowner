@@ -5,7 +5,7 @@ projected points under our league scoring, benching bye and injured-Out players.
 Legality first: never leave a fillable slot empty, and never start an
 injured-Out player while a healthy alternative exists.
 
-The projection is the NFL Model's simulated mean where it has one, and
+The projection is Roboner's NFL model simulated mean where it has one, and
 Sleeper's weekly number where it does not -- see robo/model_proj.py, which is
 also where every reason for falling back is spelled out. Nothing else changes
 with the source: bye, kickoff lock and injury designation all still come from
@@ -317,7 +317,7 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
     from robo.sleeper_write import set_starters
     set_starters(roster["roster_id"], week, starter_ids, league_id)
     out["applied"] = True
-    engine = (f"the NFL Model's simulated means for {modelled} of {len(cands)} "
+    engine = (f"Roboner's NFL model means for {modelled} of {len(cands)} "
               f"players" if modelled else "Sleeper's weekly projections")
     why = (f"Projected {total} points under league scoring from {engine}, "
            f"{gain:+.1f} versus the lineup as it stood. Bye-week and "

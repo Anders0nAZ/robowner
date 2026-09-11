@@ -21,7 +21,7 @@ writes to decision-log/ or calls decisions.publish().
 
 import time
 
-# Position colours, matched to the NFL Model viewer so the two apps read as one
+# Position colours, matched to the Roboner NFL model viewer
 # family when they are open side by side.
 POS_COLOR = {"QB": "#e45756", "RB": "#4c78a8", "WR": "#54a24b",
              "TE": "#f58518", "K": "#b279a2", "DEF": "#79706e"}
@@ -29,7 +29,7 @@ POS_COLOR = {"QB": "#e45756", "RB": "#4c78a8", "WR": "#54a24b",
 # The source tags ros.py stamps on each week, and what each one means to a
 # reader who has not read the module.
 SOURCE_HELP = {
-    "model": "the NFL Model's simulated week -- all 57 scoring keys off 4,000 "
+    "model": "Roboner's NFL model week -- all 57 scoring keys off 4,000 "
              "stat lines. Only ever the current week.",
     "sleeper": "Sleeper's weekly projection, scored under this league, plus an "
                "estimate of the 22 scoring keys its feed omits.",

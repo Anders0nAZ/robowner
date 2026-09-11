@@ -482,7 +482,7 @@ REGISTRY: list[S] = [
       "someone who cannot play if he out-projects the alternative."),
     S(LINEUP, "robo.model_proj", "USE_MODEL", bool,
       "Which engine prices the weekly lineup.",
-      "On, the projection is the NFL Model's simulated mean -- 4,000 stat "
+      "On, the projection is Roboner's NFL model mean -- 4,000 stat "
       "lines scored under all 57 of our keys. Off, it is Sleeper's weekly "
       "number, which carries 23 of them and has never included a "
       "quarterback's sack penalty or any bonus tier. Off is the rollback if "
@@ -502,7 +502,7 @@ REGISTRY: list[S] = [
       "minutes old rather than hours, so lowering this buys freshness. It "
       "cannot go too low: the cascade takes about twenty seconds and Sleeper "
       "locks each player at his own kickoff, so anything under a couple of "
-      "minutes risks deciding after the lock. Kept just behind the NFL Model's "
+      "minutes risks deciding after the lock. Kept just behind Roboner's model "
       "own fifteen-minute capture so the two jobs do not contend.",
       bounds=(2, 120), unit="minutes"),
     S(LINEUP, "robo.prekick", "SLOT_WINDOW_MIN", int,

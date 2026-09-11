@@ -490,7 +490,7 @@ def write_verdicts(verdicts: list[dict], model: str,
     with nothing anywhere reporting it. This is not hypothetical: scout runs for
     thirty to fifty minutes inside RobonerRefresh, and that task has already
     been terminated mid-pipeline once by its own ExecutionTimeLimit. Same rule
-    as the NFL Model's store.cached() and robo/refresh.py: never leave a
+    as the Roboner NFL model's store.cached() and robo/refresh.py: never leave a
     half-written file where a whole one used to be.
     """
     fps = {b["player_id"]: fingerprint(b) for b in (bundles or [])}

@@ -50,8 +50,8 @@ ORDER IS LOAD-BEARING IN TWO PLACES, and both are easy to get backwards.
   side of it and the reason for the first call is not the reason for the others.
 
 THE MODEL IS A SUBPROCESS, NEVER AN IMPORT. model_proj.py's rule is that the
-artifact is the interface, and its concern is that a stall in the other repo
-must never become a lineup that never gets set. A subprocess with a timeout
+artifact is the interface, and its concern is that a simulation stall must
+never become a lineup that never gets set. A subprocess with a timeout
 honours that; an import defeats it. Every fallback already exists -- a failed
 export leaves yesterday's artifact, and model_proj refuses one too old and drops
 to Sleeper's live weekly feed, which is 23 of 57 scoring keys but current.
@@ -66,7 +66,7 @@ import subprocess
 import sys
 import time
 
-from robo import DATA, LEAGUE_ID_2026, MODEL_ROOT, ROOT, season, settings
+from robo import DATA, LEAGUE_ID_2026, ROOT, season, settings
 
 # How long the weekly-projection export may take before we stop waiting and use
 # whatever artifact we already hold. Measured at 4.0s for a full resimulation
@@ -151,7 +151,7 @@ def _pull_schedules() -> str:
     """Re-pull nflverse schedules, then forget what we already read from them.
 
     A SUBPROCESS, NOT AN IMPORT -- the same rule the rest of the model wears
-    here: the artifact is the interface, so a stall next door cannot become a
+    here: the artifact is the interface, so a simulation stall cannot become a
     lineup that never gets set. store.cached() writes through a .tmp and keeps
     the existing file when a fetch fails, so the worst case is the snapshot we
     already had, whose age the freshness check then reports.
@@ -193,12 +193,12 @@ def _pull_schedules() -> str:
 
 
 def _model_cmd(args: list[str], timeout: int) -> tuple[bool, str]:
-    """Run one NFL Model command as a subprocess. Never raises."""
-    if not MODEL_ROOT.exists():
-        return False, f"no NFL Model tree at {MODEL_ROOT}"
+    """Run one Roboner NFL model command as a subprocess. Never raises."""
+    if not (ROOT / "nflmodel" / "__init__.py").exists():
+        return False, f"no Roboner NFL model package under {ROOT}"
     t0 = time.time()
     try:
-        r = subprocess.run([sys.executable, "-m"] + args, cwd=str(MODEL_ROOT),
+        r = subprocess.run([sys.executable, "-m"] + args, cwd=str(ROOT),
                            capture_output=True, text=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         return False, f"{args[0]} exceeded {timeout}s; using what we hold"
@@ -210,13 +210,12 @@ def _model_cmd(args: list[str], timeout: int) -> tuple[bool, str]:
 
 
 def capture_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
-    """Take a fresh pre-kickoff projection snapshot in the NFL Model.
+    """Take a fresh pre-kickoff projection snapshot in the Roboner NFL model.
 
     THIS IS THE STEP THAT MAKES THE EXPORT REGENERATE. The model's artifact key
     fingerprints its own capture directory; nothing on our side is in it. Without
-    this the export is a cache hit and the weekly number is whatever the other
-    repo's cron last produced -- which is precisely the schedule dependency the
-    cascade exists to remove.
+    this the export is a cache hit and the weekly number remains anchored on the
+    most recent local capture.
 
     Captures are additive and never overwritten, so an extra one costs a file.
     On a Sunday the model takes several of its own anyway.
@@ -229,9 +228,9 @@ def capture_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]
 def export_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
     """Regenerate this week's projection, AFTER the pull. Never raises.
 
-    Run as a subprocess against the other repo's own interpreter working
-    directory, so nothing in this process imports polars, nflreadpy or a decade
-    of play-by-play. See the header for why that distinction is not cosmetic.
+    Run as a subprocess from the Roboner root, so nothing in this process imports
+    polars, nflreadpy or a decade of play-by-play. See the header for why that
+    distinction is not cosmetic.
     """
     ok, how = _model_cmd(["nflmodel.export", "--week", str(week),
                           "--league", "rurffl"], timeout)
@@ -464,7 +463,7 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     and gets 11.39 points down to 4.72, monotone across all eight buckets -- a
     6.7-point spread on a slot averaging eight. The same fit on 1,478 kicker
     weeks runs 6.95 to 8.16 with a correlation of +0.051 and no ordering at all,
-    and the NFL Model separately found the top ten kickers in a week span about
+    and the Roboner NFL model separately found the top ten kickers in a week span about
     a third of a point. So a kicker is held, replaced when he is hurt or on bye,
     and never streamed; churning a roster spot weekly to chase noise is a cost
     with no matching benefit.

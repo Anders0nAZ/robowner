@@ -23,7 +23,7 @@ from datetime import datetime
 
 import requests
 
-from robo import DATA, MODEL_ROOT, RAW, ROOT
+from robo import DATA, MODEL_DATA, RAW, ROOT
 
 LOG = ROOT / "refresh.log"
 
@@ -233,7 +233,7 @@ def rebuild_ros():
     return f"{len(rows)} players from week {d['week']}, top {top:.0f}"
 
 
-MODEL_OUT = MODEL_ROOT / "out"
+MODEL_OUT = MODEL_DATA / "out"
 
 
 @step("model")
@@ -242,13 +242,13 @@ def refresh_model():
 
 
 def pull_model() -> str:
-    """The NFL Model's weekly distributions, validated and copied in.
+    """Roboner's NFL model distributions, validated and copied in.
 
     COPIED, not read in place. Everything the bot runs on lives under its own
-    data/ directory, so an NFL Model tree that is missing, half-written, or on
-    a drive that did not mount cannot reach robo.lineup -- which writes to
-    Sleeper unattended. A failure here leaves yesterday's file, and a file too
-    old to trust is refused by model_proj rather than used.
+    root. The model writes to its own staging directory. A missing or half-written
+    export cannot reach robo.lineup, which writes to Sleeper unattended. A
+    failure here leaves yesterday's file, and a file too old to trust is
+    refused by model_proj rather than used.
     """
     from robo import LEAGUE_ID_2026, season
     wk = season.current_week()

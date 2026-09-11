@@ -7,12 +7,9 @@ scoring keys the feed omits. Streaming a defence is entirely a question of who
 they play, so it needs a different input, and the market is the honest one: a
 team's implied total IS the consensus forecast of how much they will score.
 
-WHERE THE NUMBERS COME FROM. nflverse's schedule table, already downloaded and
-kept fresh by the NFL Model at data/parquet/schedules.parquet. Read directly
-rather than by importing nflmodel: that package imports robo on the way up
-(nflmodel/__init__.py bootstraps ROBO_ROOT onto sys.path), so importing it back
-would be a cycle at import time, and the module that would die of it is the
-chat responder.
+WHERE THE NUMBERS COME FROM. nflverse's schedule table, downloaded and kept
+fresh by Roboner's private NFL model under data/nflmodel/parquet. Read directly
+so the chat responder never imports the heavy simulation stack.
 
 The arithmetic and the two team-code maps are transcribed from
 nflmodel/dist/kdef.py:history and nflmodel/teams.py, which stay the source of
@@ -33,9 +30,9 @@ thing this module exists to avoid.
 import argparse
 from functools import lru_cache
 
-from robo import MODEL_ROOT
+from robo import MODEL_DATA
 
-PARQUET = MODEL_ROOT / "data" / "parquet" / "schedules.parquet"
+PARQUET = MODEL_DATA / "parquet" / "schedules.parquet"
 
 # Sleeper's dialect -> nflverse's. Sleeper writes LAR where nflverse writes LA.
 # Transcribed from nflmodel/teams.py ALIAS.

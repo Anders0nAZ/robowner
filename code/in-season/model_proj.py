@@ -1,6 +1,6 @@
-"""This week's projections from the NFL Model, or nothing at all.
+"""This week's projections from Roboner's private NFL model, or nothing.
 
-The NFL Model repo simulates 4,000 stat lines per player and scores
+The local model simulates 4,000 stat lines per player and scores
 them under this league's own settings, which makes its number strictly more
 complete than Sleeper's weekly projection: Sleeper's feed carries 23 of our 57
 scoring keys, so its number has never included a quarterback's sack penalty,
@@ -9,7 +9,7 @@ any bonus tier, a 40+ yard touchdown, or return yardage.
 THE ARTIFACT IS THE INTERFACE, not an import. robo.lineup runs unattended twice
 a day and writes to Sleeper. Importing the model would put a nflverse download,
 a decade of play-by-play, and four thousand simulations inside that write --
-so a stall in the other repo becomes a lineup that never gets set. Reading a
+so a simulation stall becomes a lineup that never gets set. Reading a
 file it validated this morning means a broken model goes stale instead, and
 stale falls back to Sleeper, which is what the optimizer ran on before.
 
@@ -119,7 +119,7 @@ def week_projections(week: int, season_yr: str = season.SEASON,
     # -- which players it flagged as questionable, which ids it could not
     # resolve -- and the decision log is read by the league, not by us.
     snap = str(d.get("anchor") or "unknown").split("  |  ")[0].strip()
-    return d["players"], (f"NFL Model, {len(d['players'])} players, {age:.1f}h old, "
+    return d["players"], (f"Roboner NFL model, {len(d['players'])} players, {age:.1f}h old, "
                           f"anchored on {snap}")
 
 

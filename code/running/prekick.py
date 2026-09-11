@@ -1,8 +1,8 @@
 """Put the decision cascade in front of every kickoff, not on a wall clock.
 
 THE PROBLEM THIS SOLVES. Roboner decided at three fixed times a day -- 07:00,
-07:00's roster pass and 09:00/16:00 from RobonerLineup -- while the NFL Model
-next door has, since before the season, been taking a capture fifteen minutes
+07:00's roster pass and 09:00/16:00 from RobonerLineup -- while the local NFL
+model has, since before the season, been taking a capture fifteen minutes
 before every kickoff slot. So the freshest data in the system was collected on
 schedule and then not read by the thing making the decision. Week 1's Sunday
 afternoon block kicks at 13:25 local with the last Roboner run at 09:00: a
@@ -14,7 +14,7 @@ fire about six times, each paying a full import. This runs once a day and
 registers a one-shot per remaining slot, which is the same design the model's
 archive_projections.plan_day() already uses and for the same reason.
 
-WHY NOT JUST CALL THIS FROM THE MODEL'S CaptureNow.bat. Three lines would have
+WHY NOT JUST CALL THIS from RobonerModelCaptureNow.bat. Three lines would have
 done it, and the dependency direction already exists. But the cascade runs its
 own capture and export as steps, so it would capture twice within seconds, and
 CaptureNow.bat is the one job in either project where a missed window cannot be
