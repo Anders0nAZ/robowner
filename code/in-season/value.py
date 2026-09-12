@@ -27,8 +27,8 @@ from robo import ros
 # the one the bot would act on.
 VALUATION_READY = True
 
-# May the bot ACT on it? Yes. Opened after the injury-response replay, failure
-# suite and repeatable dry cascade passed on 11 September 2026.
+# May the bot ACT on it? No. The injury-response implementation remains in dry
+# review until Nate explicitly approves opening the transaction gate.
 #
 # THESE ARE TWO DIFFERENT QUESTIONS AND WERE ONE FLAG FOR A DAY, WHICH WAS A
 # MISTAKE. Collapsing them means the only way to stop the bot submitting is to
@@ -36,11 +36,11 @@ VALUATION_READY = True
 # reading stand-in numbers to decide whether to trust the real ones, which is
 # exactly backwards. Split, a dry run shows precisely what would have been
 # submitted, priced on the real valuation, and submits none of it.
-SUBMIT_ENABLED = True
+SUBMIT_ENABLED = False
 
 GATE_MESSAGE = (
-    "the roster valuation and transaction gate are live; --apply may submit "
-    "the approved move to Sleeper. See robo/value.py.")
+    "the roster valuation is live but the transaction gate is closed pending "
+    "human review; --apply will not submit to Sleeper. See robo/value.py.")
 
 
 def ready() -> bool:
