@@ -151,7 +151,9 @@ def fetch(timeout: int = 30) -> tuple[dict, str]:
     out = {"schema": SCHEMA, "generated_utc": datetime.now(timezone.utc).isoformat(),
            "season": season.SEASON, "teams": len(teams),
            "unmatched": unmatched, "players": rows}
-    CACHE.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp = CACHE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp.replace(CACHE)
     _cached.cache_clear()
     return out, ""
 

@@ -83,6 +83,11 @@ def _memo(key, fn, ttl: int = _CACHE_TTL):
     return val
 
 
+def invalidate_live() -> None:
+    """Drop short-lived league/schedule caches before a consequential write."""
+    _cache.clear()
+
+
 # ---------------------------------------------------------------- league shape
 
 def league(league_id: str = LEAGUE_ID_2026) -> dict:

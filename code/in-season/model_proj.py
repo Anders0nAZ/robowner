@@ -25,6 +25,7 @@ from datetime import datetime, timezone
 from robo import DATA, season, settings
 
 MODEL_FILE = DATA / "model_week.json"
+HORIZON_FILE = DATA / "model_horizon.json"
 
 SCHEMA = 1
 
@@ -121,6 +122,41 @@ def week_projections(week: int, season_yr: str = season.SEASON,
     snap = str(d.get("anchor") or "unknown").split("  |  ")[0].strip()
     return d["players"], (f"Roboner NFL model, {len(d['players'])} players, {age:.1f}h old, "
                           f"anchored on {snap}")
+
+
+def horizon_projections(season_yr: str = season.SEASON,
+                        league_id: str | None = None) -> tuple[dict, str]:
+    """{week: {player_id: distribution}}, or nothing with a reason.
+
+    The horizon is for roster value only.  The current-week lineup continues
+    to read MODEL_FILE, whose pre-kickoff refresh cadence is much tighter.
+    """
+    if not USE_MODEL:
+        return {}, "model projections switched off (model_proj.USE_MODEL)"
+    if not HORIZON_FILE.exists():
+        return {}, f"no model horizon at {HORIZON_FILE.name}"
+    try:
+        d = json.loads(HORIZON_FILE.read_text(encoding="utf-8"))
+    except Exception as e:
+        return {}, f"model horizon unreadable: {str(e)[:80]}"
+    if d.get("schema") != SCHEMA:
+        return {}, f"model horizon schema {d.get('schema')}, expected {SCHEMA}"
+    if str(d.get("season")) != str(season_yr):
+        return {}, f"model horizon is for season {d.get('season')}"
+    if league_id and d.get("league_id") != league_id:
+        return {}, f"model horizon is for league {d.get('league_id')}"
+    try:
+        age = _age_hours(d.get("generated_utc") or "")
+    except Exception:
+        return {}, "model horizon has no readable generated_utc"
+    if age < -1.0 or age > MAX_AGE_H:
+        return {}, (f"model horizon is {-age:.1f}h in the future" if age < -1.0
+                    else f"model horizon is {age:.1f}h old (limit {MAX_AGE_H:.0f}h)")
+    weeks = d.get("weeks") or {}
+    if not isinstance(weeks, dict) or not weeks:
+        return {}, "model horizon carries no weeks"
+    out = {int(w): (block.get("players") or {}) for w, block in weeks.items()}
+    return out, f"Roboner NFL model horizon, {len(out)} weeks, {age:.1f}h old"
 
 
 def main():

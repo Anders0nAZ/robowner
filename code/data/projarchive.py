@@ -336,8 +336,9 @@ def report(week: int | None = None, min_move: float = 0.5,
                         for m in d["moves"][:3])
         L.append(f"  {w:<6}{d['compared']:>9}{d['moved']:>7}"
                  f"{d['share']:>7.1%}   {top}")
-    L += ["", "  A future week that never moves means Sleeper is not repricing it,",
-          "  and ros.NEWS_APPLY_FUTURE should carry the news instead of halving it."]
+    L += ["", "  This remains a research measurement. Roster value now comes from",
+          "  the weekly NFL model horizon, so Sleeper future-week behavior is not",
+          "  a calibration input or transaction-policy dial."]
     return "\n".join(L)
 
 

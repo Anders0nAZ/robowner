@@ -50,10 +50,11 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery. What a p
 | [`lineup.py`](in-season/lineup.py) | Weekly lineup optimizer. |
 | [`model_proj.py`](in-season/model_proj.py) | This week's projections from Roboner's private NFL model, or nothing. |
 | [`ir.py`](in-season/ir.py) | Injured-reserve moves: the one roster decision that needs no valuation. |
-| [`value.py`](in-season/value.py) | Rest-of-season player value -- the seam, now wired to a real number. |
+| [`value.py`](in-season/value.py) | Rest-of-season player value -- the transaction valuation seam. |
 | [`moves.py`](in-season/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
+| [`newswatch.py`](in-season/newswatch.py) | Ten-minute injury and opportunity watcher. |
 | [`ros.py`](in-season/ros.py) | What a player is worth from here to the end -- the number moves.py was waiting on. |
-| [`expected.py`](in-season/expected.py) | Expected points, conditioned on actually playing -- one number, built once. |
+| [`expected.py`](in-season/expected.py) | Injury-responsive weekly value for roster management. |
 | [`returns.py`](in-season/returns.py) | When a hurt man comes back -- measured, and as a distribution rather than a date. |
 | [`marginal.py`](in-season/marginal.py) | What a roster move is worth, across the worlds where it matters. |
 | [`roles.py`](in-season/roles.py) | Who actually has the job, and who gets it if it opens -- measured, not declared. |

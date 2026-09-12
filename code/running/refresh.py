@@ -271,7 +271,34 @@ def pull_model() -> str:
     if len(players) < 300:
         raise ValueError(f"only {len(players)} players; keeping the old file")
     (DATA / "model_week.json").write_text(json.dumps(d), encoding="utf-8")
-    return f"week {wk}, {len(players)} players, anchored {d.get('generated_utc', '?')[:16]}"
+    horizon = _pull_horizon()
+    return (f"week {wk}, {len(players)} players, anchored "
+            f"{d.get('generated_utc', '?')[:16]}; {horizon}")
+
+
+def _pull_horizon() -> str:
+    """Validate and copy the all-weeks artifact without risking model_week."""
+    from robo import LEAGUE_ID_2026, ros, season
+    src = MODEL_OUT / f"horizon_{season.SEASON}.json"
+    if not src.exists():
+        return "horizon unavailable"
+    d = json.loads(src.read_text(encoding="utf-8"))
+    if d.get("schema") != 1 or str(d.get("season")) != season.SEASON:
+        raise ValueError("model horizon has the wrong schema or season")
+    if d.get("league_id") != LEAGUE_ID_2026:
+        raise ValueError(f"model horizon is for league {d.get('league_id')}")
+    weeks = d.get("weeks") or {}
+    now = season.current_week()
+    expected_weeks = set(range(now, ros.last_week(LEAGUE_ID_2026) + 1))
+    got = {int(w) for w, b in weeks.items() if len(b.get("players") or {}) >= 250}
+    missing = sorted(expected_weeks - got)
+    if missing:
+        raise ValueError(f"model horizon missing usable weeks {missing}")
+    target = DATA / "model_horizon.json"
+    tmp = target.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(d), encoding="utf-8")
+    tmp.replace(target)
+    return f"horizon {len(got)} weeks"
 
 
 @step("board")

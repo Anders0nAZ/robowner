@@ -295,12 +295,6 @@ REGISTRY: list[S] = [
       "a claim would never reach anyway, and it is not the main cost dial: the "
       "league's own roster count is.",
       bounds=(10, 250), unit="players"),
-    S(ROSTER, "robo.scout", "K_PUZZLE", float,
-      "Calibration residual above which a player is read as a role the model cannot see.",
-      "expected.py's k: 1.0 means the market agrees with our model of his role, "
-      "3 or 4 means it is paying for a job he does not hold yet. Lower this and "
-      "the scout reads ordinary noise as a coming handoff.",
-      bounds=(1.2, 6.0)),
     S(ROSTER, "robo.scout", "NEWS_LIMIT", int,
       "How many news items per player the scout reads.",
       "More context per verdict, more tokens per player. The items come back "
@@ -614,36 +608,6 @@ REGISTRY: list[S] = [
       "veteran; at 2 it hoards lottery tickets it will never start. Only affects "
       "drops -- an add is always judged on what a man is worth now.",
       bounds=(0.0, 3.0)),
-    S(ROSTER, "robo.ros", "NEWS_APPLY_FUTURE", float,
-      "How much of a scout news verdict reaches the FUTURE weeks.",
-      "OBSERVED 7 Sep 2026, still held at 0.5. Over four daily snapshots the "
-      "current week moved for 65 of 886 players and weeks 2-18 moved for zero "
-      "of ~850, with news demonstrably in the window. That argues the feed is "
-      "stale after this week and the scout verdict should carry the news whole "
-      "-- but three preseason days is not a property of the feed, and at 1.0 a "
-      "feed that later reprices counts every injury twice, silently. Raise it "
-      "on in-season evidence from `python -m robo.projarchive --diff`.",
-      bounds=(0.0, 1.0)),
-    S(ROSTER, "robo.expected", "K_CLAMP", tuple,
-      "Bounds on the residual between the structural model and the market.",
-      "k is the part of a man's market value the availability-and-role model "
-      "does NOT explain, and a large one is information rather than an error: "
-      "Carson Beck reads 3.99 because the market prices a handoff no hazard "
-      "rate knows about, which is the whole signal this module was built to "
-      "find. Set narrow and that signal is clamped away; set absurdly wide and "
-      "one stale season row can move a valuation by an order of magnitude. "
-      "16 of 785 players clamp at (0.25, 6.0).",
-      bounds=(0.05, 20.0)),
-    S(ROSTER, "robo.expected", "MIN_RAW_TO_SCALE", float,
-      "Structural total below which a player is priced off the season file alone.",
-      "A man the model gives almost nothing has no per-week SHAPE for the "
-      "market's level to scale, and dividing by it explodes on rounding noise "
-      "instead of on information. Below this he gets the season projection "
-      "spread evenly over the games left, flagged `season-only` -- which is how "
-      "37 players, Michael Penix at 141.5 among them, stop pricing at 0.00. "
-      "Raise it and more men fall back to a flat line; lower it and the "
-      "residual starts amplifying noise.",
-      bounds=(0.0, 25.0), unit="points"),
     S(ROSTER, "robo.returns", "MIN_EVENTS", int,
       "Spells a body part needs before it gets its own return curve.",
       "Same discipline as roles.MIN_EVENTS. Below this the curve is noise and "

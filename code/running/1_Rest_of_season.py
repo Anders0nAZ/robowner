@@ -1,7 +1,7 @@
 """Rest-of-season value, and how each number was arrived at.
 
-Reads data/expected.json on the hot path -- the CALIBRATED model, which is what
-the bot now acts on. It used to read ros.json, and that was the wrong surface to
+Reads data/expected.json on the hot path -- the weekly model the bot acts on.
+It used to read ros.json, and that was the wrong surface to
 review from: this page is what you look at to decide whether to trust the new
 valuation, and it was showing the superseded one. Carson Beck rendered at 0.4
 here while the model that prices the drop put him at 37.5, and `hold` equalled
@@ -79,9 +79,9 @@ c[2].metric("Computed", ui.fmt_age(meta.get("computed")))
 c[3].metric("Playoff weeks weighted",
             " / ".join(f"{ros.weight_of(meta, w):.2f}" for w in (15, 16, 17)))
 st.caption(
-    f"Built from Sleeper's weekly feed for weeks {wk}-17, each week's role read "
-    f"from robo/roles.py and each week's availability from the ESPN floor, then "
-    f"calibrated to the season projection. Kickers and defences are absent by "
+    f"Built from the NFL model's weekly means for weeks {wk}-17, with Sleeper "
+    f"as a missing-row fallback, fitted role inheritance, and return bounds. "
+    f"No season-total calibration is used. Kickers and defences are absent by "
     f"design: they refill from the wire weekly and robo/streaming.py prices them.")
 
 # ------------------------------------------------------------------- the board
@@ -93,9 +93,8 @@ with f1:
                      horizontal=True,
                      help="Who holds him right now, read live from Sleeper.")
 with f2:
-    sort_by = st.selectbox("Sort by", ["ros", "k", "raw", "target"],
-                           help="`ros` is the calibrated number. "
-                                "They differ by what a man stands to inherit.")
+    sort_by = st.selectbox("Sort by", ["ros", "raw"],
+                           help="`ros` is the playoff-weighted weekly value.")
 with f3:
     q = st.text_input("Search", "", placeholder="name, or part of one")
 
@@ -114,9 +113,9 @@ view = sorted(view, key=lambda r: -r.get(sort_by, 0))
 df = pd.DataFrame([{
     "player": r["name"], "pos": r["pos"], "team": r["team"] or "-",
     "owner": own.get(r["player_id"], "free"),
-    "ros": r["ros"], "k": r.get("k"), "raw": r["raw"], "target": r["target"],
+    "ros": r["ros"], "raw": r["raw"],
     "rank": r.get("rank"), "share": r.get("share"), "weeks": r["weeks"],
-    "why k": r.get("k_why", ""),
+    "source": r.get("value_source", "weekly-model"),
 } for r in view])
 
 st.caption(f"{len(df)} of {len(rows)} players")
@@ -130,30 +129,14 @@ st.dataframe(
                  "INSIDE this number, not added on, so there is no separate "
                  "hold column: what a drop costs is this series re-run through "
                  "the lineup, which robo/marginal.py does."),
-        "k": st.column_config.NumberColumn(
-            "k", format="%.2f",
-            help="The calibration residual: how many times more the market pays "
-                 "for him than our model of his role explains. Near 1 means "
-                 "injury luck accounts for him. Three or four means the market "
-                 "is pricing a job he does not hold yet."),
         "raw": st.column_config.NumberColumn(
             "raw", format="%.1f",
-            help="The structural model before calibration. A thin raw total "
-                 "makes k arithmetic rather than evidence -- see is_puzzle()."),
-        "target": st.column_config.NumberColumn(
-            "target", format="%.1f",
-            help="What the market says he is worth over the games left: the "
-                 "season projection prorated, released later if reporting gives "
-                 "a return date the feeds do not carry."),
+            help="The unweighted sum of weekly modeled value."),
         "share": st.column_config.NumberColumn(
             "share", format="%.3f",
             help="His share of his position room's projected opportunity, THIS "
                  "week. A man barred from playing leaves the room, so the men "
                  "behind him move up for exactly the weeks he is out."),
-        "why k": st.column_config.TextColumn(
-            "why k",
-            help="Whether the level was pinned to the market or released from "
-                 "it, and on what."),
     })
 
 # ------------------------------------------------------------------- the detail
@@ -166,11 +149,9 @@ row = next(r for r in rows if r["name"] == pick)
 
 m = st.columns(4)
 m[0].metric("rest of season", f"{row['ros']:.1f}")
-m[1].metric("k", "-" if row.get("k") is None else f"{row['k']:.2f}")
-m[2].metric("raw", f"{row['raw']:.1f}")
-m[3].metric("market target", f"{row['target']:.1f}")
-if row.get("k_why"):
-    st.caption(f"**level:** {row['k_why']}")
+m[1].metric("weekly sum", f"{row['raw']:.1f}")
+m[2].metric("weeks modeled", row["weeks"])
+m[3].metric("source", row.get("value_source", "weekly-model"))
 bits = []
 if row.get("lead_of"):
     bits.append(f"inherits {(row.get('absorbs') or 0):.0%} of {row['lead_of']}'s "
@@ -234,26 +215,15 @@ with right:
     st.bar_chart(wdf.set_index("week")["contributes"], height=300)
 
 st.markdown("**How the total is built**")
-# WEIGHTED, because row["raw"] is not. That field is the unweighted sum the
-# calibration divides into, so printing it next to k and ros gives three numbers
-# that do not multiply out -- and this page exists to be checked by hand.
+# WEIGHTED, because row["raw"] is the unweighted weekly sum.
 wraw = sum(by[str(w)].get("pts", 0.0) * ros.weight_of(meta, w) for w in weeks)
-b = st.columns(3)
-b[0].metric("structural model", f"{wraw:.2f}",
+b = st.columns(2)
+b[0].metric("weighted weekly model", f"{wraw:.2f}",
             help="the sum of A(w) x (his role + what he may inherit) over the "
-                 "weeks left, each week scaled by our odds of playing it, and "
-                 "before the market has any say. The unweighted version of this "
-                 "number is what k was fitted against; it reads "
+                 "weeks left, each week scaled by our odds of playing it. The "
+                 "unweighted version reads "
                  f"{row['raw']:.2f}.")
-b[1].metric("x k", "-" if row.get("k") is None else f"{row['k']:.3f}",
-            help="the residual that pins the total to what the market says he "
-                 "is worth. Everything the structural model does not explain "
-                 "lands here, which is why reading it is the point.")
-b[2].metric("= rest of season", f"{row['ros']:.2f}")
-if row.get("k_source") == "season-only":
-    st.caption("No shape to scale: the structural model gives him almost "
-               "nothing, so the market's number is spent evenly over the games "
-               "left. Flat is wrong about WHEN and right about HOW MUCH.")
+b[1].metric("= rest of season", f"{row['ros']:.2f}")
 
 with st.expander("Show the full trace", expanded=False):
     st.caption("Every stage from the feeds to the printed total, with the file "

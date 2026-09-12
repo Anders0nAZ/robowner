@@ -94,7 +94,7 @@ settings.apply(__name__, globals())
 # ------------------------------------------------------------------- the data
 
 def series(league_id: str = LEAGUE_ID_2026) -> dict:
-    """player_id -> {pos, team, k, rank, room, weeks: {w: (s1, s2, avail)}}.
+    """player_id -> {pos, team, rank, room, weeks: modeled components}.
 
     Read from the cached artefacts rather than recomputed, the rule ros.explain
     already follows: a trace or a decision must narrate the numbers the bot
@@ -108,40 +108,9 @@ def series(league_id: str = LEAGUE_ID_2026) -> dict:
             wk[int(w)] = (d.get("s1") or 0.0, d.get("s2") or 0.0,
                           d.get("a") or 0.0, d.get("final") or 0.0,
                           d.get("miss") or 0.0, d.get("lead") or 0.0,
-                          d.get("rank"))
-        flat = r.get("k_source") == "season-only"
-        # WHAT A FLAT ROW IS WORTH IN A WEEK HE PLAYS, computed ONCE from the
-        # whole availability profile rather than per week.
-        #
-        # expected.build() never applies availability to a season-only row --
-        # `series = {w: per for w in byweek}` -- so `final` is the same number in
-        # every week, including the weeks he is barred from playing. Three call
-        # sites here nonetheless divided it by that week's A(w) to "undo" an
-        # availability that was never applied, which inflates by 1/A and
-        # explodes as A approaches zero: it put a 27.64-point quarterback on the
-        # wire in week 3, above the best real quarterback week in the league.
-        #
-        # The season projection IS availability-weighted, so recovering a
-        # conditional rate is the right idea -- the divisor is just the expected
-        # number of games, sum(A) over the horizon, and not one week's A. Penix
-        # goes from a peak of 32.70 to 12.42, Aiyuk from 9.60 to 3.91, and the
-        # eighteen season-only men who are available throughout are unchanged.
-        rate = 0.0
-        if flat:
-            served = sum(c[2] for c in wk.values())
-            rate = float(r.get("target") or 0.0) / served if served > 0 else 0.0
+                          d.get("rank"), d.get("provider") or 0.0)
         out[pid] = {"name": r.get("name"), "pos": r.get("pos"), "team": r.get("team"),
-                    # season-only rows carry no shape, so they are scaled at 1.0
-                    # and priced on the flat series expected.py already wrote.
-                    "k": r.get("k") or 1.0, "rank": r.get("rank"),
-                    # A SEASON-ONLY ROW HAS NO SHAPE TO REBUILD FROM. expected.py
-                    # spends the market's number flat across the games left when
-                    # the structural model gives it nothing to scale, so s1 is
-                    # near zero and only `final` carries the value. Reconstructing
-                    # k*s1 for those 38 players priced them at nothing -- Michael
-                    # Penix, a startable quarterback sitting unowned at 141, read
-                    # as worthless and took the QB wire floor down with him.
-                    "flat": flat, "flat_rate": round(rate, 4),
+                    "rank": r.get("rank"),
                     # The MEAN fraction expected.py folded into s2. Kept so the
                     # simulation can recover the lead's own number and redraw the
                     # fraction, instead of spending the average every week.
@@ -159,20 +128,14 @@ def weekly_points(p: dict, w: int) -> float:
     what a claim would buy -- and folding it in would charge for the same
     absence twice.
 
-    This existed three times with three different bugs. The flat branch divided
-    by A(w) (see series() for why that is wrong), and when A(w) was exactly zero
-    it fell through to `k * s1`, which for a season-only row is a `k` defaulted
-    to 1.0 times an s1 of ~0. That is precisely the failure the `flat` flag was
-    added to fix -- a startable quarterback reading as worthless and taking the
-    QB wire floor down with him -- reintroduced by the guard meant to avoid a
-    division by zero.
+    The provider figure is retained beside the pre-event baseline. Taking their
+    maximum makes an already-repriced feed and fitted inheritance alternatives,
+    never two opportunity boosts stacked together.
     """
     cell = p["weeks"].get(w)
     if not cell:
         return 0.0
-    if p.get("flat"):
-        return p.get("flat_rate") or 0.0
-    return p["k"] * cell[0]
+    return max(cell[0], cell[7] if len(cell) > 7 else 0.0)
 
 
 def _rooms_of(ids: list[str], S: dict) -> set:
@@ -241,9 +204,21 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
     import random
     rng = random.Random(seed)
     vac = {}
+    room_leads = {}
+    # The injured lead often is not one of *our* players or the candidate being
+    # priced (Bowers while pricing free-agent Mayer is the canonical case).
+    # Room state therefore comes from the complete modeled player table, not
+    # just the hypothetical roster.  The draws themselves remain limited to
+    # ``ids`` below.
+    for pid, p in S.items():
+        if p and p.get("rank") == 1 and all(p.get("room") or ()):
+            room_leads[p["room"]] = pid
     for (tm, pos) in sorted(_rooms_of(ids, S)):
-        rate = roles.miss_rate(pos)
         for w in weeks:
+            lead = S.get(room_leads.get((tm, pos))) or {}
+            cell = (lead.get("weeks") or {}).get(w)
+            known_a = cell[2] if cell else 1.0
+            rate = 1.0 - known_a if known_a < 1.0 else roles.miss_rate(pos)
             for s in range(sims):
                 vac[(tm, pos, w, s)] = rng.random() < rate
     avail, share = {}, {}
@@ -329,20 +304,12 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                     continue
                 if not avail.get((pid, w, s), True):
                     continue
-                s1, s2, a, final, miss, lead_pts, rank_w = cell
+                s1, s2, a, final, miss, lead_pts, rank_w, provider = (
+                    tuple(cell) + (0.0,) * max(0, 8 - len(cell)))
                 tm, pos = p["room"]
                 opened = bool(tm) and vac.get((tm, pos, w, s), False)
                 if opened and p.get("rank") == 1:
                     continue                # it is HIS job that came open
-                if p.get("flat"):
-                    # No shape to rebuild, and no door to open: a season-only row
-                    # has no structural model, so there is nothing for a vacancy
-                    # to add. Spend his conditional rate -- the draw above has
-                    # already decided whether he is on the field this week.
-                    cands.append({"player_id": pid, "name": p["name"],
-                                  "pos": p["pos"], "pts": weekly_points(p, w),
-                                  "has_game": True, "injury": None, "locked": False})
-                    continue
                 gain = 0.0
                 if opened and lead_pts:
                     # THE LEAD'S OWN NUMBER, CARRIED PER WEEK, times this world's
@@ -352,7 +319,7 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                     # rank 2 in week 1 and rank 3 in week 5 has no single
                     # absorb to divide by.
                     gain = lead_pts * share.get((pid, s), 0.0)
-                pts = weekly_points(p, w) + p["k"] * gain
+                pts = max(provider, s1 + gain) if opened else max(provider, s1)
                 cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
                               "pts": pts, "has_game": True, "injury": None,
                               "locked": False})
@@ -568,7 +535,8 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
     return "\n".join(L)
 
 
-def median_start_profile(b, ids: list[str], pid: str) -> dict:
+def median_start_profile(b, ids: list[str], pid: str,
+                         only_weeks: set[int] | None = None) -> dict:
     """Where his value actually lands if nobody gets hurt.
 
     TWO KINDS OF POINTS WEAR THE SAME UNITS AND ARE NOT THE SAME THING. `gain`
@@ -584,13 +552,20 @@ def median_start_profile(b, ids: list[str], pid: str) -> dict:
     """
     weeks, pts, first = 0.0, 0.0, None
     for w in b.weeks:
+        if only_weeks is not None and w not in only_weeks:
+            continue
         cands = []
         for q in ids:
             p = b.S.get(q)
             if not p or w not in p["weeks"]:
                 continue
+            cell = p["weeks"][w]
             cands.append({"player_id": q, "name": p["name"], "pos": p["pos"],
-                          "pts": _base(p, w), "has_game": True,
+                          # final is the player-week mean after known
+                          # availability and inherited opportunity. Using the
+                          # healthy baseline here hid exactly the temporary
+                          # starter this profile exists to identify.
+                          "pts": cell[3], "has_game": True,
                           "injury": None, "locked": False})
         for pos, byweek in (b.repl or {}).items():
             if w in byweek:
@@ -630,7 +605,8 @@ def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
     return median_start_profile(b, ids, pid)["first"] is not None
 
 
-def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
+def price_options(b, drops: list[str], adds: list[str],
+                  start_weeks: set[int] | None = None) -> list[dict]:
     """Every (add, drop) pair, priced and labelled by which slot it fills.
 
     `excess` is what makes the channel comparison possible in Phase 4: a waiver
@@ -649,7 +625,7 @@ def price_options(b, drops: list[str], adds: list[str]) -> list[dict]:
                 continue
             ids = [p for p in b.mine if p != drop] + [add]
             sh = b.shape(b.totals(ids))
-            prof = median_start_profile(b, ids, add)
+            prof = median_start_profile(b, ids, add, only_weeks=start_weeks)
             out.append({"add": add, "drop": drop,
                         "gain": sh["mean"], "se": sh["se"],
                         "ceiling": sh["p90"], "p_hit": sh["p_hit"],

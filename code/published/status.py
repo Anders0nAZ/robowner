@@ -425,6 +425,9 @@ SOURCES = [
     # after. Moving one without the other is how the page reports healthy on a
     # source nothing is using.
     ("model",       "Roboner NFL model projections", 30 * 3600, "RobonerRefresh"),
+    ("model-horizon", "NFL model projection horizon", 30 * 3600,
+     "RobonerModelCaptureDaily"),
+    ("news-watch",  "Injury watcher", 25 * 60, "RobonerNewsWatch"),
     # 20 hours, matching ros.MAX_AGE_H, so the page goes amber at the same
     # moment the valuation stops trusting itself -- the same rule as the model
     # row above.
@@ -507,6 +510,7 @@ def _refresh_log() -> dict:
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
 MARKED_STEPS = {"players", "projections", "buzz", "board", "model",
+                "model-horizon", "news-watch",
                 "ros", "playoff-odds", "usage", "injuries", "scout"}
 
 # Sources whose ABSENCE is a normal state at some point in the year, and so must
@@ -565,6 +569,29 @@ def _source_marker(step: str):
             pass
         return ts, "%d players, %s week %s" % (
             len(d.get("players", {})), d.get("season", "?"), d.get("week", "?"))
+    if step == "model-horizon":
+        d = _read_json(DATA / "model_horizon.json", {}) or {}
+        ts = None
+        try:
+            ts = datetime.fromisoformat(d["generated_utc"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            pass
+        weeks = d.get("weeks") or {}
+        return ts, "%d weeks, %d player-weeks" % (
+            len(weeks), sum(len((x or {}).get("players") or {}) for x in weeks.values()))
+    if step == "news-watch":
+        d = _read_json(DATA / "news_watch.json", {}) or {}
+        ev = d.get("last_event") or {}
+        event_at = ev.get("at")
+        if event_at:
+            event_age = max(0.0, (time.time() - float(event_at)) / 3600.0)
+            event = "last event %.1fh ago, %d affected" % (
+                event_age, len(ev.get("affected") or []))
+        else:
+            event = "no event recorded yet"
+        errs = len(d.get("source_errors") or [])
+        return d.get("last_poll"), "%s%s" % (
+            event, ", %d source error(s)" % errs if errs else "")
     if step == "ros":
         d = _read_json(DATA / "ros.json", {}) or {}
         return d.get("computed"), "%d players from week %s" % (
@@ -634,6 +661,7 @@ def ingests() -> list:
     log = _refresh_log()
     rows = []
     for step, label, max_age, task in SOURCES:
+        why_detail = ""
         entry = log.get(step, {})
         mark_ts, detail = _source_marker(step)
         # The log is authoritative for "did it succeed"; the marker is
@@ -654,8 +682,21 @@ def ingests() -> list:
         else:
             ts = mark_ts or entry.get("last_ok")
             status, why = _age_verdict(ts, max_age)
+        # Some marked artifacts have more than one legitimate producer. The
+        # ten-minute watcher, for example, refreshes the validated ESPN cache
+        # after the daily pipeline may have failed. A newer internal marker is
+        # therefore evidence of recovery even when refresh.log has no later OK.
+        recovered_at = max(entry.get("last_ok") or 0,
+                           mark_ts or 0 if step in MARKED_STEPS else 0)
         failed_since = bool(entry.get("last_fail")
-                            and entry["last_fail"] > (entry.get("last_ok") or 0))
+                            and entry["last_fail"] > recovered_at)
+        if step == "news-watch":
+            watch_errors = (_read_json(DATA / "news_watch.json", {}) or {}).get(
+                "source_errors") or []
+            if watch_errors and status == OK:
+                status = WARN
+                why = "%d watcher source(s) failed on the last poll" % len(watch_errors)
+                why_detail = "; ".join(str(x) for x in watch_errors)
         if failed_since and status == OK:
             status = WARN
         if failed_since:
@@ -669,7 +710,7 @@ def ingests() -> list:
             # The failure text has been collected here since this function was
             # written and has never once been rendered -- the page said "last
             # attempt failed" and kept the actual message to itself.
-            "why_detail": entry.get("fail_detail", ""),
+            "why_detail": why_detail or entry.get("fail_detail", ""),
             "task": task, "max_age": max_age,
         })
     return rows
@@ -1033,7 +1074,8 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     # on a Sunday, while its RobonerPreKick_* one-shots are absent most days by
     # design and must never be asserted.
     inseason_tasks = (["RobonerLineup", "RobonerRoster", "RobonerWaivers",
-                       "RobonerPreKickDaily", "RobonerModelCaptureDaily"]
+                       "RobonerPreKickDaily", "RobonerModelCaptureDaily",
+                       "RobonerNewsWatch"]
                       if done else ["RobonerScout"])
     for name in inseason_tasks:
         t = by_name.get(name)

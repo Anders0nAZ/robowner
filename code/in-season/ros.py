@@ -2,18 +2,10 @@
 
     value(pid, week) = SUM over w in [week..last] of  W(w) x rate(pid, w) x plays(w)
 
-THE SPINE IS SLEEPER'S OWN WEEKLY FEED, and it took measuring to justify. Its
-future weeks are FLAT: Josh Allen reads 23.1 / 22.8 / 23.0 for weeks 1 / 5 / 14,
-because the number is a per-game rate wearing a bye mask, with no matchup in it
-at all. What makes it the right spine anyway is the other axis -- it REPRICES.
-Six captures of week 1 taken over two and a half days disagree on 22 of 460
-players, and the movers move by four and five points, which is a backup being
-handed a job. The preseason board cannot do that at any price; it was frozen in
-August and has not heard a thing since.
-
-That repricing is proven for the CURRENT week and assumed for the rest, which is
-the one soft spot in here. robo/projarchive.py is collecting the evidence to
-settle it; NEWS_APPLY_FUTURE is the dial that changes when it does.
+THE SPINE IS THE NFL MODEL'S WEEKLY MEAN for every remaining fantasy week.
+Sleeper's weekly feed remains the row-level fallback when the model omits a
+player. Sleeper season totals are archived for research and never set this
+level; their unknown repricing behavior is therefore no longer load-bearing.
 
 WHAT W(w) IS, AND WHY IT IS NOT A DISCOUNT. The usual move is to decay the
 future, which would be wrong twice over: it fights the rookie-hold rule this
@@ -70,42 +62,6 @@ SCHEMA = 2
 # qualifying and two first-round byes. Stated assumptions, not fitted -- and a
 # uniform factor across all players, so it moves the scale rather than the order.
 PLAYOFF_WEIGHTS = {0: 1.0, 1: 0.6, 2: 0.35}
-
-# How much of a scout news verdict to apply to the FUTURE weeks. It was halved
-# while it was unknown whether Sleeper already reprices them -- at 1.0 a
-# repriced feed would count the same injury twice, at 0.0 a stale one would
-# carry no news at all.
-#
-# OBSERVED 7 SEP 2026: THEY HAVE NOT MOVED YET. Four daily snapshots, 4-7
-# September: week 1 moved for 65 of 886 players while weeks 2 through 18 moved
-# for ZERO of ~850, across roughly fourteen thousand player-weeks. That is not
-# an absence of news -- the week-1 movers are a live backfield story (Kaleb
-# Johnson +2.9, Najee Harris +2.0) -- it is the same news moving the current
-# week and leaving every future week untouched.
-#
-# THAT IS AN OBSERVATION, NOT A PROPERTY OF THE FEED. "Has not repriced in a
-# three-day preseason window" is what the data says; "does not reprice" is a
-# stronger claim nothing here establishes, and the difference decides whether
-# this dial is right in November.
-#
-# HELD AT 0.5 ANYWAY, DELIBERATELY. If the feed really is static after this
-# week then the scout verdict is the only thing that knows anything happened and
-# halving it discards half the sole signal -- so the observation argues for 1.0
-# and the isolated effect is +37.7 on Stafford, +34.1 on Gibbs, -31.0 on
-# Mendoza, 42 of 903 players in all. The reason it stays at 0.5 is that the
-# evidence is three preseason days and the failure mode is silent: at 1.0 a feed
-# that starts repricing counts every injury twice and nothing on the page would
-# say so. Move it once there is in-season evidence, or once the drift check is
-# automatic.
-#
-# THE WINDOW IS ENTIRELY PRE-SEASON, which is when a feed has the least reason
-# to move a future week: there are no actuals to move it with. A feed that begins
-# updating week 9 once there are actuals to update it from would put us back in
-# the double-counting world this dial exists to avoid. Re-run
-# `python -m robo.projarchive --diff` after a few real game weeks; if future
-# weeks start moving, this stays down. Never applied to the current week, where the model and the live feed have
-# already seen it.
-NEWS_APPLY_FUTURE = 0.5
 
 # How hard the rising-role term pulls. This is the rookie-hold dial: at 0 the
 # bot drops a breakout-in-waiting for any established veteran, at 2 it hoards
@@ -279,6 +235,24 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
             sources.setdefault(pid, []).append(src)
             detail.setdefault(pid, {})[w] = d
 
+    # Future weeks use the identical model pipeline through one daily horizon
+    # artifact. Missing rows retain the Sleeper value; absence is never zero.
+    hp, hprov = model_proj.horizon_projections(yr, league_id)
+    for w, week_players in hp.items():
+        if w == week or w not in weeks:
+            continue
+        for pid, m in week_players.items():
+            if pid not in out or w not in out[pid] or "mean" not in m:
+                continue
+            p = players.get(pid) or {}
+            if (p.get("position") or "DEF") == "DEF":
+                continue
+            d = detail[pid][w]
+            d["replaced"] = d["pts"]
+            d.update({"pts": round(float(m["mean"]), 3), "src": "model-horizon",
+                      "p10": m.get("p10"), "p90": m.get("p90")})
+            out[pid][w] = d["pts"]
+
     # The current week is the one the Roboner NFL model actually simulated, and it scores
     # all 57 keys off 4,000 stat lines rather than 35 keys off a point estimate.
     # Absence means keep Sleeper's number, never zero -- the rule lineup.py
@@ -308,6 +282,7 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
                                 sorted(counts.items(), key=lambda kv: -kv[1]))
     if record is not None:
         record.update({"weeks": weeks, "provenance": prov,
+                       "horizon_provenance": hprov,
                        "board_rows": len(board), "model_players": len(mp),
                        "scoring_keys": len(sc)})
     return {"rates": out, "sources": label, "detail": detail,
@@ -384,41 +359,17 @@ def _persistable(d: dict) -> dict:
 def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
           with_upside: bool = True) -> dict:
     """The rest-of-season table. {pid: {mean, upside, hold, ...}}."""
-    from robo import scout
     wk = week or season.current_week()
     weights = week_weights(wk, league_id)
     wr = weekly_rates(wk, season.SEASON, league_id)
     rates, sources, detail = wr["rates"], wr["sources"], wr["detail"]
     players = api.players()
 
-    try:
-        verdicts = scout.load_verdicts()
-    except Exception:
-        verdicts = {}
-
     rows = {}
     for pid, byweek in rates.items():
         p = players.get(pid) or {}
         pos = p.get("position") or "DEF"
         now_pts = byweek.get(wk, 0.0)
-        # News touches the FUTURE only, once, at NEWS_APPLY_FUTURE strength --
-        # never per week, where a 1.35 multiplier compounded over fourteen weeks
-        # would turn a good report into a 40x valuation.
-        mult = 1.0
-        raw_mult = 1.0
-        if verdicts and NEWS_APPLY_FUTURE:
-            try:
-                raw_mult = scout.trust_multiplier(pid)
-            except Exception:
-                raw_mult = 1.0
-            # Rounded here, not at display time. Storing a rounded multiplier
-            # while multiplying by the full-precision one is the same defect as
-            # the terms above: the published factor no longer reproduces the
-            # published total.
-            mult = round(1.0 + (raw_mult - 1.0) * NEWS_APPLY_FUTURE, 3)
-        # The two terms are kept apart because only one of them is touched by
-        # news. Reported as one number, "the multiplier is 1.13" cannot be
-        # reconciled against the total by anyone reading it.
         # ROUNDED FIRST, THEN COMBINED, so the arithmetic a trace prints adds up
         # by hand. Combining full precision and rounding once left the published
         # terms disagreeing with the published total by up to 0.07 on 27 of 908
@@ -428,7 +379,7 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
         now_term = round(weights.get(wk, 1.0) * now_pts, 2)
         future_term = round(sum(weights.get(w, 0.0) * pts
                                 for w, pts in byweek.items() if w != wk), 2)
-        mean = now_term + mult * future_term
+        mean = now_term + future_term
         up, why = (0.0, "")
         if with_upside and pos in roles.OPPORTUNITY:
             up, why = upside_of(pid, pos, p.get("team") or "", wk, rates,
@@ -441,8 +392,6 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
                      "weeks": len(byweek), "now": round(now_pts, 2),
                      "now_term": round(now_term, 2),
                      "future_term": round(future_term, 2),
-                     "news_mult": round(mult, 3),
-                     "news_raw": round(raw_mult, 3),
                      "source": sources.get(pid, "?"), "upside_why": why,
                      # The spine, persisted. A trace reads this rather than
                      # rebuilding it, so it narrates the numbers that were
@@ -452,7 +401,6 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
     return {"schema": SCHEMA, "computed": time.time(), "week": wk,
             "season": season.SEASON, "weights": weights,
             "upside_included": bool(with_upside),
-            "news_apply_future": NEWS_APPLY_FUTURE,
             "upside_weight": UPSIDE_WEIGHT,
             "provenance": wr["provenance"], "players": rows}
 
@@ -625,31 +573,12 @@ def _explain_one(pid, row, d, wk, sh, league_id, players, reasons=False) -> None
         _line(f"{w:<4}{'--':>7}  no game; absent from the sum, never a zero", "derived")
 
     print()
-    print("[3] NEWS -- applied once, to the future block only")
-    if row.get("news_raw", 1.0) == 1.0:
-        _line("no verdict on file, or none that moves him; multiplier 1.000", "scout")
-    else:
-        v = _verdict(pid)
-        if v:
-            _line(f"verdict {v.get('verdict')} at {float(v.get('confidence', 0)):.0%} "
-                  f"confidence", "scout")
-            if reasons:
-                _line(f"reason: {v.get('reason', '')}", "scout")
-        _line(f"raw multiplier {row['news_raw']:.3f}, applied at "
-              f"NEWS_APPLY_FUTURE={d.get('news_apply_future', NEWS_APPLY_FUTURE)} "
-              f"-> {row['news_mult']:.3f}", "derived")
-        used.add("scout")
-    _line("never applied to the current week, where the model and the live feed "
-          "have already priced the news", "derived")
-
-    print()
-    print("[4] THE VALUE -- what he is worth to us")
+    print("[3] THE VALUE -- what he is worth to us")
     _line(f"this week    {row['now']:>8.2f} x {weight_of(d, wk):.2f} "
           f"= {row['now_term']:>8.2f}", "derived")
-    _line(f"future weeks {row['future_term']:>8.2f} x {row['news_mult']:.3f} "
-          f"= {row['future_term'] * row['news_mult']:>8.2f}", "derived")
+    _line(f"future weeks {row['future_term']:>8.2f}", "derived")
     _line(f"mean         {row['mean']:>8.2f}", "derived")
-    check = round(row["now_term"] + row["future_term"] * row["news_mult"], 2)
+    check = round(row["now_term"] + row["future_term"], 2)
     recomputed = round(sum(by[str(w)]["pts"] * weight_of(d, w) for w in weeks), 2)
     ok = abs(check - row["mean"]) < 0.02
     _line(f"cross-check: terms sum to {check:.2f} against the cached "

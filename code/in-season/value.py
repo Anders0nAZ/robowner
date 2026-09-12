@@ -1,9 +1,10 @@
-"""Rest-of-season player value -- the seam, now wired to a real number.
+"""Rest-of-season player value -- the transaction valuation seam.
 
 WHAT THIS IS. What a player is worth from week n forward, and therefore what we
-gain by swapping him for somebody we hold. The model lives in robo/ros.py; this
-module is the seam every consumer imports, so there is exactly one place that
-decides whether the bot is allowed to act on it.
+gain by swapping him for somebody we hold. Skill-player value comes from
+robo/expected.py and is converted into roster-level marginal value by
+robo/marginal.py. This module is the seam every consumer imports, so there is
+exactly one place that decides whether the bot is allowed to act on it.
 
 THE GATE IS STILL HERE AND STILL MEANS SOMETHING. It is now open, but it remains
 a constant in code rather than a setting: it is deliberately absent from the
@@ -13,20 +14,21 @@ taking it back will take one too. That matters because roster decisions are not
 reversible the way a lineup is -- a dropped player is claimed by somebody else
 within the hour.
 
-TWO NUMBERS, NOT ONE, AND THE ASYMMETRY IS DELIBERATE. `mean` is what a player
-is worth to us and prices an ADD. `hold` is `mean + upside` and prices a DROP,
-where upside is what he stands to inherit if the man ahead of him goes down.
-Using one number for both is what makes a bot cut a rookie in October and watch
-somebody else start him in December. See robo/ros.py.
+ADDS AND DROPS REMAIN ASYMMETRIC. expected.py puts fitted role inheritance into
+each weekly mean without double-counting a provider projection that already
+moved. marginal.py then prices our drop candidates in the actual roster and
+lineup context, preserving upside without relying on a separate season-total
+calibration or generic news multiplier.
 """
 
 from robo import ros
 
-# Is the NUMBER real? Yes -- ros.py is built and every figure printed is the one
-# the bot would act on.
+# Is the NUMBER real? Yes -- expected.py is built and every figure printed is
+# the one the bot would act on.
 VALUATION_READY = True
 
-# May the bot ACT on it? No, not until Nate has reviewed it module by module.
+# May the bot ACT on it? Yes. Opened after the injury-response replay, failure
+# suite and repeatable dry cascade passed on 11 September 2026.
 #
 # THESE ARE TWO DIFFERENT QUESTIONS AND WERE ONE FLAG FOR A DAY, WHICH WAS A
 # MISTAKE. Collapsing them means the only way to stop the bot submitting is to
@@ -34,12 +36,11 @@ VALUATION_READY = True
 # reading stand-in numbers to decide whether to trust the real ones, which is
 # exactly backwards. Split, a dry run shows precisely what would have been
 # submitted, priced on the real valuation, and submits none of it.
-SUBMIT_ENABLED = False
+SUBMIT_ENABLED = True
 
 GATE_MESSAGE = (
-    "the rest-of-season valuation is BUILT and every number below is the real "
-    "one -- but submitting is switched off pending review, so nothing here has "
-    "happened. This is exactly what the bot would have done. See robo/value.py.")
+    "the roster valuation and transaction gate are live; --apply may submit "
+    "the approved move to Sleeper. See robo/value.py.")
 
 
 def ready() -> bool:

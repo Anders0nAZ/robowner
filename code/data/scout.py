@@ -13,17 +13,11 @@ now read from structured data, and the discipline is to keep it that way:
 
   * whether he can play at all, and the earliest week the rules allow him back,
     comes from ESPN (robo/injuries.py) -- a published date, not a judgment;
-  * what his role is worth comes from Sleeper's projections, which demonstrably
-    redistribute a vacated job (124 carries moved from Jacobs to Lloyd);
-  * WHICH players have a role the projections cannot explain is already answered
-    by expected.py's calibration residual -- 27 of 472 players carry k >= 2, and
-    Carson Beck sits in that set at 3.99, found by arithmetic and not by prose.
+  * what his role is worth comes from the weekly NFL model and fitted role
+    inheritance, with Sleeper's weekly number as the per-row fallback.
 
-That leaves one kind of question, asked of two populations. For a man who is
-out: does the reporting say he is back LATER than the rules allow, and which
-week? For a man the market prices into a role he does not hold: which week does
-he get it? Both are dates. Nothing else here is a date, and nothing else here
-needs a model.
+That leaves one question: for a man who is out, what explicit return range does
+the reporting provide beyond the eligibility floor? No timing is a valid answer.
 
 WHY THE ANSWER MUST BE ASYMMETRIC. A return date is trusted over the projection
 feed, so a guessed one silently overwrites a real number. The floor is a rule --
@@ -53,6 +47,7 @@ audited and cannot be quietly hand-authored.
 """
 
 import json
+import re
 import time
 
 from robo import DATA, injuries, roles, season, settings
@@ -70,11 +65,6 @@ TRUST_LIFT = {"boost": 1.35, "neutral": 1.0, "avoid": 0.6}
 # The wire is ranked by rest-of-season value, and past this depth the news is
 # about men no claim will ever reach.
 POOL_WIRE = 50
-
-# Calibration residual above which the market is pricing a role the structural
-# model cannot see -- expected.py's k. These are the men worth asking a date
-# about, and the set is small: 27 of 472 today.
-K_PUZZLE = 2.0
 
 settings.apply(__name__, globals())
 
@@ -110,11 +100,9 @@ def decision_pool(limit_wire: int | None = None) -> list[dict]:
     bounded by the league itself rather than by a cutoff, and the delta judging
     means the cost is whoever actually moved, not the whole board.
 
-    Two things are pulled in regardless of where they rank, because they are
-    exactly the cases a value ranking is worst at: anyone the league says cannot
-    play -- his value is suppressed BY the absence, so ranking hides him at the
-    moment he most needs a date -- and anyone carrying an unexplained
-    calibration residual, whose value is inflated by a role he does not hold yet.
+    Anyone the league says cannot play is pulled in regardless of rank: his
+    value is suppressed by the absence, so ranking hides him exactly when the
+    return timing matters.
     """
     from robo import expected
     ex = (expected.load().get("players") or {})
@@ -142,13 +130,6 @@ def decision_pool(limit_wire: int | None = None) -> list[dict]:
         if injuries.absent(pid) or sidelined(pid, players):
             pool.setdefault(pid, x)
             reasons.setdefault(pid, "absent")
-        # ONE DEFINITION OF A PUZZLE, owned by expected.py. A bare k >= 2 test
-        # pooled four career backup quarterbacks whose ratio was arithmetic on a
-        # raw total near zero, and would have paid a model to read the news about
-        # them every morning.
-        elif expected.is_puzzle(x, K_PUZZLE):
-            pool.setdefault(pid, x)
-            reasons.setdefault(pid, "unexplained role")
 
     out = []
     for pid, x in pool.items():
@@ -204,9 +185,6 @@ def bundle(x: dict, players: dict) -> dict:
         "out_for_season": injuries.out_for_season(pid),
         "as_of": (injuries.row(pid) or {}).get("as_of"),
         "ros_value": x.get("ros"),
-        # The residual. Near 1 means the market agrees with our model of his
-        # role; 3 or 4 means it is paying for a job he does not have yet.
-        "k": x.get("k"),
         "news": injuries.prose(pid) + player_news(pid),
     }
 
@@ -243,11 +221,8 @@ the first week the league's rules allow him to play. Treat all of that as
 settled fact. It is read from published sources, not guessed, and re-deriving it
 from the prose is not your job.
 
-YOUR QUESTION, and there is only one. For a player who is out: does the
-reporting say he will be back LATER than `eligible_week`, and if so which week?
-For a player whose `k` is 2 or higher -- meaning the market is paying for a role
-his current usage does not support -- which week does the reporting say that
-role arrives?
+YOUR QUESTION, and there is only one. For a player who is out: what explicit
+week or range of weeks does the reporting give for his return?
 
 `return_week` is the NFL week he is expected to PLAY again, and `return_basis`
 says who said so and when. "ESPN, 6-8 weeks, reported 21 Aug" is a usable basis.
@@ -270,8 +245,7 @@ restating the rule you were already given. That is not an answer, it is the
 question. Only a week strictly LATER than `eligible_week` tells us anything we do
 not already know; anything else is null.
 
-`role_week` is when a role change takes effect, where the reporting says so, and
-null otherwise. Only ask it of players flagged with a high `k`.
+`role_week` is retained for compatibility and should be null.
 
 `verdict` is a secondary read used for bench pricing: "boost" where reporting
 says he is closer to meaningful volume than his projected share implies, "avoid"
@@ -304,6 +278,8 @@ SCHEMA = {
                     # about. Null whenever the reporting gives no date -- an
                     # absent estimate must never read as week 1.
                     "return_week": {"type": ["integer", "null"]},
+                    "return_week_min": {"type": ["integer", "null"]},
+                    "return_week_max": {"type": ["integer", "null"]},
                     "return_basis": {"type": ["string", "null"]},
                     "role_week": {"type": ["integer", "null"]},
                 },
@@ -451,7 +427,7 @@ def enforce_floor(verdicts: list[dict], bundles: list[dict],
 
 
 def judge(bundles: list[dict], model: str = LOCAL_MODEL,
-          verbose: bool = True) -> list[dict]:
+          verbose: bool = True, timeout: int = 900) -> list[dict]:
     """Read the prose, return the dates. One batch failing costs that batch."""
     import requests
     out = []
@@ -464,7 +440,7 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 "format": SCHEMA,
                 "messages": [{"role": "system", "content": SYSTEM},
                              {"role": "user", "content": _prompt(chunk)}],
-            }, timeout=900)
+            }, timeout=timeout)
             r.raise_for_status()
             got = json.loads(r.json()["message"]["content"]).get("verdicts", [])
         except Exception as e:
@@ -501,7 +477,11 @@ def write_verdicts(verdicts: list[dict], model: str,
         v["fingerprint"] = fps.get(v["player_id"], "")
         v["judged_at"] = now
         fresh[v["player_id"]] = v
-    merged = dict(reuse or {})
+    # A failed batch is not evidence that its old verdict stopped being true.
+    # Start from the complete prior file, then overlay explicit reuse and fresh
+    # successes. This also leaves failed fingerprints stale so they retry.
+    merged = dict((load_verdicts().get("verdicts") or {}))
+    merged.update(reuse or {})
     merged.update(fresh)
     out = {"model": model, "written": now,
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
@@ -537,12 +517,88 @@ def role_signal(player_id: str) -> dict:
     """
     v = (load_verdicts().get("verdicts") or {}).get(player_id) or {}
     rw, rlw = v.get("return_week"), v.get("role_week")
+    lo = v.get("return_week_min", rw)
+    hi = v.get("return_week_max", rw)
     return {"return_week": int(rw) if isinstance(rw, (int, float)) else None,
+            "return_week_min": int(lo) if isinstance(lo, (int, float)) else None,
+            "return_week_max": int(hi) if isinstance(hi, (int, float)) else None,
             "return_basis": v.get("return_basis") or None,
             "role_change": None,
             "role_week": int(rlw) if isinstance(rlw, (int, float)) else None,
             "confidence": float(v.get("confidence") or 0.0),
             "judged_at": v.get("judged_at")}
+
+
+def timing_bounds(news: list[dict], current_week: int,
+                  floor_week: int | None = None) -> dict | None:
+    """Extract only explicit return bounds; never manufacture a point date.
+
+    The fast path deliberately covers the small vocabulary reporters use most
+    often. Ambiguous prose is left for the local judge, and no match is a valid
+    answer rather than an invitation to guess.
+    """
+    text = " ".join(str(n.get(k) or "") for n in news
+                    for k in ("title", "description", "analysis"))
+    low = text.lower().replace("–", "-").replace("—", "-")
+    lo = hi = None
+
+    if re.search(r"\b(?:season[- ]ending|out for the (?:rest of the )?season)\b", low):
+        lo = hi = 99
+    elif re.search(r"\b(?:a|one) game or two\b", low):
+        lo, hi = current_week + 1, current_week + 2
+    else:
+        m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s*(?:-|to)\s*(\d+)\s+"
+                      r"(?:games?|weeks?)\b", low)
+        if m:
+            lo, hi = current_week + int(m.group(1)), current_week + int(m.group(2))
+        if lo is None:
+            m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s+"
+                          r"(?:games?|weeks?)\b", low)
+            if m:
+                lo = hi = current_week + int(m.group(1))
+        if lo is None:
+            m = re.search(r"\b(?:return|back|play again)[^.!?]{0,45}\bweek\s+(\d+)\b", low)
+            if m:
+                lo = hi = int(m.group(1))
+    if lo is None:
+        return None
+    if floor_week is not None:
+        lo, hi = max(lo, floor_week), max(hi, floor_week)
+    basis_item = max(news, key=lambda n: str(n.get("published") or ""), default={})
+    return {"return_week": lo if lo == hi else None,
+            "return_week_min": lo, "return_week_max": hi,
+            "return_basis": f"{basis_item.get('source') or 'reporting'}: explicit timing",
+            "out_for_season": lo == 99}
+
+
+def merge_timing(player_id: str, name: str, bounds: dict,
+                 news: list[dict]) -> dict:
+    """Atomically merge a deterministic timing signal into the verdict store."""
+    prior = load_verdicts()
+    rows = dict(prior.get("verdicts") or {})
+    old = dict(rows.get(str(player_id)) or {})
+    old.update({"player_id": str(player_id), "name": name,
+                "verdict": old.get("verdict", "neutral"),
+                "confidence": old.get("confidence", 1.0),
+                "reason": old.get("reason", "explicit return timing"),
+                "role_week": old.get("role_week"), **bounds,
+                "fingerprint": fingerprint({"player_id": str(player_id),
+                                             "designation": None,
+                                             "eligible_week": None,
+                                             "injury": None,
+                                             "out_for_season": bounds.get("out_for_season"),
+                                             "news": news}),
+                "judged_at": time.time()})
+    rows[str(player_id)] = old
+    out = {**prior, "model": "deterministic-explicit-timing",
+           "written": time.time(),
+           "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
+           "judged_now": 1, "reused": max(0, len(rows) - 1),
+           "verdicts": rows}
+    tmp = VERDICTS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp.replace(VERDICTS)
+    return old
 
 
 def trust_multiplier(player_id: str) -> float:
@@ -601,7 +657,7 @@ def main():
             pid = x["player_id"]
             print(f"  {x['name'][:22]:<22} {x['pos']:<4}"
                   f" {str((players.get(pid) or {}).get('team')):<4}"
-                  f" ros {(x.get('ros') or 0):>6.1f}  k {str(x.get('k') or '-'):<6}"
+                  f" ros {(x.get('ros') or 0):>6.1f}"
                   f" {str(injuries.designation(pid) or ''):<12} {x['why_pooled']}")
     elif a.dates:
         print(dates_report())

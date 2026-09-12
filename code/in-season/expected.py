@@ -1,23 +1,6 @@
-"""Expected points, conditioned on actually playing -- one number, built once.
+"""Injury-responsive weekly value for roster management.
 
-WHAT WAS WRONG. ros.py estimates "will he be on the field in a role" FOUR times,
-with mechanisms that do not know about each other, and then adds them up:
-
-  * the weekly feed is a rate conditional on him STARTING, so it silently sets
-    the probability to 1 for a starter and 0 for a backup -- twelve men with a
-    real season projection price at 0.00, and since moves.py decides adds on
-    that number the bot cannot acquire a rising backup at all;
-  * the same feed also encodes a RETURN DATE, as a hard step -- Jordyn Tyson
-    reads 0.00 through week 4 and 8.90 from week 5, with no uncertainty in it
-    anywhere, when the three dated sources on him spanned weeks 5 to 7;
-  * `upside` is a fifth-column estimate of the same thing, ADDED to the total,
-    and since P(miss) and absorption are position constants it reduces to the
-    starter's rate times 6.1% -- it ranks backups by the quality of the man
-    ahead of them, which is why Flacco priced 46x Carson Beck;
-  * `news_mult` is one scalar for the whole rest of the season, applied at half
-    strength because nobody could tell whether the feed had already priced it.
-
-THE SHAPE HERE. Two factors, kept apart because they fail differently:
+One weekly model drives both current and future value:
 
     value(w) = A(w) x SUM over states of  P(state, w) x points(state, w)
 
@@ -26,27 +9,10 @@ never a step. The states are S1 (the role he has) and S2 (the role ahead of
 him), so inheritance is part of the total rather than added to it, and the
 question "is upside double-counted" stops being a judgment call.
 
-THE LEVEL COMES FROM THE MARKET, AND THAT IS THE WHOLE TRICK. Sleeper publishes
-two projections that are different objects: the weekly feed is conditional on
-starting, and the SEASON file is unconditional -- the chance he plays is already
-inside the projected volume. Their ratio is the market's own implied
-P(available and in a role), and it is free. So the structural model above is
-built, then SCALED so its total matches what the market says the man is worth:
-
-    k = (season points x games left / 17)  /  SUM over w of raw(w)
-
-k is therefore the RESIDUAL -- everything the structural model does not explain
--- and reading it is the point. A backup whose k is near 1 is priced exactly as
-injury luck implies. A backup whose k is 3 or 4 is one the market expects to
-play for reasons no hazard rate knows about, which is a handoff being priced in.
-That single number separates Carson Beck from Joe Flacco without anyone
-asserting that it should.
-
-WHERE THE IDENTITY DOES NOT BIND. It is a constraint, not an axiom. Both feeds
-descend from the same assumptions, so when they AGREE they have only confirmed a
-shared premise -- Tyson's k is 0.84, comfortably healthy, because both were built
-on the same week-5 return. Where something independent contradicts them, the
-level is released rather than pinned, and `k_source` says so on the row.
+The level is the NFL model's mean for every remaining week, falling back by row
+to Sleeper. Season-total projections are archived for research and never enter
+this calculation. A successor is the greater of the provider's repriced weekly
+number and the pre-event baseline plus fitted inherited opportunity.
 
     python -m robo.expected --top 40
     python -m robo.expected --explain "Player Name"
@@ -57,44 +23,17 @@ import argparse
 import json
 import time
 
-from robo import DATA, LEAGUE_ID_2026, injuries, rankings, returns, roles, ros, scout
+from robo import DATA, LEAGUE_ID_2026, injuries, returns, roles, ros, scout
 from robo import season, settings
 from robo import sleeper_read as api
 
 CACHE = DATA / "expected.json"
+BASELINES = DATA / "role_baselines.json"
 # 2: `by_week[w]["miss"]` changed meaning. It was roles.miss_rate(pos), a
 # position-wide constant; it is now the REALISED chance the job ahead was open
 # that week, which for a known absence comes off the lead's own availability. A
 # file written under 1 looks valid and reads wrong, so the bump forces a rebuild.
-SCHEMA = 2
-
-# A full NFL season of games behind the season projection. The league plays
-# through week 17 and the projection covers all 17 games, so a rest-of-season
-# target has to be prorated by games actually LEFT -- crediting a man with an
-# eighteenth week nobody can start him in inflates every target by about 6%.
-SEASON_GAMES = 17
-
-# Bounds on the residual. It is a real quantity and mostly it should be left
-# alone, but one stale row should not be able to move a valuation by an order of
-# magnitude on its own. Set wide on purpose: k of 3-4 is a legitimate reading of
-# a backup the market expects to play, and clamping that away would delete the
-# exact signal this module was built to find.
-K_CLAMP = (0.25, 6.0)
-
-# Below this the raw structural total is too small to divide by -- a man the
-# model gives almost nothing carries no shape for k to scale, and the ratio
-# explodes on rounding noise rather than on information.
-MIN_RAW_TO_SCALE = 1.0
-
-# A SEPARATE AND MUCH HIGHER BAR FOR READING k AS A SIGNAL. Computing the ratio
-# needs only a non-zero denominator; believing it needs a denominator with
-# something in it. Six of the thirty-three rows at k >= 2 were pinned to the
-# clamp ceiling at exactly 6.00, and every one had a raw total between 1.03 and
-# 3.36 -- Josh Johnson, Carson Wentz and two other career backup quarterbacks
-# whose ratio is arithmetic on nothing, not a market expecting a handoff. Beck's
-# 3.99 sits on a raw total of 15.0 and is a real reading. So `k` is quoted as
-# evidence only above this, and is_puzzle() is the one place that decides.
-K_PUZZLE_MIN_RAW = 5.0
+SCHEMA = 3
 
 settings.apply(__name__, globals())
 
@@ -169,9 +108,15 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
     # stands -- an absent estimate must never be read as "week 1".
     sig = scout.role_signal(pid)
     scout_wk = sig.get("return_week")
+    scout_lo = sig.get("return_week_min")
+    scout_hi = sig.get("return_week_max")
     elig = feed_elig
-    if scout_wk and (not feed_elig or scout_wk > feed_elig):
-        elig = scout_wk
+    if scout_lo is not None:
+        # Sleeper's zero-to-positive step is a forecast fallback, not a legal
+        # floor. Explicit reporting may legitimately put a 50% return chance in
+        # a week Sleeper still has at zero. ESPN's eligible week is the only
+        # bound the report may not precede.
+        elig = max(int(scout_lo), int(espn_elig)) if espn_elig else int(scout_lo)
 
     # Weeks already served, as of NOW and not as of the week being priced.
     # back_by() takes `missed` and `ahead` and reads the curve at missed+ahead,
@@ -183,8 +128,15 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
     a_by, arecs = {}, {}
     for w in mine:
         arec: dict = {}
-        a = returns.availability(status, body, w, now, missed=served,
-                                 eligible_week=elig, record=arec)
+        if scout_lo is not None and scout_hi is not None:
+            possible = list(range(int(scout_lo), int(scout_hi) + 1))
+            a = sum(1 for rw in possible if rw <= w) / len(possible)
+            arec = {"mode": "reported return range", "p": round(a, 3),
+                    "return_week_min": scout_lo, "return_week_max": scout_hi,
+                    "basis": sig.get("return_basis")}
+        else:
+            a = returns.availability(status, body, w, now, missed=served,
+                                     eligible_week=elig, record=arec)
         if elig and w < elig:
             a = 0.0
             arec = {"mode": "before expected return", "p": 0.0,
@@ -195,6 +147,8 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
     return a_by, {"eligible_week": elig, "feed_eligible": feed_elig,
                   "floor_source": floor_src, "floor": frec or None,
                   "scout_return": scout_wk,
+                  "scout_return_min": scout_lo,
+                  "scout_return_max": scout_hi,
                   "scout_basis": sig.get("return_basis"),
                   "role_change": sig.get("role_change"),
                   "injury_status": status, "injury": body, "arecs": arecs}
@@ -202,8 +156,9 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
 
 def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
                now: int, avail: dict | None = None,
+               baselines: dict | None = None,
                record: dict | None = None) -> dict:
-    """{week: expected points} from the structural model, before calibration.
+    """{week: expected points} from availability and fitted role inheritance.
 
     `avail` maps player_id -> {week: A(w)} for everyone, so the chance the job
     ahead of him comes open can be read off THE LEAD'S OWN NUMBER instead of a
@@ -225,6 +180,7 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
     arecs = meta.get("arecs") or {}
 
     out, detail = {}, {}
+    baselines = baselines or {}
     for w, p1 in mine.items():
         a = a_by.get(w, 1.0)
         arec = arecs.get(w) or {}
@@ -241,7 +197,10 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         ahead_w = rates.get(rw["lead_id"]) if rw.get("lead_id") else ahead
         absorb_w = min(1.0, rw.get("absorbs") or 0.0)
         lead_pts = (ahead_w or {}).get(w, 0.0)
-        p2 = lead_pts * absorb_w
+        base1 = ((baselines.get(pid) or {}).get(str(w), p1))
+        lead_healthy = ((baselines.get(rw.get("lead_id")) or {}).get(
+            str(w), lead_pts)) if rw.get("lead_id") else lead_pts
+        p2 = lead_healthy * absorb_w
         # HOW OFTEN THE JOB AHEAD IS ACTUALLY OPEN, read off the lead's own
         # availability rather than a position-wide constant. miss_rate is the
         # fitted chance that ANY established starter sits out ANY week -- the
@@ -254,16 +213,20 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         lead_a = ((avail or {}).get(rw.get("lead_id")) or ({},))[0]
         la = lead_a.get(w)
         p_open = (1.0 - la) if (la is not None and la < 1.0) else miss
-        v = a * (p1 + p_open * p2)
+        structural = base1 + p_open * p2
+        # Sleeper may already have reassigned the opportunity. Take the larger
+        # complete statement; never stack its repricing on top of ours.
+        v = a * max(p1, structural)
         out[w] = round(v, 3)
         # The REALISED chance the door opened, not the nominal constant.
-        detail[w] = {"a": round(a, 3), "s1": round(p1, 3),
+        detail[w] = {"a": round(a, 3), "s1": round(base1, 3),
+                     "provider": round(p1, 3),
                      "s2": round(p2, 3), "miss": round(p_open, 4),
                      # Carried per week so the simulator can rebuild the
                      # inheritance from the lead's own number and its own drawn
                      # fraction, instead of dividing s2 back out by a season-long
                      # absorb that no longer applies to every week.
-                     "lead": round(lead_pts, 3), "absorbs": round(absorb_w, 4),
+                     "lead": round(lead_healthy, 3), "absorbs": round(absorb_w, 4),
                      "rank": rw.get("rank"),
                      "avail": arec, "pts": round(v, 3)}
     if record is not None:
@@ -274,85 +237,30 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
     return out
 
 
-def release_target(target: float, mine: dict, feed_elig: int | None,
-                   scout_wk: int | None) -> tuple[float, str]:
-    """Adjust the market's level for weeks the reporting says he will miss.
-
-    THE IDENTITY IS A CONSTRAINT, NOT AN AXIOM. Both Sleeper feeds are built on
-    the same assumed return, so when they agree they have confirmed a shared
-    premise rather than each other -- Tyson's k is a comfortable 0.84 precisely
-    because the weekly step and the season volume were both drawn from week 5.
-    Calibrating to that target would take the reporting's later date back out
-    again at the last step.
-
-    So the target is scaled by the share of playable weeks that survive the
-    scout's date, rather than being discarded. Throwing the market away entirely
-    would lose the one thing it is best at -- the LEVEL -- to fix the one thing
-    it is worst at, the timing.
-    """
-    if not scout_wk or not (feed_elig and scout_wk > feed_elig):
-        return target, "ratio"
-    playable = [w for w, p in mine.items() if (p or 0) > 0]
-    if not playable:
-        return target, "ratio"
-    kept = [w for w in playable if w >= scout_wk]
-    adj = target * len(kept) / len(playable)
-    return adj, (f"ratio, target released from week {feed_elig} to {scout_wk} "
-                 f"on reporting ({len(kept)}/{len(playable)} weeks)")
+def _load_baselines() -> dict:
+    try:
+        d = json.loads(BASELINES.read_text(encoding="utf-8"))
+        return d.get("players") or {} if d.get("schema") == 1 else {}
+    except Exception:
+        return {}
 
 
-def season_target(pid: str, games_left: int, spts: dict) -> float:
-    """What the market says he is worth over the games that are left."""
-    return (spts.get(pid) or 0.0) * games_left / SEASON_GAMES
-
-
-def calibrate(raw_total: float, target: float, clamp: bool = True,
-              record: dict | None = None) -> tuple[float, str]:
-    """(k, why). The residual between the structural model and the market."""
-    if target <= 0:
-        if record is not None:
-            record.update({"k": 1.0, "source": "none"})
-        return 1.0, "no season projection to calibrate against"
-    if raw_total < MIN_RAW_TO_SCALE:
-        if record is not None:
-            record.update({"k": None, "source": "season-only"})
-        return 0.0, ("structural model gives ~nothing; the season file is the "
-                     "only statement about him")
-    k = target / raw_total
-    clamped = False
-    if clamp and not (K_CLAMP[0] <= k <= K_CLAMP[1]):
-        k, clamped = min(max(k, K_CLAMP[0]), K_CLAMP[1]), True
-    # ROUND AT THE POINT OF STORAGE, THEN COMBINE. The published k is 3dp, so
-    # multiplying by a full-precision one produces a total nobody can reproduce
-    # from the numbers on the page -- 53 of 799 rows failed a hand check by up
-    # to 0.14. Harmless as arithmetic, fatal as an audit: the one check meant to
-    # build confidence reports a mismatch on a good row.
-    k = round(k, 3)
-    if record is not None:
-        record.update({"k": k, "raw_total": round(raw_total, 2),
-                       "target": round(target, 2), "clamped": clamped,
-                       "source": "ratio"})
-    return k, ("ratio" + (" CLAMPED" if clamped else ""))
+def _write_baselines(players: dict, week: int) -> None:
+    doc = {"schema": 1, "updated": time.time(), "week": week,
+           "players": players}
+    tmp = BASELINES.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(doc), encoding="utf-8")
+    tmp.replace(BASELINES)
 
 
 # --------------------------------------------------------------------- build
 
-def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
-          clamp: bool = True) -> dict:
+def build(week: int | None = None, league_id: str = LEAGUE_ID_2026) -> dict:
     wk = week or season.current_week()
     weights = ros.week_weights(wk, league_id)
     wr = ros.weekly_rates(wk, season.SEASON, league_id)
     rates = wr["rates"]
     players = api.players()
-    sc = season.scoring(league_id)
-
-    spts = {}
-    for r in rankings.load_projections():
-        p = r.get("player") or {}
-        pid = str(r.get("player_id") or p.get("player_id") or "")
-        if pid:
-            spts[pid] = rankings.custom_points(r.get("stats") or {}, sc)
-
     # EVERYONE'S AVAILABILITY FIRST, because a backup's inheritance is priced
     # against the man ahead of him and that number is not his own. One pass, so
     # nothing is computed twice.
@@ -361,6 +269,20 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
         p = players.get(pid) or {}
         if (p.get("position") or "DEF") in roles.PROJ_OPPORTUNITY:
             avail[pid] = availability(pid, p, byweek, wk)
+
+    baselines = _load_baselines()
+    refreshed = {pid: dict(by) for pid, by in baselines.items()}
+    for pid, byweek in rates.items():
+        p = players.get(pid) or {}
+        pos = p.get("position") or "DEF"
+        if pos not in roles.PROJ_OPPORTUNITY:
+            continue
+        own_a = (avail.get(pid) or ({},))[0]
+        for w, pts in byweek.items():
+            rr = roles.projected_role(pid, p.get("team") or "", pos, week=w)
+            lead_a = ((avail.get(rr.get("lead_id")) or ({},))[0]).get(w, 1.0)
+            if own_a.get(w, 1.0) >= 0.999 and lead_a >= 0.999:
+                refreshed.setdefault(pid, {})[str(w)] = pts
 
     rows = {}
     for pid, byweek in rates.items():
@@ -373,27 +295,12 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             continue
         rec: dict = {}
         raw = raw_series(pid, pos, p.get("team") or "", rates, p, wk,
-                         avail=avail, record=rec)
+                         avail=avail, baselines=baselines, record=rec)
         raw_total = sum(raw.values())
         games_left = len(byweek)
-        target = season_target(pid, games_left, spts)
-        target, rel = release_target(target, rates.get(pid) or {},
-                                     rec.get("feed_eligible"),
-                                     rec.get("scout_return"))
-        krec: dict = {}
-        k, why = calibrate(raw_total, target, clamp, record=krec)
-        if rel != "ratio":
-            why = rel
-
-        if krec.get("source") == "season-only":
-            # No shape to scale, so spend the market's number evenly over the
-            # games left. Flat is wrong about WHEN and right about HOW MUCH,
-            # which is the correct trade here: lineup.py sets lineups off the
-            # weekly feed, so this number only ever reaches add/drop decisions.
-            per = target / games_left if games_left else 0.0
-            series = {w: per for w in byweek}
-        else:
-            series = {w: k * v for w, v in raw.items()}
+        # Weekly modeled value is the level. Sleeper's season file is archived
+        # as evidence, never used to pull this series back toward a stale total.
+        series = dict(raw)
         # The per-week figure is published at 3dp, so the total is built from
         # the published figures rather than from their full-precision originals.
         series = {w: round(v, 3) for w, v in series.items()}
@@ -403,9 +310,8 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "player_id": pid, "name": api.player_name(players, pid),
             "pos": pos, "team": p.get("team"),
             "ros": round(total, 2),
-            "raw": round(raw_total, 2), "target": round(target, 2),
-            "k": krec.get("k"), "k_source": krec.get("source"),
-            "k_why": why, "clamped": bool(krec.get("clamped")),
+            "raw": round(raw_total, 2),
+            "value_source": "weekly-model",
             "weeks": games_left,
             "rank": rec["role"].get("rank"), "share": rec["role"].get("share"),
             "ahead_of": rec["role"].get("ahead_of"),
@@ -420,6 +326,8 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "feed_eligible": rec.get("feed_eligible"),
             "floor_source": rec.get("floor_source"),
             "scout_return": rec.get("scout_return"),
+            "scout_return_min": rec.get("scout_return_min"),
+            "scout_return_max": rec.get("scout_return_max"),
             "scout_basis": rec.get("scout_basis"),
             "role_change": rec.get("role_change"),
             "min_avail": round(min((d["a"] for d in rec["by_week"].values()),
@@ -427,8 +335,9 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             "by_week": {str(w): {**rec["by_week"][w], "final": series[w]}
                         for w in sorted(series)},
         }
+    _write_baselines(refreshed, wk)
     return {"schema": SCHEMA, "computed": time.time(), "week": wk,
-            "season": season.SEASON, "weights": weights, "clamped": clamp,
+            "season": season.SEASON, "weights": weights,
             "players": rows}
 
 
@@ -515,18 +424,9 @@ def trace(name: str = "", player_id: str | None = None) -> str:
                  f"{b['pts']:>8.2f}{b['final']:>8.2f}"
                  f"{W.get(w, W.get(str(w), 1.0)):>8.2f}")
     L.append("")
-    L.append("[4] THE LEVEL -- what the market says, against what the model built")
-    L.append(f"    structural total   {r['raw']:>8.2f}   "
-             f"(availability x role, before calibration)")
-    L.append(f"    market target      {r['target']:>8.2f}   "
-             f"(season projection over {r['weeks']} games left)")
-    if r["k"] is None:
-        L.append(f"    k                    n/a     {r['k_why']}")
-    else:
-        L.append(f"    k                  {r['k']:>8.3f}   {r['k_why']}")
-        L.append(f"    k near 1 means injury luck alone explains him; "
-                 f"well above 1 means")
-        L.append(f"    the market is pricing a role he does not have yet.")
+    L.append("[4] THE LEVEL -- weekly modeled value")
+    L.append(f"    weekly total       {r['raw']:>8.2f}   "
+             f"(availability x role; no season-total calibration)")
     L.append("")
     L.append(f"[5] rest-of-season {r['ros']}  "
              f"(weeks weighted by our playoff odds)")
@@ -540,13 +440,12 @@ def report(top: int = 40, pos: str | None = None) -> str:
     rows.sort(key=lambda r: -r["ros"])
     L = [f"EXPECTED REST-OF-SEASON - week {d['week']}, "
          f"{len(d['players'])} players", "",
-         f"  {'player':<22}{'pos':<5}{'tm':<5}{'ros':>8}{'k':>7}"
-         f"{'A min':>7}  note"]
+         f"  {'player':<22}{'pos':<5}{'tm':<5}{'ros':>8}"
+         f"{'A min':>7}  source"]
     for r in rows[:top]:
-        k = f"{r['k']:.2f}" if r["k"] is not None else "  --"
-        note = r["k_source"] + (" CLAMPED" if r["clamped"] else "")
         L.append(f"  {r['name'][:21]:<22}{r['pos']:<5}{str(r['team']):<5}"
-                 f"{r['ros']:>8.1f}{k:>7}{r['min_avail']:>7.2f}  {note}")
+                 f"{r['ros']:>8.1f}{r['min_avail']:>7.2f}  "
+                 f"{r.get('value_source', 'weekly-model')}")
     return "\n".join(L)
 
 
@@ -570,79 +469,12 @@ def compare(top: int = 25, pos: str | None = None) -> str:
         rows.append((r, o, r["ros"] - o))
     rows.sort(key=lambda t: -abs(t[2]))
     L = [f"EXPECTED vs ros.py - week {d['week']}, {len(rows)} players", "",
-         f"  {'player':<22}{'pos':<5}{'ros.py':>9}{'new':>9}{'delta':>9}"
-         f"{'k':>7}  source"]
+         f"  {'player':<22}{'pos':<5}{'ros.py':>9}{'new':>9}{'delta':>9}  source"]
     for r, o, delta in rows[:top]:
-        k = f"{r['k']:.2f}" if r["k"] is not None else "  --"
         L.append(f"  {r['name'][:21]:<22}{r['pos']:<5}{o:>9.1f}{r['ros']:>9.1f}"
-                 f"{delta:>+9.1f}{k:>7}  {r['k_source']}"
-                 + (" CLAMPED" if r["clamped"] else ""))
+                 f"{delta:>+9.1f}  {r.get('value_source', 'weekly-model')}")
     moved = sum(1 for _, _, x in rows if abs(x) > 5)
     L += ["", f"  {moved} of {len(rows)} move by more than 5 points."]
-    return "\n".join(L)
-
-
-def is_puzzle(row: dict, floor: float = 2.0) -> bool:
-    """Is this man's k actually saying something, or dividing by nothing?
-
-    ONE DEFINITION, because two consumers were about to grow their own. scout.py
-    reads it to decide who is worth asking a reporter about and this module reads
-    it to decide who to explain; a threshold written twice is a threshold that
-    disagrees with itself by Thursday.
-
-    Three conditions, and the last two are the ones that matter. A clamped row
-    hit the ceiling rather than landing there, and a thin raw total makes the
-    ratio arithmetic rather than evidence -- see K_PUZZLE_MIN_RAW.
-    """
-    return (row.get("k_source") == "ratio"
-            and (row.get("k") or 0) >= floor
-            and not row.get("clamped")
-            and (row.get("raw") or 0) >= K_PUZZLE_MIN_RAW)
-
-
-def puzzles(league_id: str = LEAGUE_ID_2026, floor: float = 2.0) -> str:
-    """Men the market pays for and the structural model cannot explain.
-
-    TWO INDEPENDENT ANSWERS TO ONE QUESTION, shown side by side and never
-    averaged -- the same shape scout runs two judges in. `k` is what the market
-    implies: how many times more than our model of his role says he is worth.
-    `takeover` is what ten seasons of usage say about men in his situation
-    actually taking the job outright.
-
-    Agreement means the premium is explained by an ordinary base rate and needs
-    no story. Disagreement is the interesting row: either the market knows
-    something a base rate cannot see, or `k` is absorbing an error somewhere
-    upstream. The point is to make that visible, not to resolve it here.
-    """
-    d = load()
-    players = api.players()
-    rows = []
-    for pid, r in (d.get("players") or {}).items():
-        if not is_puzzle(r, floor):
-            continue
-        p = players.get(pid) or {}
-        xw = roles._crosswalk().get(str(pid)) or {}
-        yr, rnd = xw.get("draft_year"), xw.get("draft_round")
-        exp = (int(d["season"]) - int(yr)) if yr else None
-        rate, why = roles.takeover_rate(r["pos"], exp, rnd)
-        rows.append((r["name"], r["pos"], r.get("rank"), r["k"], r["ros"],
-                     rate, why, r.get("lead_of")))
-    rows.sort(key=lambda t: -t[3])
-    L = [f"THE MARKET PAYS FOR THESE MEN AND OUR MODEL OF THEIR ROLE DOES NOT - "
-         f"k >= {floor:g}", "",
-         f"  {'player':<20}{'pos':<4}{'rk':>3}{'k':>6}{'ros':>7}{'takeover':>10}"
-         f"  behind / basis"]
-    for n, pos, rk, k, v, rate, why, lead in rows:
-        L.append(f"  {n[:20]:<20}{pos:<4}{str(rk or '-'):>3}{k:>6.2f}{v:>7.1f}"
-                 f"{rate:>9.0%}  {(lead or '-')[:16]:<16} {why[:34]}")
-    L += ["", "  k is the market's premium over our structural model. takeover is the",
-          "  measured rate at which men in his position, experience and draft-round",
-          "  cell take the job outright by week 10, over 2016-2025.",
-          "",
-          "  THE QUARTERBACK ROWS CANNOT BE ANSWERED and say so. A backup QB",
-          "  accumulates no usage, so he never enters the panel: only six rookie",
-          "  quarterbacks drafted in the first three rounds appear in ten seasons,",
-          "  and their 83% is six coin flips. Those rows pool to the all-QB rate."]
     return "\n".join(L)
 
 
@@ -651,15 +483,10 @@ def main():
     ap.add_argument("--top", type=int, default=40)
     ap.add_argument("--pos", type=str, default=None)
     ap.add_argument("--explain", type=str, default=None)
-    ap.add_argument("--puzzles", action="store_true",
-                    help="men the market pays for that our model cannot explain")
     ap.add_argument("--compare", action="store_true",
                     help="side by side with ros.py")
     ap.add_argument("--rebuild", action="store_true")
     args = ap.parse_args()
-    if args.puzzles:
-        print(puzzles())
-        return
     if args.compare:
         print(compare(args.top, args.pos))
         return
