@@ -698,5 +698,21 @@
    "week": 1,
    "gain": 6.8
   }
+ },
+ {
+  "id": 25,
+  "ts": "2026-09-12T03:04:11+00:00",
+  "kind": "free-agent",
+  "title": "Signed Marlin Klein, released J.K. Dobbins",
+  "decision": "Marlin Klein (TE) in, J.K. Dobbins out.",
+  "rationale": "Rest-of-season value 3.6 against 0.3 held, a gain of +3.6 in news mode. bench, judged on the ceiling; +/- 1.1, ceiling 19.4.",
+  "status": "final",
+  "data": {
+   "add": "13307",
+   "drop": "6806",
+   "mode": "news",
+   "week": 1,
+   "gain": 3.6
+  }
  }
 ]
