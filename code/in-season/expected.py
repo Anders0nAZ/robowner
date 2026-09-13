@@ -29,11 +29,12 @@ from robo import sleeper_read as api
 
 CACHE = DATA / "expected.json"
 BASELINES = DATA / "role_baselines.json"
-# 2: `by_week[w]["miss"]` changed meaning. It was roles.miss_rate(pos), a
-# position-wide constant; it is now the REALISED chance the job ahead was open
-# that week, which for a known absence comes off the lead's own availability. A
-# file written under 1 looks valid and reads wrong, so the bump forces a rebuild.
-SCHEMA = 3
+# 6 makes subject-attributed timing and `lead_id` part of the decision artifact.
+# A schema-3 cache may contain a return date from the old teammate-blind parser
+# and cannot be allowed to survive merely because the weekly projections match.
+# Schemas 4-5 were built while legacy or retrospective timing could still
+# escape the fail-closed reader, so they must also be rebuilt.
+SCHEMA = 6
 
 settings.apply(__name__, globals())
 
@@ -320,6 +321,7 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026) -> dict:
             # rank 3 down, and that is where a trace would otherwise name the
             # wrong player as the reason for a number.
             "lead_of": rec["role"].get("lead_of"),
+            "lead_id": rec["role"].get("lead_id"),
             "absorbs": rec.get("absorbs"),
             "injury_status": rec.get("injury_status"),
             "eligible_week": rec.get("eligible_week"),

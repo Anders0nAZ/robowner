@@ -50,7 +50,8 @@ CATEGORIES = [
      "Everything the bot knows comes in through here. All free, all public "
      "except Sleeper's write API, which uses its own account.",
      ["sleeper_read", "sleeper_write", "adp", "adp_live", "fantasypros",
-      "buzz", "injuries", "scout", "history", "vegas", "projarchive"]),
+      "buzz", "injuries", "scout", "history", "vegas", "projarchive",
+      "news_audit"]),
     ("draft", "The draft",
      "Valuing players, pricing keepers, and the agent that actually sat on the "
      "clock and submitted picks.",
@@ -80,7 +81,7 @@ CATEGORIES = [
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
      ["__init__", "refresh", "prekick", "settings", "admin_gui",
-      "audit_gui", "ui", "1_Rest_of_season"]),
+      "audit_gui", "ui", "1_Rest_of_season", "2_News_pulse"]),
 ]
 
 

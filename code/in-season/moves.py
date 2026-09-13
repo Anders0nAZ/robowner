@@ -31,15 +31,19 @@ legality is not a matter of degree. It is implemented as five modes:
     stream  matchup-driven defence streaming.
     ros     ordinary upgrades on the rest-of-season number. The default.
     news    event-scoped injury reaction. Affected players enter independently
-            of season rank; an immediate starter clears on a positive gain over
-            twice its paired simulation error, while a bench add must retain a
-            real ceiling. Allowed until the candidate's own game locks.
+            of season rank, but room membership is only discovery. A positive
+            measured event delta and causal successor edge are required, then
+            candidate and drop are compared apples-to-apples on the same fresh
+            weekly-model ROS table. Coverage must survive and only one proposal
+            may leave an event batch. Allowed until the candidate's game locks.
 
-ADDS AND DROPS ARE PRICED IN CONTEXT, ON PURPOSE. expected.py supplies each
+ORDINARY ADDS AND DROPS ARE PRICED IN CONTEXT, ON PURPOSE. expected.py supplies each
 weekly mean, including fitted inheritance where a role opens. marginal.py then
 simulates the candidate and each legal drop against our optimal lineups, so a
 temporary starter can surface without pretending his value lasts all season and
-a bench lottery ticket retains the value of the role he could inherit.
+a bench lottery ticket retains the value of the role he could inherit. News
+mode deliberately uses the simpler absolute ROS comparison as its authority;
+lineup marginality is advisory and can never justify dropping a higher-ROS man.
 
 NO LONG-HORIZON MOVE NEAR KICKOFF. A rest-of-season swap made forty minutes
 before the early games is a decision taken on this week's panic with the season's
@@ -67,6 +71,7 @@ so the statement is true by construction. See robo/faab.py.
 
 import argparse
 import json
+import time
 
 from robo import LEAGUE_ID_2026, faab, lineup, season, settings, value, vegas
 from robo import sleeper_read as api
@@ -136,7 +141,9 @@ MODES = ("patch", "fill", "stream", "ros", "news")
 # ------------------------------------------------------------------ evaluation
 
 def _context(league_id: str = LEAGUE_ID_2026, mode: str = "ros",
-             affected: set[str] | None = None) -> dict:
+             affected: set[str] | None = None,
+             event_deltas: dict | None = None,
+             event_fingerprint: str | None = None) -> dict:
     from robo.rankings import build_board
     board = build_board()
     by_id = {r["player_id"]: r for r in board}
@@ -156,6 +163,8 @@ def _context(league_id: str = LEAGUE_ID_2026, mode: str = "ros",
         # too close rather than plenty of time -- see vegas.next_kickoff.
         "hours_to_kickoff": None if secs is None else round(secs / 3600.0, 2),
         "affected": {str(p) for p in (affected or set())},
+        "event_deltas": event_deltas or {},
+        "event_fingerprint": event_fingerprint,
     }
 
 
@@ -294,9 +303,276 @@ def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[di
     return sorted(out, key=lambda d: (-d["value"], d["row"]["player_id"]))
 
 
+# ---------------------------------------------------------- guarded news mode
+
+NEWS_MIN_COVERAGE = {"QB": 3, "RB": 3, "WR": 3, "TE": 2}
+NEWS_VALUE_MAX_AGE = 15 * 60
+
+
+def _news_complete(table: dict, pid: str) -> tuple[bool, str]:
+    """Whether one apples-to-apples ROS row is complete enough to authorize."""
+    row = (table.get("players") or {}).get(str(pid))
+    if not row:
+        return False, "missing from weekly ROS table"
+    if table.get("schema") is None or time.time() - float(table.get("computed") or 0) > NEWS_VALUE_MAX_AGE:
+        return False, "weekly ROS table is stale"
+    required = len([w for w, weight in (table.get("weights") or {}).items()
+                    if float(weight or 0) > 0])
+    # One absent row is the player's bye. Anything thinner is an incomplete
+    # horizon and may not be compared with a complete incumbent.
+    if len(row.get("by_week") or {}) < max(1, required - 1):
+        return False, "weekly ROS series is incomplete"
+    return True, ""
+
+
+def _skill_lineup_fillable(table: dict, active_ids: set[str], week: int) -> bool:
+    """Can the eight skill slots be filled from available players this week?"""
+    slots = lineup.SLOTS[:8]
+    rows = table.get("players") or {}
+    pool = []
+    for pid in active_ids:
+        row = rows.get(pid)
+        cell = (row or {}).get("by_week", {}).get(str(week))
+        if not row or not cell or float(cell.get("a", 1.0)) <= 0:
+            continue
+        pool.append((pid, row.get("pos")))
+    masks = {0}
+    for _, pos in pool:
+        nxt = set(masks)
+        for mask in masks:
+            for i, slot in enumerate(slots):
+                if not mask & (1 << i) and pos in lineup.SLOT_ELIGIBLE[slot]:
+                    nxt.add(mask | (1 << i))
+        masks = nxt
+    return (1 << len(slots)) - 1 in masks
+
+
+def _coverage_after(ctx: dict, add_id: str, drop_id: str | None,
+                    table: dict | None = None,
+                    record: dict | None = None) -> tuple[bool, str]:
+    """Protect roster construction while allowing cross-position upgrades."""
+    from robo import expected
+    table = table or expected.load()
+    held = set(ctx["roster"].get("players") or [])
+    reserve = set(ctx["roster"].get("reserve") or [])
+    active = (held - reserve) | {str(add_id)}
+    if drop_id:
+        active.discard(str(drop_id))
+    players = ctx.get("players") or {}
+    erows = table.get("players") or {}
+
+    def available_soon(pid: str) -> bool:
+        row = erows.get(pid) or {}
+        for w in range(ctx["week"], ctx["week"] + 4):
+            cell = (row.get("by_week") or {}).get(str(w))
+            if cell and float(cell.get("a", 1.0)) > 0:
+                return True
+        return False
+
+    counts = {p: 0 for p in NEWS_MIN_COVERAGE}
+    specialists = {"K": 0, "DEF": 0}
+    for pid in active:
+        pos = (erows.get(pid) or {}).get("pos") or (players.get(pid) or {}).get("position")
+        if pos in counts and available_soon(pid):
+            counts[pos] += 1
+        if pos in specialists:
+            specialists[pos] += 1
+    audit = {
+        "active_after": len(active),
+        "minimums": dict(NEWS_MIN_COVERAGE),
+        "counts": counts,
+        "specialists": specialists,
+        "weeks": [],
+    }
+
+    def finish(ok: bool, why: str) -> tuple[bool, str]:
+        audit.update({"passed": ok, "reason": why or "coverage preserved"})
+        if record is not None:
+            record.update(audit)
+        return ok, why
+
+    short = [f"{p}{counts[p]}/{minimum}" for p, minimum in NEWS_MIN_COVERAGE.items()
+             if counts[p] < minimum]
+    if short:
+        return finish(False, "coverage floor would fail: " + ", ".join(short))
+    missing = [p for p, n in specialists.items() if n < 1]
+    if missing:
+        return finish(False, "roster cannot fill " + ", ".join(missing))
+
+    horizon = max((int(w) for w in (table.get("weights") or {}) if str(w).isdigit()),
+                  default=ctx["week"])
+    for w in range(ctx["week"], min(horizon, ctx["week"] + 3) + 1):
+        fillable = _skill_lineup_fillable(table, active, w)
+        audit["weeks"].append({"week": w, "skill_lineup_fillable": fillable})
+        if not fillable:
+            return finish(False, f"cannot fill all skill lineup slots in week {w}")
+    return finish(True, "")
+
+
+def _news_drop_pool(ctx: dict, add_id: str, table: dict) -> tuple[list[dict], list[dict]]:
+    """Coverage-safe incumbents, cheapest weekly-model ROS first."""
+    live = season.week_points(ctx["week"], season.SEASON, ctx["league_id"])
+    protected = ctx["starters"] | ctx["reserve"]
+    rows = table.get("players") or {}
+    out, checks = [], []
+    for pid in (ctx["roster"].get("players") or []):
+        pos = (rows.get(pid) or {}).get("pos") or (ctx["players"].get(pid) or {}).get("position")
+        identity = ctx["by_id"].get(pid) or rows.get(pid) or {}
+        check = {"candidate_id": str(add_id), "drop_id": pid,
+                 "drop_name": identity.get("name") or pid,
+                 "drop_pos": identity.get("pos") or pos,
+                 "drop_team": identity.get("team"),
+                 "drop_ros": (float(rows[pid]["ros"]) if pid in rows else None)}
+        if pid in protected:
+            checks.append({**check, "eligible": False,
+                           "reason": ("protected starter" if pid in ctx["starters"]
+                                      else "reserve/IR player")})
+            continue
+        if pos in {"K", "DEF"}:
+            checks.append({**check, "eligible": False,
+                           "reason": f"{pos} is not a skill-player drop in news mode"})
+            continue
+        if (live.get(pid) or {}).get("locked"):
+            checks.append({**check, "eligible": False,
+                           "reason": "player's game is locked"})
+            continue
+        complete, why = _news_complete(table, pid)
+        if not complete:
+            checks.append({**check, "eligible": False, "reason": why})
+            continue
+        coverage = {}
+        safe, why = _coverage_after(ctx, add_id, pid, table, record=coverage)
+        if not safe:
+            checks.append({**check, "eligible": False, "reason": why,
+                           "coverage": coverage})
+            continue
+        checks.append({**check, "eligible": True, "reason": "coverage preserved",
+                       "coverage": coverage})
+        out.append({"player_id": pid, "row": identity or rows[pid],
+                    "ros": float(rows[pid]["ros"]), "coverage": coverage})
+    return sorted(out, key=lambda x: (x["ros"], x["player_id"])), checks
+
+
+def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
+    """One event-authorized swap, priced strictly ROS-to-ROS.
+
+    Room membership only admits a player for consideration. Authority requires
+    a positive measured pre/post event delta and an explicit causal edge, then
+    the candidate must beat the cheapest coverage-safe incumbent on the exact
+    same freshly built expected.py table. Weekly lineup gain is deliberately
+    absent from this decision boundary; it belongs in the review narrative.
+    """
+    from robo import expected
+    table = expected.load()
+    erows = table.get("players") or {}
+    onw = ctx["on_waivers"]
+    options, rejected, candidates, drop_checks = [], [], [], []
+    for c in ctx["available"]:
+        pid = str(c["player_id"])
+        if pid not in ctx["affected"] or (waivers is not None and ((pid in onw) != waivers)):
+            continue
+        delta = ctx.get("event_deltas", {}).get(pid) or {}
+        identity = ctx["by_id"].get(pid) or erows.get(pid) or c
+        check = {
+            "player_id": pid,
+            "name": identity.get("name") or pid,
+            "pos": identity.get("pos"),
+            "team": identity.get("team"),
+            "on_waivers": pid in onw,
+            "pre_ros": delta.get("pre_ros"),
+            "post_ros": delta.get("post_ros"),
+            "delta_ros": delta.get("delta_ros"),
+            "causal_edge": delta.get("causal_edge"),
+            "series_complete": bool(delta.get("complete")),
+        }
+
+        def reject(stage: str, reason: str, **extra) -> None:
+            row = {**check, **extra, "stage": stage, "outcome": "rejected",
+                   "reason": reason}
+            rejected.append(row)
+            candidates.append(row)
+
+        complete, why = _news_complete(table, pid)
+        if not complete:
+            reject("fresh_table", why)
+            continue
+        if not delta.get("complete"):
+            reject("pre_post", "pre/post event series is incomplete")
+            continue
+        if not delta.get("causal_edge") or float(delta.get("delta_ros") or 0) <= 0:
+            reject("causal_delta", "no positive causal event delta")
+            continue
+        cand_ros = float(erows[pid]["ros"])
+        if ctx["slots"]["open"] > 0:
+            coverage = {}
+            safe, why = _coverage_after(ctx, pid, None, table, record=coverage)
+            drops = ([{"player_id": None,
+                       "row": {"player_id": None, "name": "(open roster spot)", "pos": "--"},
+                       "ros": 0.0, "coverage": coverage}] if safe else [])
+            if not safe:
+                reject("coverage", why, candidate_ros=cand_ros,
+                       coverage=coverage)
+        else:
+            drops, checks = _news_drop_pool(ctx, pid, table)
+            drop_checks.extend(checks)
+        if not drops:
+            if not any(x.get("player_id") == pid for x in candidates):
+                reject("drop_pool", "no coverage-safe unlocked nonstarter",
+                       candidate_ros=cand_ros)
+            continue
+        drop = drops[0]
+        gain = cand_ros - drop["ros"]
+        if gain <= 0:
+            reject("ros_comparison",
+                   f"ROS {cand_ros:.2f} does not beat {drop['ros']:.2f}",
+                   candidate_ros=cand_ros, drop_id=drop["player_id"],
+                   drop_name=drop["row"].get("name"), drop_ros=drop["ros"],
+                   gain=round(gain, 2), coverage=drop.get("coverage"))
+            continue
+        approved = {**check, "stage": "ros_comparison", "outcome": "proposed",
+                    "reason": "positive event delta and candidate beats the cheapest coverage-safe incumbent",
+                    "candidate_ros": cand_ros, "drop_id": drop["player_id"],
+                    "drop_name": drop["row"].get("name"), "drop_ros": drop["ros"],
+                    "gain": round(gain, 2), "coverage": drop.get("coverage")}
+        candidates.append(approved)
+        options.append({"add": identity,
+                        "drop": drop["row"], "gain": round(gain, 2),
+                        "add_value": round(cand_ros, 2),
+                        "drop_value": round(drop["ros"], 2), "real": True,
+                        "on_waivers": pid in onw,
+                        "event_delta": round(float(delta["delta_ros"]), 2),
+                        "causal_edge": delta.get("causal_edge"),
+                        "coverage": drop.get("coverage"),
+                        "why": (f"weekly-model ROS apples-to-apples; event delta "
+                                f"{float(delta['delta_ros']):+.2f}; coverage preserved")})
+    ctx["_news_rejections"] = rejected
+    ctx["_news_candidates"] = candidates
+    ctx["_news_drop_checks"] = drop_checks
+    return sorted(options, key=lambda p: (-p["gain"], -p["event_delta"],
+                                          p["add"]["player_id"]))[:1]
+
+
+def _news_channel_plans(ctx: dict, channel: str):
+    if "_news_choice" not in ctx:
+        ctx["_news_choice"] = plan_news(ctx, waivers=None)
+    choice = ctx["_news_choice"]
+    if not choice:
+        return []
+    p = choice[0]
+    if channel == "free":
+        return [p] if not p["on_waivers"] else []
+    if not p["on_waivers"]:
+        return []
+    bid = faab.ladder(ctx["week"], [p["gain"]], ctx["faab"],
+                      [p["add"].get("pos")])[0]
+    claim = {**p, "bid": int(bid), "seq": 0}
+    return [{"drop": p["drop"], "drop_value": p["drop_value"], "claims": [claim]}]
+
+
 # -------------------------------------------------------------------- channels
 
-def _news_recheck(ctx: dict, add_id: str, drop_id=None) -> str:
+def _news_recheck(ctx: dict, add_id: str, drop_id=None,
+                  plan: dict | None = None) -> str:
     """Return why a just-in-time news transaction is no longer legal, or ``""``."""
     season.invalidate_live()
     live = season.week_points(ctx["week"], season.SEASON, ctx["league_id"])
@@ -310,11 +586,41 @@ def _news_recheck(ctx: dict, add_id: str, drop_id=None) -> str:
     if drop_id is None:
         if season.slots(ctx["league_id"])["open"] <= 0:
             return "the open roster spot has been filled"
+        if plan is not None:
+            from robo import expected
+            table = expected.load()
+            complete, why = _news_complete(table, str(add_id))
+            if not complete:
+                return why
+            live_ctx = {**ctx, "roster": mine_now,
+                        "starters": starters,
+                        "reserve": set(mine_now.get("reserve") or [])}
+            safe, why = _coverage_after(live_ctx, str(add_id), None, table)
+            if not safe:
+                return why
         return ""
     if drop_id not in held:
         return "the planned drop is no longer held"
     if drop_id in starters or (live.get(drop_id) or {}).get("locked"):
         return "the planned drop is now protected"
+    if plan is not None:
+        from robo import expected
+        table = expected.load()
+        add_row = (table.get("players") or {}).get(str(add_id))
+        drop_row = (table.get("players") or {}).get(str(drop_id))
+        ac, aw = _news_complete(table, str(add_id))
+        dc, dw = _news_complete(table, str(drop_id))
+        if not ac or not dc:
+            return aw or dw
+        if float(add_row["ros"]) <= float(drop_row["ros"]):
+            return (f"live ROS comparison no longer clears: {float(add_row['ros']):.2f} "
+                    f"<= {float(drop_row['ros']):.2f}")
+        live_ctx = {**ctx, "roster": mine_now,
+                    "starters": starters,
+                    "reserve": set(mine_now.get("reserve") or [])}
+        safe, why = _coverage_after(live_ctx, str(add_id), str(drop_id), table)
+        if not safe:
+            return why
     return ""
 
 def _need_positions(ctx: dict) -> set[str]:
@@ -341,7 +647,7 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
     for p in plans:
         add, drop = p["add"], p["drop"]
         if mode == "news":
-            why = _news_recheck(ctx, add.get("player_id"), drop.get("player_id"))
+            why = _news_recheck(ctx, add.get("player_id"), drop.get("player_id"), p)
             if why:
                 print(f"  ** ADD SKIPPED {add['name']}: {why}")
                 continue
@@ -362,6 +668,10 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
                 + (f" {p['why']}." if p.get("why") else ""),
                 {"add": add.get("player_id"), "drop": drop.get("player_id"),
                  "mode": mode, "week": ctx["week"], "gain": p["gain"]})
+        if mode == "news":
+            # One event batch may authorize at most one mutation. A successful
+            # write invalidates every comparison made against the old roster.
+            break
     out["applied"] = True
     return out
 
@@ -425,6 +735,8 @@ def plan_strand(ctx: dict) -> list[dict]:
 def plan_free(ctx: dict) -> list[dict]:
     """Instant adds. One proposal per roster slot we are willing to turn over."""
     mode = ctx["mode"]
+    if mode == "news":
+        return _news_channel_plans(ctx, "free")
     if mode == "patch":
         # A STRANDED RESERVE IS A LEGALITY PROBLEM TOO, and the more urgent one:
         # an unfillable lineup slot costs us one week's points, while a man
@@ -678,6 +990,8 @@ def plan_claims(ctx: dict) -> list[dict]:
     the man we want, and the cheap rungs sit where the record says claims still
     convert. See robo/faab.py, including why P(win | bid) is not estimated.
     """
+    if ctx["mode"] == "news":
+        return _news_channel_plans(ctx, "claims")
     P = priced(ctx)
     board = P["board"]
     slates, used = [], set()
@@ -735,7 +1049,7 @@ def free_payload(add_id: str, drop_id, roster_id: int) -> dict:
     return out
 
 
-def claim_payload(add_id: str, drop_id: str, roster_id: int, bid: int) -> dict:
+def claim_payload(add_id: str, drop_id: str | None, roster_id: int, bid: int) -> dict:
     """Exactly what sleeper_write.submit_waiver_claim would send.
 
     The `waiver_bid` key is confirmed -- it was read off this league's own
@@ -743,9 +1057,11 @@ def claim_payload(add_id: str, drop_id: str, roster_id: int, bid: int) -> dict:
     parallel-array form reaches Sleeper's settings blob intact, which is why
     every submitted claim is read back (see verify_bid).
     """
-    return {"k_adds": [add_id], "v_adds": [roster_id],
-            "k_drops": [drop_id], "v_drops": [roster_id],
-            "k_settings": ["waiver_bid"], "v_settings": [bid]}
+    out = {"k_adds": [add_id], "v_adds": [roster_id],
+           "k_settings": ["waiver_bid"], "v_settings": [bid]}
+    if drop_id is not None:
+        out.update({"k_drops": [drop_id], "v_drops": [roster_id]})
+    return out
 
 
 def verify_bid(add_id: str, expected: int, ctx: dict) -> tuple[bool, str]:
@@ -819,6 +1135,9 @@ def render_free(ctx: dict, plans: list[dict]) -> str:
     if block:
         L.append(f"  BLACKED OUT: {block}")
         return "\n".join(L)
+    if ctx["mode"] == "news":
+        L.append("  policy: positive causal event delta, then weekly-model ROS "
+                 "must beat the cheapest coverage-safe incumbent")
     if not plans:
         from robo import marginal
         L.append("  nothing clears the bar: a starting upgrade must add "
@@ -826,6 +1145,11 @@ def render_free(ctx: dict, plans: list[dict]) -> str:
                  f"spot must reach a ceiling of {marginal.HIT_POINTS:g}, and both "
                  f"must beat {NOISE_MULTIPLE:g}x the simulator's own error"
                  if ctx["mode"] == "ros" else "  nothing to do in this mode")
+        if ctx["mode"] == "news":
+            for x in (ctx.get("_news_rejections") or [])[:12]:
+                pid = x.get("player_id")
+                name = (ctx["by_id"].get(pid) or {}).get("name") or pid
+                L.append(f"    REJECT {name}: {x.get('reason')}")
     for p in plans:
         L.append(f"  ADD  {p['add']['name']:<24} {p['add']['pos']:<4} "
                  f"{p['add_value']:>7.1f}{_tag(p['real'])}")
@@ -841,6 +1165,9 @@ def render_claims(ctx: dict, slates: list[dict]) -> str:
     if block:
         L.append(f"  BLACKED OUT: {block}")
         return "\n".join(L)
+    if ctx["mode"] == "news":
+        L.append("  policy: same weekly-model ROS comparison as free agents; "
+                 "at most one event proposal across both channels")
     if not slates:
         L.append("  no claim clears the bar")
     for s in slates:
@@ -922,13 +1249,14 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
                 add = c["add"]
                 if mode == "news":
                     why = _news_recheck(ctx, add.get("player_id"),
-                                        s["drop"].get("player_id"))
+                                        s["drop"].get("player_id"), c)
                     if why:
                         print(f"  ** CLAIM SKIPPED {add['name']}: {why}")
                         continue
                 try:
+                    drop_id = s["drop"].get("player_id")
                     sw.submit_waiver_claim({add["player_id"]: rid},
-                                           {s["drop"]["player_id"]: rid},
+                                           ({drop_id: rid} if drop_id else {}),
                                            c["bid"], league_id)
                 except Exception as e:
                     print(f"  ** CLAIM FAILED {add['name']}: {type(e).__name__}: {e}")

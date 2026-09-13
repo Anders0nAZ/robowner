@@ -53,13 +53,17 @@ with left:
         "each remaining week is worth and why, where each week's rate came "
         "from, how news is applied, and the full inheritance chain behind the "
         "`upside` term.\n\n"
-        "The number a page shows is the one from `data/ros.json` — what the bot "
+        "The number a page shows is the one from `data/expected.json` — what the bot "
         "actually acted on — not a fresh computation that might disagree with "
-        "it.")
+        "it.\n\n"
+        "**News pulse** — every event-triggered rebuild as an immutable cascade: "
+        "what fired, which room was expanded, exact before/after values, causal "
+        "admission, every candidate and coverage-safe drop check, the apples-to-apples "
+        "comparison, and whether anything could or did reach Sleeper.")
 with right:
     st.subheader("Not built yet")
     st.markdown(
-        "- **Moves** — why it proposed a given add or drop, which roster "
+        "- **Ordinary moves** — why it proposed a non-news add or drop, which roster "
         "players were excluded and on what grounds, and the near-misses that "
         "just failed the bar.\n"
         "- **FAAB** — the whole objective curve behind a bid: P(win) at every "

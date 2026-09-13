@@ -6,7 +6,8 @@ robo/expected.py and is converted into roster-level marginal value by
 robo/marginal.py. This module is the seam every consumer imports, so there is
 exactly one place that decides whether the bot is allowed to act on it.
 
-THE GATE IS STILL HERE AND STILL MEANS SOMETHING. It is now open, but it remains
+THE GATE IS STILL HERE AND STILL MEANS SOMETHING. It is closed pending human
+review, and it remains
 a constant in code rather than a setting: it is deliberately absent from the
 settings registry, so no data/settings.json edit and no admin GUI field can
 close or reopen it. Turning the bot loose on the roster took a commit, and

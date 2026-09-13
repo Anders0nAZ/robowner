@@ -49,6 +49,8 @@ audited and cannot be quietly hand-authored.
 import json
 import re
 import time
+from datetime import datetime
+from email.utils import parsedate_to_datetime
 
 from robo import DATA, injuries, roles, season, settings
 from robo import sleeper_read as api
@@ -516,9 +518,17 @@ def role_signal(player_id: str) -> dict:
     human reporter supplied it.
     """
     v = (load_verdicts().get("verdicts") or {}).get(player_id) or {}
-    rw, rlw = v.get("return_week"), v.get("role_week")
-    lo = v.get("return_week_min", rw)
-    hi = v.get("return_week_max", rw)
+    # Deterministic timing is the only timing that may alter transaction value.
+    # An LLM can still summarize ambiguous prose for the review report, but it
+    # cannot turn that prose into an executable absence window.
+    # Schema transition is fail-closed: legacy verdicts predate subject
+    # attribution and therefore are not timing authority, even if they happen
+    # to contain a return_week written by the old parser.
+    actionable = v.get("timing_actionable") is True
+    rw = v.get("return_week") if actionable else None
+    rlw = v.get("role_week")
+    lo = v.get("return_week_min", rw) if actionable else None
+    hi = v.get("return_week_max", rw) if actionable else None
     return {"return_week": int(rw) if isinstance(rw, (int, float)) else None,
             "return_week_min": int(lo) if isinstance(lo, (int, float)) else None,
             "return_week_max": int(hi) if isinstance(hi, (int, float)) else None,
@@ -526,49 +536,131 @@ def role_signal(player_id: str) -> dict:
             "role_change": None,
             "role_week": int(rlw) if isinstance(rlw, (int, float)) else None,
             "confidence": float(v.get("confidence") or 0.0),
-            "judged_at": v.get("judged_at")}
+            "judged_at": v.get("judged_at"),
+            "timing_actionable": actionable,
+            "timing_reported_at": v.get("timing_reported_at")}
 
 
 def timing_bounds(news: list[dict], current_week: int,
-                  floor_week: int | None = None) -> dict | None:
+                  floor_week: int | None = None,
+                  subject_name: str | None = None,
+                  subject_id: str | None = None) -> dict | None:
     """Extract only explicit return bounds; never manufacture a point date.
 
     The fast path deliberately covers the small vocabulary reporters use most
     often. Ambiguous prose is left for the local judge, and no match is a valid
     answer rather than an invitation to guess.
     """
-    text = " ".join(str(n.get(k) or "") for n in news
-                    for k in ("title", "description", "analysis"))
-    low = text.lower().replace("–", "-").replace("—", "-")
-    lo = hi = None
+    full = (subject_name or "").strip().lower()
+    surname = full.split()[-1] if full else ""
 
-    if re.search(r"\b(?:season[- ]ending|out for the (?:rest of the )?season)\b", low):
-        lo = hi = 99
-    elif re.search(r"\b(?:a|one) game or two\b", low):
-        lo, hi = current_week + 1, current_week + 2
-    else:
-        m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s*(?:-|to)\s*(\d+)\s+"
-                      r"(?:games?|weeks?)\b", low)
-        if m:
-            lo, hi = current_week + int(m.group(1)), current_week + int(m.group(2))
-        if lo is None:
-            m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s+"
-                          r"(?:games?|weeks?)\b", low)
-            if m:
-                lo = hi = current_week + int(m.group(1))
-        if lo is None:
-            m = re.search(r"\b(?:return|back|play again)[^.!?]{0,45}\bweek\s+(\d+)\b", low)
-            if m:
-                lo = hi = int(m.group(1))
-    if lo is None:
+    def published_at(item: dict) -> float:
+        value = item.get("published")
+        if isinstance(value, (int, float)):
+            return float(value) / 1000 if float(value) > 10_000_000_000 else float(value)
+        try:
+            return parsedate_to_datetime(str(value)).timestamp()
+        except Exception:
+            try:
+                return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+            except Exception:
+                return 0.0
+
+    def attributed(sentence: str, item: dict) -> bool:
+        if not full:
+            return True
+        low = sentence.lower()
+        # A hard bound must live in a clause that actually names its subject.
+        # Merely being stored on that player's news card is insufficient: news
+        # blurbs routinely discuss an injured teammate and the opportunity it
+        # creates, which is exactly how Higgins' season ended Schultz's value.
+        return full in low or (len(surname) >= 4 and
+                               re.search(rf"\b{re.escape(surname)}\b", low) is not None)
+
+    matches = []
+    for item in news:
+        for field in ("title", "description", "analysis"):
+            raw = str(item.get(field) or "")
+            for sentence in re.split(r"(?<=[.!?])\s+|[;\n]+", raw):
+                # Opportunity blurbs commonly use "Schultz benefits WITH
+                # Higgins out for season." Sentence-level attribution still
+                # binds the second man's absence to the first. Evaluate the
+                # clause carrying the timing phrase, splitting at the contrast
+                # and causal joins reporters use for these constructions.
+                clauses = re.split(
+                    r"\s*,\s*(?:and|but|while|with|because|after|as)\s+"
+                    r"|\s+\b(?:while|with|because)\b\s+", sentence,
+                    flags=re.I)
+                for clause in clauses:
+                    low = clause.lower().replace("–", "-").replace("—", "-")
+                    if not attributed(clause, item):
+                        continue
+                    if full:
+                        pos = low.find(full)
+                        if pos < 0:
+                            sm = re.search(rf"\b{re.escape(surname)}\b", low)
+                            pos = sm.start() if sm else -1
+                        # Timing that appears before this player's name is
+                        # describing somebody else ("Hall back for Week 1,
+                        # Allen could still have a role"). Only inspect the
+                        # subject-forward portion of the clause.
+                        if pos >= 0:
+                            low = low[pos:]
+                    # A fresh article can recap an old injury. At week 1,
+                    # "suffered a season-ending ACL tear in Week 9" is plainly
+                    # last season even if the article itself was published
+                    # today. Likewise explicit retrospective wording cannot
+                    # set a current return bound.
+                    past_week = re.search(r"\bweek\s+(\d+)\b", low)
+                    retrospective = re.search(
+                        r"\b(last|previous|prior) (?:season|year)\b|\bin 20\d\d\b|"
+                        r"\breturn(?:ed|ing) from\b|"
+                        r"\brecover(?:ed|ing) from\b", low)
+                    impossible_past = (past_week and
+                                       int(past_week.group(1)) > current_week + 1 and
+                                       re.search(r"\b(suffered|sustained|shut)\b", low))
+                    if retrospective or impossible_past:
+                        continue
+                    lo = hi = None
+                    if re.search(r"\b(?:season[- ]ending|out for the (?:rest of the )?season)\b", low):
+                        lo = hi = 99
+                    elif re.search(r"\b(?:a|one) game or two\b", low):
+                        lo, hi = current_week + 1, current_week + 2
+                    else:
+                        m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s*(?:-|to)\s*(\d+)\s+"
+                                      r"(?:games?|weeks?)\b", low)
+                        if m:
+                            lo, hi = current_week + int(m.group(1)), current_week + int(m.group(2))
+                        if lo is None:
+                            m = re.search(r"\b(?:miss|out|sidelined)(?: for)?\s+(\d+)\s+"
+                                          r"(?:games?|weeks?)\b", low)
+                            if m:
+                                lo = hi = current_week + int(m.group(1))
+                        if lo is None:
+                            m = re.search(
+                                r"\b(?:return(?:s|ed|ing)?[^.!?]{0,30}|"
+                                r"back\s+(?:by|in|for)\s+|"
+                                r"play again[^.!?]{0,30})\bweek\s+(\d+)\b", low)
+                            if m:
+                                lo = hi = int(m.group(1))
+                    if lo is not None:
+                        matches.append((lo, hi, item, clause.strip()))
+    if not matches:
         return None
+    # The newest attributable item wins. Multiple timing phrases in the same
+    # item resolve conservatively to the longer absence.
+    matches.sort(key=lambda x: (published_at(x[2]), x[1], x[0]))
+    lo, hi, basis_item, sentence = matches[-1]
     if floor_week is not None:
         lo, hi = max(lo, floor_week), max(hi, floor_week)
-    basis_item = max(news, key=lambda n: str(n.get("published") or ""), default={})
     return {"return_week": lo if lo == hi else None,
             "return_week_min": lo, "return_week_max": hi,
             "return_basis": f"{basis_item.get('source') or 'reporting'}: explicit timing",
-            "out_for_season": lo == 99}
+            "out_for_season": lo == 99,
+            "timing_actionable": True,
+            "timing_reported_at": basis_item.get("published"),
+            "timing_sentence": sentence,
+            "timing_subject_id": str(subject_id) if subject_id is not None else None}
 
 
 def merge_timing(player_id: str, name: str, bounds: dict,
@@ -580,7 +672,7 @@ def merge_timing(player_id: str, name: str, bounds: dict,
     old.update({"player_id": str(player_id), "name": name,
                 "verdict": old.get("verdict", "neutral"),
                 "confidence": old.get("confidence", 1.0),
-                "reason": old.get("reason", "explicit return timing"),
+                "reason": bounds.get("return_basis") or "explicit return timing",
                 "role_week": old.get("role_week"), **bounds,
                 "fingerprint": fingerprint({"player_id": str(player_id),
                                              "designation": None,
@@ -594,6 +686,27 @@ def merge_timing(player_id: str, name: str, bounds: dict,
            "written": time.time(),
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "judged_now": 1, "reused": max(0, len(rows) - 1),
+           "verdicts": rows}
+    tmp = VERDICTS.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
+    tmp.replace(VERDICTS)
+    return old
+
+
+def clear_timing(player_id: str, name: str, reason: str) -> dict:
+    """Clear stale/quarantined timing without deleting the rest of a verdict."""
+    prior = load_verdicts()
+    rows = dict(prior.get("verdicts") or {})
+    old = dict(rows.get(str(player_id)) or {})
+    for key in ("return_week", "return_week_min", "return_week_max",
+                "out_for_season", "timing_reported_at", "timing_sentence"):
+        old[key] = None
+    old.update({"player_id": str(player_id), "name": name,
+                "timing_actionable": False, "return_basis": reason,
+                "judged_at": time.time()})
+    rows[str(player_id)] = old
+    out = {**prior, "written": time.time(),
+           "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "verdicts": rows}
     tmp = VERDICTS.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
