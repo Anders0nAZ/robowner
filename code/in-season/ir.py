@@ -51,6 +51,7 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
     starters = set(r.get("starters") or [])
     sl = season.slots(league_id)
     ok = season.ir_statuses(league_id)
+    eligibility = season.transaction_states(roster, league_id)
 
     to_reserve, to_activate, blocked = [], [], []
 
@@ -85,6 +86,11 @@ def plan(league_id: str = LEAGUE_ID_2026) -> dict:
     for pid in eligible:
         st = (players.get(pid) or {}).get("injury_status") or ""
         name = api.player_name(players, pid)
+        if (eligibility.get(pid) or {}).get("roster_movement") == "roster_locked":
+            blocked.append({"player_id": pid, "name": name, "status": st,
+                            "why": "his NFL game has started, so Sleeper has locked "
+                                   "all roster movement for him until the week advances"})
+            continue
         if pid in starters:
             # Reserving somebody Sleeper still has in a starting slot would
             # leave the lineup pointing at a player who is not on the active

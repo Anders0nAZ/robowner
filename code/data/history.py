@@ -38,8 +38,7 @@ CREATE TABLE IF NOT EXISTS matchups (
 CREATE TABLE IF NOT EXISTS transactions (
     season TEXT, transaction_id TEXT PRIMARY KEY, week INT, type TEXT,
     status TEXT, roster_ids TEXT, adds TEXT, drops TEXT, waiver_bid INT,
-    notes TEXT,
-    created INT);
+    created INT, notes TEXT, settings TEXT, seq INT);
 CREATE TABLE IF NOT EXISTS picks (
     season TEXT, draft_id TEXT, round INT, pick_no INT, roster_id INT,
     player_id TEXT, player_name TEXT, pos TEXT, is_keeper INT, picked_by TEXT,
@@ -66,7 +65,11 @@ def conn(db=None) -> sqlite3.Connection:
         cols = {r[1] for r in c.execute("PRAGMA table_info(transactions)")}
         if "notes" not in cols:
             c.execute("ALTER TABLE transactions ADD COLUMN notes TEXT")
-            c.commit()
+        if "settings" not in cols:
+            c.execute("ALTER TABLE transactions ADD COLUMN settings TEXT")
+        if "seq" not in cols:
+            c.execute("ALTER TABLE transactions ADD COLUMN seq INT")
+        c.commit()
     except sqlite3.Error:
         pass
     return c
@@ -133,13 +136,19 @@ def harvest(verbose: bool = True, start: str = LEAGUE_ID_2026, db=None) -> None:
             try:
                 for t in api.transactions(lid, wk):
                     st = t.get("settings") or {}
-                    c.execute("INSERT OR REPLACE INTO transactions VALUES "
-                              "(?,?,?,?,?,?,?,?,?,?,?)", (
-                        season, t["transaction_id"], t.get("leg", wk), t.get("type"),
-                        t.get("status"), json.dumps(t.get("roster_ids") or []),
-                        json.dumps(t.get("adds") or {}), json.dumps(t.get("drops") or {}),
-                        st.get("waiver_bid"), t.get("created"),
-                        ((t.get("metadata") or {}).get("notes") or "").strip()))
+                    c.execute(
+                        "INSERT OR REPLACE INTO transactions "
+                        "(season,transaction_id,week,type,status,roster_ids,adds,drops,"
+                        "waiver_bid,created,notes,settings,seq) VALUES "
+                        "(?,?,?,?,?,?,?,?,?,?,?,?,?)", (
+                            season, t["transaction_id"], t.get("leg", wk),
+                            t.get("type"), t.get("status"),
+                            json.dumps(t.get("roster_ids") or []),
+                            json.dumps(t.get("adds") or {}),
+                            json.dumps(t.get("drops") or {}), st.get("waiver_bid"),
+                            t.get("created"),
+                            ((t.get("metadata") or {}).get("notes") or "").strip(),
+                            json.dumps(st), st.get("seq")))
             except Exception:
                 pass
 

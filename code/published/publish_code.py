@@ -50,8 +50,8 @@ CATEGORIES = [
      "Everything the bot knows comes in through here. All free, all public "
      "except Sleeper's write API, which uses its own account.",
      ["sleeper_read", "sleeper_write", "adp", "adp_live", "fantasypros",
-      "buzz", "injuries", "scout", "history", "vegas", "projarchive",
-      "news_audit"]),
+      "buzz", "injuries", "scout", "scout_queue", "history", "vegas",
+      "projarchive", "news_audit"]),
     ("draft", "The draft",
      "Valuing players, pricing keepers, and the agent that actually sat on the "
      "clock and submitted picks.",
@@ -63,9 +63,9 @@ CATEGORIES = [
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
      ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
-      "newswatch",
+      "newswatch", "waiver_audit",
       "ros", "expected", "returns", "marginal", "roles", "playoffs",
-      "streaming", "faab"]),
+      "streaming", "faab", "faab_field"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",
@@ -80,8 +80,9 @@ CATEGORIES = [
      "The daily pipeline, the job that puts a decision run in front of every "
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
-     ["__init__", "refresh", "prekick", "settings", "admin_gui",
-      "audit_gui", "ui", "1_Rest_of_season", "2_News_pulse"]),
+     ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
+      "audit_gui", "ui", "1_Rest_of_season", "2_News_pulse",
+      "3_Ordinary_moves", "4_FAAB", "5_Roles"]),
 ]
 
 

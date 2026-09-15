@@ -55,6 +55,7 @@ or less.
 
 import argparse
 import json
+import math
 import sqlite3
 from functools import lru_cache
 
@@ -124,8 +125,10 @@ PACE_BOUNDS = (0.25, 4.0)
 # by nothing while it is zero.
 MIN_LIVE_BID = 0
 
-# Fraction of the remaining budget a single claim may ever commit. A backstop
-# against one bad valuation spending the season.
+# Retained as a compatibility setting, but no longer a live ceiling.  A fixed
+# percentage cap can veto a rational league-winning bid even when the modeled
+# gain remains positive after paying it.  best_bid() instead stops at the lower
+# of the remaining balance and the gain's reservation price.
 MAX_SINGLE_BID_PCT = 0.5
 
 # How many claims a POSITION needs before its own contest rate is trusted over
@@ -305,42 +308,74 @@ def p_win(bid: int, week: int, pos: str | None = None) -> float:
     return round((1.0 - p_contested) + p_contested * beat, 4)
 
 
-def best_bid(gain: float, week: int, faab_left: int,
-             pos: str | None = None) -> tuple[int, str]:
-    """The bid maximising P(win) x gain, less MIN_POINTS_PER_DOLLAR per dollar.
+def quote(gain: float, week: int, faab_left: int,
+          pos: str | None = None, field: dict | None = None) -> dict:
+    """A complete integer-bid utility curve and its cheapest near-optimum.
 
-    The price of a dollar is what it would have bought on some later claim, so
-    the objective carries a linear cost term rather than being pure expected
-    value -- taking the argmax of P(win) x gain alone would bid the cap on the
-    first decent player of September.
+    FAAB IS PAID ONLY WHEN THE CLAIM WINS.  The expected utility is therefore
+    P(win) * (gain - bid * dollar_price), not P(win) * gain minus an
+    unconditional bid cost.  The latter silently charged failed claims and was
+    the main reason realistic marginal gains collapsed to $0 bids.
 
-    IT IS AN ARGMAX AND NOT A WALK UP THE MARGIN. The rival distribution is an
-    ECDF over 120 real auctions, so it is a step function with flat stretches
-    between the bids anyone actually made. Stopping the first time a dollar buys
-    nothing quit at $2 in week 2 while $10 was worth eight points more, because
-    no rival in the record ever bid $3. Ties go to the CHEAPER bid: two bids
-    worth the same expected points are not worth the same money.
+    When an opponent field is available it supplies the integer win curve,
+    including manager-specific need, balances and tie priority.  Otherwise the
+    measured pooled curve remains the explicit fallback.
     """
-    cap = max(0, int(MAX_SINGLE_BID_PCT * max(0, faab_left)))
-    if cap <= 0 or gain <= 0:
-        return 0, "no budget to spend"
+    faab_left = max(0, int(faab_left))
+    if gain <= 0:
+        return {"bid": 0, "reason": "no positive roster gain to buy",
+                "gain": gain, "curve": [], "near_optimal": [0, 0]}
     lam = dollar_price(week, faab_left)
-    tol = max(1e-9, BID_TOLERANCE_PCT * gain)
-    best, best_v = 0, p_win(0, week, pos) * gain
-    for b in range(1, cap + 1):
-        v = p_win(b, week, pos) * gain - b * lam
-        if v > best_v + tol:
-            best, best_v = b, v
-    # A $0 CLAIM IS A REAL CLAIM AND OFTEN WINS. This used to floor the bid at
-    # MIN_LIVE_BID, which spent a dollar the argmax had explicitly declined --
-    # and this module's own data says $0 takes the player 71% of the time, with
-    # a $0 median winning bid from week 12 on. Forcing a dollar buys about five
-    # points of win probability for a dollar priced at one point, which is a
-    # loss the moment the gain is small. Zero stays zero.
-    bid = min(cap, best)
-    return int(bid), (f"P(win) {p_win(bid, week, pos):.0%} at ${bid}"
-                      f"{' for a ' + pos if pos else ''}; a dollar is priced at "
-                      f"{lam:.2f} pts here (cap ${cap})")
+    reservation = faab_left if lam <= 0 else max(0, int(gain / lam))
+    cap = min(faab_left, reservation)
+    supplied = list((field or {}).get("win_curve") or [])
+
+    def chance(bid: int) -> float:
+        if bid < len(supplied):
+            return float(supplied[bid])
+        return p_win(bid, week, pos)
+
+    curve = []
+    for bid in range(0, cap + 1):
+        pw = chance(bid)
+        utility = pw * (gain - bid * lam)
+        curve.append({"bid": bid, "p_win": round(pw, 6),
+                      "net_if_won": round(gain - bid * lam, 6),
+                      "expected_utility": round(utility, 6)})
+    if not curve:
+        curve = [{"bid": 0, "p_win": chance(0), "net_if_won": gain,
+                  "expected_utility": chance(0) * gain}]
+    peak = max(r["expected_utility"] for r in curve)
+    tol = max(1e-9, BID_TOLERANCE_PCT * abs(peak))
+    near = [r for r in curve if r["expected_utility"] >= peak - tol]
+    chosen = min(near, key=lambda r: r["bid"])
+    source = "opponent model" if supplied else "pooled history fallback"
+    expected = (field or {}).get("expected_highest")
+    expected_plus = (None if expected is None else
+                     min(faab_left, max(0, int(math.floor(float(expected))) + 1)))
+    reason = (f"P(win) {chosen['p_win']:.0%} at ${chosen['bid']} via {source}; "
+              f"a dollar is priced at {lam:.2f} lineup pts; reservation ${cap}")
+    return {"bid": int(chosen["bid"]), "reason": reason, "gain": round(gain, 4),
+            "p_win": chosen["p_win"], "expected_utility": chosen["expected_utility"],
+            "dollar_price": round(lam, 6), "reservation_bid": cap,
+            "near_optimal": [min(r["bid"] for r in near), max(r["bid"] for r in near)],
+            "expected_highest": expected, "expected_highest_plus_one": expected_plus,
+            "highest_quantiles": (field or {}).get("highest_quantiles"),
+            "model_version": (field or {}).get("version"),
+            "shadow_price": {
+                "points_per_dollar": MIN_POINTS_PER_DOLLAR,
+                "status": "provisional",
+                "basis": ("league spend and gross starting-contribution proxy; "
+                          "not yet calibrated to realized paired lineup gain"),
+            },
+            "curve": curve}
+
+
+def best_bid(gain: float, week: int, faab_left: int,
+             pos: str | None = None, field: dict | None = None) -> tuple[int, str]:
+    """Compatibility wrapper around :func:`quote`."""
+    q = quote(gain, week, faab_left, pos, field)
+    return q["bid"], q["reason"]
 
 
 def dollar_price(week: int, faab_left: int) -> float:
@@ -355,7 +390,10 @@ def dollar_price(week: int, faab_left: int) -> float:
     """
     from robo import season as _season
     budget = max(1, _season.FAAB_BUDGET)
-    total = max(1, _season.SEASON_WEEKS)
+    # This league ends in week 17.  Using the NFL's week 18 made late-season
+    # dollars look scarcer than they really were and fought the expires-worthless
+    # part of the policy.
+    total = 17
     weeks_left = max(1, total - max(0, week) + 1)
     have = max(0.0, min(1.0, faab_left / budget))
     ahead = weeks_left / total
@@ -366,8 +404,35 @@ def dollar_price(week: int, faab_left: int) -> float:
     return MIN_POINTS_PER_DOLLAR / pace
 
 
+def ladder_quotes(week: int, gains: list[float], faab_left: int,
+                  positions: list | None = None,
+                  fields: list[dict | None] | None = None) -> list[dict]:
+    """Full quotes for one priority ladder, with non-increasing live bids."""
+    out, ceiling = [], None
+    pos = list(positions or []) + [None] * len(gains)
+    models = list(fields or []) + [None] * len(gains)
+    for gain, ps, field in zip(gains, pos, models):
+        q = quote(gain, week, faab_left, ps, field)
+        bid = int(q["bid"])
+        if MIN_LIVE_BID:
+            bid = max(MIN_LIVE_BID, bid)
+        if ceiling is not None:
+            bid = min(bid, ceiling)
+        ceiling = bid
+        if bid != q["bid"]:
+            row = next((r for r in q["curve"] if r["bid"] == bid), None)
+            q = {**q, "bid": bid, "ladder_limited": True}
+            if row:
+                q.update({"p_win": row["p_win"],
+                          "expected_utility": row["expected_utility"]})
+            q["reason"] += f"; limited to ${bid} by higher-priority rung"
+        out.append(q)
+    return out
+
+
 def ladder(week: int, gains: list[float], faab_left: int,
-           positions: list | None = None) -> list[int]:
+           positions: list | None = None,
+           fields: list[dict | None] | None = None) -> list[int]:
     """Bids for one slot's priority list, top rung first.
 
     Each rung is priced on ITS OWN gain and then held to the rung above it, so
@@ -381,19 +446,8 @@ def ladder(week: int, gains: list[float], faab_left: int,
     a step fraction on top of that discounted the same fact twice and collapsed
     every rung below the first to the floor.
     """
-    out, ceiling = [], None
-    # Per rung, because a slot's list is a set of DIFFERENT players and the
-    # competition for a quarterback is not the competition for a tight end.
-    pos = list(positions or []) + [None] * len(gains)
-    for g, ps in zip(gains, pos):
-        b, _ = best_bid(g, week, faab_left, ps)
-        if MIN_LIVE_BID:
-            b = max(MIN_LIVE_BID, b)
-        if ceiling is not None:
-            b = min(b, ceiling)
-        ceiling = b
-        out.append(int(b))
-    return out
+    return [q["bid"] for q in ladder_quotes(week, gains, faab_left,
+                                             positions, fields)]
 
 
 def failure_reasons() -> dict:
@@ -429,7 +483,7 @@ def report(week: int | None = None, gain: float = 80.0,
 
     for lo, hi in BUCKETS:
         sub = [a for a in auctions() if lo <= a[0] <= hi]
-        riv = [a[1] for a in sub if a[1] is not None]
+        riv = [a[2] for a in sub if a[2] is not None]
         if len(sub) < 5:
             continue
         L.append(f"  {f'{lo}-{hi}':<8}{len(sub):>10}{len(riv) / len(sub):>10.0%}"
@@ -448,6 +502,8 @@ def report(week: int | None = None, gain: float = 80.0,
 
 def main():
     ap = argparse.ArgumentParser()
+    ap.add_argument("--report", action="store_true",
+                    help="print the historical model report (the default)")
     ap.add_argument("--week", type=int, default=None)
     ap.add_argument("--gain", type=float, default=80.0)
     ap.add_argument("--faab", type=int, default=100)

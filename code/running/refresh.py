@@ -192,17 +192,19 @@ def refresh_scout():
     on yesterday's dates -- coarse, and only ever used to decide WHO to read
     about. The authoritative build is the next step, with today's dates in it.
     """
-    from robo import scout
+    from robo import scout, scout_queue
     b = scout.gather()
     todo, reuse = scout.needs_judging(b)
     if not todo:
-        return f"{len(b)} in pool, nothing changed"
-    v = scout.judge(todo, verbose=False)
-    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=reuse)
-    dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
-    viol = sum(1 for x in v if x.get("floor_violation"))
-    return (f"{len(b)} in pool, {len(todo)} judged, {len(reuse)} reused, "
-            f"{dated} dated, {viol} rejected below the floor")
+        drained = scout_queue.drain(verbose=False)
+        return (f"{len(b)} in pool, nothing new; queue {drained.get('status')} "
+                f"({drained.get('queued', 0)} pending)")
+    queued = scout_queue.enqueue(todo, category="background")
+    drained = scout_queue.drain(verbose=False)
+    return (f"{len(b)} in pool, {len(todo)} queued, {len(reuse)} reused, "
+            f"{queued['filtered_recaps']} box-score recap(s) excluded; "
+            f"batch {drained.get('status')} ({len(drained.get('completed') or [])} "
+            f"completed, {drained.get('queued', 0)} pending)")
 
 
 @step("expected")

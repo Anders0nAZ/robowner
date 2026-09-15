@@ -210,9 +210,13 @@ def best_available(week: int, league_id=None, season_yr=None) -> dict | None:
     intersection a set membership test rather than a name match.
     """
     from robo import LEAGUE_ID_2026, season as _season
-    held = _season.rostered_ids(league_id or LEAGUE_ID_2026)
+    league_id = league_id or LEAGUE_ID_2026
+    yr = str(season_yr or _season.SEASON)
+    held = _season.rostered_ids(league_id)
+    locks = _season.week_points(week, yr, league_id)
     for r in rank_week(week, season_yr, pos="DEF"):
-        if r["team"] not in held:
+        if (r["team"] not in held
+                and not (locks.get(r["team"]) or {}).get("locked")):
             return r
     return None
 
@@ -224,8 +228,15 @@ def swap(week: int, ours: str, league_id=None, season_yr=None) -> dict:
     a defence is priced and streaming.py does not have to know how a roster move
     is submitted.
     """
+    from robo import LEAGUE_ID_2026, season as _season
+    league_id = league_id or LEAGUE_ID_2026
+    yr = str(season_yr or _season.SEASON)
+    locks = _season.week_points(week, yr, league_id)
     board = rank_week(week, season_yr, pos="DEF")
     mine = next((r for r in board if r["team"] == ours), None)
+    if (locks.get(ours) or {}).get("locked"):
+        return {"gain": 0.0, "best": None, "mine": mine,
+                "why": f"hold {ours}: its game has locked", "locked": True}
     best = best_available(week, league_id, season_yr)
     if not best or not mine:
         return {"gain": 0.0, "best": best, "mine": mine,

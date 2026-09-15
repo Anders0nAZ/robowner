@@ -24,7 +24,11 @@ python -m robo.season --audit     # our declared shape vs Sleeper's
 import argparse
 import json
 import time
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+try:
+    from zoneinfo import ZoneInfo
+except ImportError:  # pragma: no cover - Python 3.13 always has zoneinfo
+    ZoneInfo = None
 
 from robo import LEAGUE_ID_2026, ROBOWNER_USER_ID, settings
 from robo import sleeper_read as api
@@ -45,6 +49,9 @@ WAIVER_CLEAR_DAYS = 1    # how long a dropped player sits on waivers
 # honest than deriving kickoff times: it says "pre_game" until the ball is in
 # the air and we never have to reason about time zones to know.
 MOVABLE_GAME_STATUS = "pre_game"
+PHOENIX = (ZoneInfo("America/Phoenix") if ZoneInfo is not None
+           else timezone(timedelta(hours=-7)))
+WEEKLY_FALLBACK_HOUR = 3
 
 # Which injury designations this league lets us park on reserve. Read from the
 # league's own reserve_allow_* flags rather than hardcoded, because they are
@@ -113,6 +120,12 @@ def current_week() -> int:
     display_week keeps climbing past week 18 and every weekly endpoint stops."""
     st = _memo("nfl_state", api.nfl_state, ttl=600)
     return max(1, min(SEASON_WEEKS, int(st.get("week") or 1)))
+
+
+def monday_guard_active(now: float | None = None) -> bool:
+    """Whether local operations are in the post-Sunday Monday guard window."""
+    stamp = time.time() if now is None else float(now)
+    return datetime.fromtimestamp(stamp, PHOENIX).weekday() == 0
 
 
 def audit(league_id: str = LEAGUE_ID_2026) -> list[str]:
@@ -246,6 +259,8 @@ def week_points(week: int, season: str = SEASON,
             "opponent": row.get("opponent"),
             "game_id": gid,
             "date": row.get("date"),
+            "team": row.get("team") or (row.get("player") or {}).get("team"),
+            "game_status": gs.get(gid) if gid else None,
         }
     return out
 
@@ -267,9 +282,172 @@ def ir_eligible(pid: str, players: dict | None = None,
     return st in ir_statuses(league_id)
 
 
+# ------------------------------------------------------- transaction eligibility
+
+def _timestamp(value) -> float | None:
+    if value in (None, ""):
+        return None
+    if isinstance(value, (int, float)):
+        n = float(value)
+        return n / 1000 if n > 10_000_000_000 else n
+    try:
+        text = str(value).strip()
+        if len(text) == 10 and text[4] == "-" and text[7] == "-":
+            return datetime.fromisoformat(text).replace(tzinfo=PHOENIX).timestamp()
+        return datetime.fromisoformat(text.replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _game_timestamp(row: dict, schedule_by_id: dict) -> float | None:
+    ts = _timestamp(row.get("date"))
+    if ts is not None:
+        return ts
+    game = schedule_by_id.get(row.get("game_id")) or {}
+    for key in ("start_time", "date", "start", "kickoff"):
+        ts = _timestamp(game.get(key))
+        if ts is not None:
+            return ts
+    return None
+
+
+def _weekly_fallback(game_at: float | None, now: float) -> float:
+    """The first Wednesday 03:00 Phoenix after the DAY the relevant game was played.
+
+    COMPUTED FROM THE GAME'S DAY, NOT ITS CLOCK, because the feed's `date` is a
+    calendar date with no kickoff time -- it parses to midnight, which is
+    several hours BEFORE the game. Comparing a 03:00 target against that
+    midnight made a Wednesday-night opener settle at 03:00 the same morning, a
+    time already in the past: every man who played in week 1's Wednesday opener
+    read as an ordinary free agent from the moment he kicked off, eight days
+    before this league's waivers would actually clear him. A Wednesday game's
+    waivers run the FOLLOWING Wednesday, which is what `or 7` says.
+    """
+    base = datetime.fromtimestamp(game_at if game_at is not None else now, PHOENIX)
+    day = base.replace(hour=0, minute=0, second=0, microsecond=0)
+    days = (2 - day.weekday()) % 7 or 7
+    return (day + timedelta(days=days)).replace(
+        hour=WEEKLY_FALLBACK_HOUR).timestamp()
+
+
+def _transaction_rows(league_id: str, week: int) -> list[dict]:
+    rows = []
+    for w in {max(1, week - 1), week}:
+        try:
+            rows.extend(api.transactions(league_id, w) or [])
+        except Exception:
+            continue
+    return rows
+
+
+def _eligibility_context(league_id: str = LEAGUE_ID_2026,
+                         week: int | None = None,
+                         now: float | None = None) -> dict:
+    """Fetch the shared facts once for a whole transaction decision."""
+    week = current_week() if week is None else int(week)
+    now = time.time() if now is None else float(now)
+    rows = _transaction_rows(league_id, week)
+    cutoff = now - WAIVER_CLEAR_DAYS * 86400
+    recent_drops = set()
+    settlements = []
+    for tx in rows:
+        if tx.get("status") != "complete":
+            continue
+        ts = _timestamp(tx.get("status_updated") or tx.get("created")) or 0
+        if ts >= cutoff:
+            recent_drops |= {str(pid) for pid in (tx.get("drops") or {})}
+        if tx.get("type") == "waiver" and ts > 0:
+            settlements.append(ts)
+    schedule_by_id = {str(g.get("game_id")): g for g in schedule(SEASON)
+                      if g.get("game_id")}
+    by_week = {week: week_points(week, SEASON, league_id)}
+    if week > 1:
+        by_week[week - 1] = week_points(week - 1, SEASON, league_id)
+    return {"league_id": league_id, "week": week, "now": now,
+            "held": rostered_ids(league_id), "recent_drops": recent_drops,
+            "settlements": settlements, "by_week": by_week,
+            "schedule_by_id": schedule_by_id}
+
+
+def transaction_eligibility(player_id: str,
+                            league_id: str = LEAGUE_ID_2026,
+                            *, context: dict | None = None,
+                            week: int | None = None,
+                            now: float | None = None) -> dict:
+    """Return independent roster-movement and acquisition truth for one player.
+
+    Roster movement follows the current NFL week and unlocks when Sleeper rolls
+    forward. Acquisition follows the player's most recent locked game through
+    that game's waiver settlement, so Tuesday's week rollover cannot turn a
+    Sunday player into an ordinary free agent several hours too early.
+    """
+    pid = str(player_id)
+    c = context or _eligibility_context(league_id, week, now)
+    current = (c["by_week"].get(c["week"]) or {}).get(pid) or {}
+    roster_locked = bool(current.get("locked"))
+    roster_state = "roster_locked" if roster_locked else "movable"
+
+    if pid in c["held"]:
+        return {"player_id": pid, "roster_movement": roster_state,
+                "acquisition": "unavailable", "week": c["week"],
+                "game_id": current.get("game_id"),
+                "reason": "already rostered", "unlock_at": None,
+                "unlock_basis": None}
+
+    if pid in c["recent_drops"]:
+        return {"player_id": pid, "roster_movement": roster_state,
+                "acquisition": "drop_waiver", "week": c["week"],
+                "game_id": current.get("game_id"),
+                "reason": f"dropped within the last {WAIVER_CLEAR_DAYS} day(s)",
+                "unlock_at": None, "unlock_basis": "drop-clear period"}
+
+    locked = []
+    for w, points in c["by_week"].items():
+        row = points.get(pid) or {}
+        if row.get("locked") and row.get("game_id"):
+            at = _game_timestamp(row, c["schedule_by_id"])
+            locked.append((at or 0, w, row))
+    if locked:
+        game_at, game_week, row = max(locked, key=lambda item: item[0])
+        fallback = _weekly_fallback(game_at or None, c["now"])
+        # A SETTLEMENT ONLY COUNTS IF WE KNOW IT CAME AFTER HIS GAME. With an
+        # unreadable kickoff, `ts >= 0` is true of every claim this league has
+        # ever processed, so any old waiver run would clear a man who kicked off
+        # an hour ago. Unknown falls back to the calendar, which is late rather
+        # than wrong.
+        observed = [ts for ts in c["settlements"]
+                    if game_at and ts >= game_at and ts <= c["now"]]
+        unlock = min(observed) if observed else fallback
+        basis = "observed completed waiver transaction" if observed else \
+                "Wednesday 03:00 Phoenix fallback"
+        if c["now"] < unlock:
+            return {"player_id": pid, "roster_movement": roster_state,
+                    "acquisition": "weekly_waiver", "week": game_week,
+                    "game_id": row.get("game_id"),
+                    "reason": "his NFL game has locked and weekly waivers have not settled",
+                    "unlock_at": unlock, "unlock_basis": basis}
+
+    return {"player_id": pid, "roster_movement": roster_state,
+            "acquisition": "free_now", "week": c["week"],
+            "game_id": current.get("game_id"),
+            "reason": "unrostered and immediately acquirable",
+            "unlock_at": None, "unlock_basis": None}
+
+
+def transaction_states(player_ids,
+                       league_id: str = LEAGUE_ID_2026,
+                       *, week: int | None = None,
+                       now: float | None = None) -> dict[str, dict]:
+    """Classify many players against one internally consistent live snapshot."""
+    c = _eligibility_context(league_id, week, now)
+    return {str(pid): transaction_eligibility(str(pid), league_id, context=c)
+            for pid in player_ids}
+
+
 # -------------------------------------------------------------------- waivers
 
-def on_waivers(league_id: str = LEAGUE_ID_2026) -> set[str]:
+def on_waivers(league_id: str = LEAGUE_ID_2026,
+               player_ids=None) -> set[str]:
     """Players currently sitting on waivers rather than free for the taking.
 
     A dropped player is unclaimable for WAIVER_CLEAR_DAYS, then becomes an
@@ -282,23 +460,16 @@ def on_waivers(league_id: str = LEAGUE_ID_2026) -> set[str]:
     recorded. Read across the current and previous week because a Sunday drop
     is still on waivers on Monday, and the feed is bucketed by week.
     """
-    wk = current_week()
-    cutoff = time.time() - WAIVER_CLEAR_DAYS * 86400
-    out: set[str] = set()
-    for w in {max(1, wk - 1), wk}:
-        try:
-            tx = api.transactions(league_id, w)
-        except Exception:
-            continue
-        for t in tx:
-            if t.get("status") != "complete":
-                continue
-            ts = (t.get("status_updated") or t.get("created") or 0) / 1000
-            if ts < cutoff:
-                continue
-            out |= set((t.get("drops") or {}).keys())
-    # Anything already picked back up is not on waivers any more.
-    return out - rostered_ids(league_id)
+    if player_ids is None:
+        wk = current_week()
+        ids = set()
+        for w in {max(1, wk - 1), wk}:
+            ids |= set(week_points(w, SEASON, league_id))
+        ids |= _eligibility_context(league_id, wk)["recent_drops"]
+        player_ids = ids
+    states = transaction_states(player_ids, league_id)
+    return {pid for pid, state in states.items()
+            if state["acquisition"] in {"weekly_waiver", "drop_waiver"}}
 
 
 # ------------------------------------------------------------------------ cli

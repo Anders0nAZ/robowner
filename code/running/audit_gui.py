@@ -46,7 +46,7 @@ st.divider()
 
 left, right = st.columns(2)
 with left:
-    st.subheader("Here now")
+    st.subheader("Player value and event decisions")
     st.markdown(
         "**Rest of season** — every player's value from this week to the end, "
         "and a per-player traceback that walks the calculation forward: what "
@@ -61,18 +61,18 @@ with left:
         "admission, every candidate and coverage-safe drop check, the apples-to-apples "
         "comparison, and whether anything could or did reach Sleeper.")
 with right:
-    st.subheader("Not built yet")
+    st.subheader("Scheduled moves and role evidence")
     st.markdown(
-        "- **Ordinary moves** — why it proposed a non-news add or drop, which roster "
-        "players were excluded and on what grounds, and the near-misses that "
-        "just failed the bar.\n"
-        "- **FAAB** — the whole objective curve behind a bid: P(win) at every "
-        "dollar, the rival distribution it is built on, and the paced price of "
-        "a dollar.\n"
-        "- **Roles** — the fitted absorption curve with its sample sizes, and "
-        "any team's position room.\n\n"
-        "Each needs the same `record` treatment on its own module that "
-        "`robo/ros.py` now has.")
+        "**Ordinary moves** — the ordered free-agent then waiver evaluation, "
+        "including what cleared, every roster exclusion and its reason, the "
+        "construction controls, and the candidate board with its exact margins "
+        "above or below the noise and policy bars.\n\n"
+        "**FAAB** — the whole objective curve behind every selected bid, the "
+        "near-optimal band, FAAB shadow price, predicted rival distribution, "
+        "and its historical holdout check.\n\n"
+        "**Roles** — the fitted absorption curve and takeover rates with sample "
+        "sizes, plus the current saved position room for any team. Thin cells "
+        "show the pooled value the model actually uses.")
 
 st.divider()
 st.caption("Settings live in the admin panel on port 8502. This app has no "

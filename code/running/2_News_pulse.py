@@ -6,7 +6,7 @@ from pathlib import Path
 import pandas as pd
 import streamlit as st
 
-from robo import expected, news_audit, ui
+from robo import expected, news_audit, newswatch, ui
 
 st.title("News pulse")
 ui.gate_banner(st)
@@ -31,8 +31,25 @@ metrics[0].metric("Last poll", ui.fmt_age(pulse_state.get("last_poll")))
 metrics[1].metric("Last re-evaluation", ui.fmt_age(last_event.get("at")))
 metrics[2].metric("Recorded cascades", len(docs))
 metrics[3].metric("Latest result", news_audit.outcome(last_event) if last_event else "none")
+if pulse_state.get("paused"):
+    st.info("Watcher intentionally paused: " + str(pulse_state["paused"].get("reason") or "scheduled pause"))
+if pulse_state.get("filtered"):
+    labels = {
+        "sleeper_timestamp_only": "Sleeper timestamp-only",
+        "espn_timestamp_only": "ESPN timestamp-only",
+        "pft_indirect_mention": "indirect PFT mention",
+        "trending_without_corroboration": "uncorroborated trending",
+        "postgame_projection": "completed-game projection cleanup",
+        "postgame_inactive": "expired postgame inactive row",
+        "espn_record_removed": "removed ESPN row",
+    }
+    st.caption("Latest poll filtered: " + ", ".join(
+        f"{labels.get(k, k)} {v}" for k, v in pulse_state["filtered"].items() if v))
 if pulse_state.get("source_errors"):
     st.error("Latest poll source failures: " + "; ".join(pulse_state["source_errors"]))
+if pulse_state.get("pending_reviews"):
+    st.caption(f"Advisory prose queue: {len(pulse_state['pending_reviews'])} player(s); "
+               f"up to {newswatch.PULSE_REVIEW_BATCH} are reviewed per pulse.")
 
 if not docs:
     st.info("No pulse has triggered a recorded re-evaluation yet.")
@@ -204,7 +221,66 @@ if props:
         "channel": "waivers" if p.get("on_waivers") else "free agent", "why": p.get("why")}
         for p in props]), use_container_width=True, hide_index=True)
 
-st.subheader("4 · Final state")
+claim_props = [c for slate in action.get("claim_proposals") or []
+               for c in slate.get("claims") or []]
+if claim_props:
+    st.subheader("4 · Waiver market and bid")
+    for claim in claim_props:
+        quote = claim.get("bid_quote") or {}
+        field = claim.get("opponent_field") or {}
+        st.markdown(f"**{(claim.get('add') or {}).get('name')} — ${claim.get('bid', 0)}**")
+        metrics = st.columns(4)
+        metrics[0].metric("Paired roster gain",
+                          f"{float(claim.get('bid_gain') or 0):+.2f}",
+                          f"± {float(claim.get('bid_se') or 0):.2f}")
+        metrics[1].metric("Win probability", f"{float(quote.get('p_win') or 0):.0%}")
+        metrics[2].metric("Expected high",
+                          (f"${float(quote['expected_highest']):.1f}"
+                           if quote.get("expected_highest") is not None else "pooled fallback"))
+        band = quote.get("near_optimal") or [claim.get("bid", 0), claim.get("bid", 0)]
+        metrics[3].metric("Near-optimal band", f"${band[0]}–${band[1]}")
+        st.caption(quote.get("reason") or "No bid explanation recorded")
+        shadow = quote.get("shadow_price") or {}
+        if shadow:
+            st.caption(f"FAAB shadow price: {float(shadow.get('points_per_dollar') or 0):.2f} "
+                       f"lineup points/$ · {shadow.get('status')}: {shadow.get('basis')}")
+        if quote.get("curve"):
+            qdf = pd.DataFrame(quote["curve"])
+            focus = sorted(set([0, int(claim.get("bid") or 0),
+                                int(quote.get("expected_highest_plus_one") or 0),
+                                max(0, int(claim.get("bid") or 0) - 1),
+                                int(claim.get("bid") or 0) + 1]))
+            st.dataframe(qdf[qdf["bid"].isin(focus)], use_container_width=True,
+                         hide_index=True)
+        if field.get("available"):
+            valid = field.get("validation") or {}
+            if valid:
+                st.caption("Historical holdout: demand Brier "
+                           f"{valid.get('demand_brier')} vs {valid.get('pooled_demand_brier')} pooled; "
+                           f"bid CRPS {valid.get('bid_crps')} vs {valid.get('pooled_bid_crps')} pooled. "
+                           f"Runtime check: {'pass' if valid.get('passes') else 'fallback'}.")
+            odf = pd.DataFrame([{
+                "manager": o.get("manager"),
+                "roster need": (o.get("need") or {}).get("need"),
+                "modeled lineup gain": (o.get("need") or {}).get("gain"),
+                "candidate starts": (o.get("need") or {}).get("starts"),
+                "P(claim)": f"{float(o.get('p_claim') or 0):.0%}",
+                "bid p50": o.get("bid_p50"), "bid p75": o.get("bid_p75"),
+                "bid p90": o.get("bid_p90"), "FAAB left": o.get("faab_left"),
+                "tie priority": o.get("waiver_position"),
+                "manager samples": (o.get("evidence") or {}).get("manager_samples"),
+                "manager bid samples": (o.get("evidence") or {}).get("manager_bid_samples"),
+            } for o in sorted(field.get("opponents") or [],
+                              key=lambda x: -float(x.get("p_claim") or 0))])
+            st.dataframe(odf,
+                         use_container_width=True, hide_index=True,
+                         column_config={"modeled lineup gain":
+                                        st.column_config.NumberColumn(format="%+.2f")})
+        else:
+            st.warning("Opponent model unavailable; pooled history used. "
+                       + str(field.get("reason") or "No reason recorded"))
+
+st.subheader("5 · Final state" if claim_props else "4 · Final state")
 fc = st.columns(4)
 fc[0].metric("Mode", "dry run" if doc.get("dry_run") else "live requested")
 fc[1].metric("Source failures", len(doc.get("source_errors") or []))

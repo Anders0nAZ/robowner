@@ -315,6 +315,20 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
 
     from robo.decisions import record
     from robo.sleeper_write import set_starters
+    # The optimizer pins the projection feed's locked players, then this shared
+    # transaction classifier checks the live state again at the write boundary.
+    # A kickoff between those two reads must turn into a refused lineup write,
+    # not a Sleeper rejection or a partially stale assumption.
+    season.invalidate_live()
+    changed_ids = set(current[:len(SLOTS)]) ^ set(starter_ids)
+    states = season.transaction_states(changed_ids, league_id, week=week)
+    locked = [pid for pid, state in states.items()
+              if state.get("roster_movement") == "roster_locked"]
+    if locked:
+        out["write_blocked"] = "player locked before lineup submission: " + ", ".join(locked)
+        if verbose:
+            print(out["write_blocked"])
+        return out
     set_starters(roster["roster_id"], week, starter_ids, league_id)
     out["applied"] = True
     engine = (f"Roboner's NFL model means for {modelled} of {len(cands)} "

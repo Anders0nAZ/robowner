@@ -558,13 +558,6 @@ REGISTRY: list[S] = [
       "off a player no longer on our roster at zero cost. A one-deep slate is "
       "the failure mode here, not a long one.",
       bounds=(1, 20), unit="claims"),
-    S(ROSTER, "robo.faab", "MAX_SINGLE_BID_PCT", float,
-      "Hard ceiling on one bid, as a share of the budget still unspent.",
-      "Stops a single week emptying the season's budget. Bid pricing moved out "
-      "of moves.py into faab.py when it stopped being an invented formula and "
-      "started being this league's own 1,032 recorded bids, and this dial moved "
-      "with it.",
-      bounds=(0.0, 1.0)),
     S(ROSTER, "robo.faab", "MIN_POINTS_PER_DOLLAR", float,
       "What a FAAB dollar is worth in simulated lineup points, at an even pace.",
       "THE BID POLICY IN ONE NUMBER -- it decides where on the win-probability "

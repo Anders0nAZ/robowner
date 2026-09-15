@@ -143,7 +143,8 @@ def _rooms_of(ids: list[str], S: dict) -> set:
 
 
 def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
-                exclude: frozenset = frozenset()) -> dict:
+                exclude: frozenset = frozenset(),
+                held_extra: frozenset = frozenset()) -> dict:
     """{pos: {week: points}} for the best man on the wire at that position.
 
     THE WIRE IS A FLOOR UNDER EVERY SLOT, and in a twelve-team league it is a
@@ -171,7 +172,10 @@ def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
     Excluding the candidates makes the floor "the best man we are NOT
     considering", which is the actual alternative to claiming this one.
     """
-    held = season.rostered_ids(league_id)
+    # `held_extra` carries a free agent acquired earlier in the same ordered
+    # transaction plan. Sleeper has not seen a dry-run hypothetical, so the live
+    # roster set alone would incorrectly leave our new player on the wire floor.
+    held = season.rostered_ids(league_id) | set(held_extra)
     out: dict = {}
     for pid, p in S.items():
         if pid in held or pid in exclude:
@@ -360,14 +364,15 @@ class Board:
     """The simulated worlds plus our roster, so hypotheticals share both."""
 
     def __init__(self, league_id: str = LEAGUE_ID_2026, sims: int = SIMS,
-                 extra: list[str] | None = None):
+                 extra: list[str] | None = None,
+                 roster_ids: list[str] | None = None):
         d = series(league_id)
         self.S, self.weights = d["players"], d["weights"]
         self.week = d["week"]
         self.weeks = sorted(self.weights)
         self.sims = sims
-        self.mine = [p for p in (season.mine(league_id).get("players") or [])
-                     if p in self.S]
+        held = (season.mine(league_id).get("players") or []) if roster_ids is None else roster_ids
+        self.mine = [p for p in held if p in self.S]
         # Every id that could appear in ANY hypothetical is drawn for up front,
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
@@ -376,7 +381,8 @@ class Board:
         # replacement(): they are unrostered, so leaving them in makes each one
         # the baseline his own acquisition is measured against.
         self.repl = replacement(self.S, self.weeks, league_id,
-                                exclude=frozenset(extra or ()))
+                                exclude=frozenset(extra or ()),
+                                held_extra=frozenset(self.mine))
         self.p_playoffs = playoffs.p_playoffs(league_id=league_id, default=1.0)
         self.contender = self.p_playoffs >= CONTENDER_ODDS
         self.base = self.totals(self.mine)

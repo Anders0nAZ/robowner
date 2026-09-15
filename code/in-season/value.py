@@ -22,6 +22,8 @@ lineup context, preserving upside without relying on a separate season-total
 calibration or generic news multiplier.
 """
 
+import time
+
 from robo import ros
 
 # Is the NUMBER real? Yes -- expected.py is built and every figure printed is
@@ -173,3 +175,198 @@ def hold_of(row: dict, week: int) -> tuple[float, bool]:
         except Exception:
             pass
     return value_of(row, week, "hold")
+
+
+# ----------------------------------------------------------- opening the gate
+
+def _check(label: str, ok: bool, why: str = "", detail: str = "") -> dict:
+    """One assertion. `why` is the failure; `detail` is true either way.
+
+    Kept apart because a reason phrased as a failure reads as one: printing
+    "only 802 players priced" beside a green OK is the kind of line that sends
+    somebody looking for a problem that is not there.
+    """
+    return {"label": label, "ok": bool(ok), "why": "" if ok else why,
+            "detail": detail}
+
+
+def preflight(league_id: str | None = None) -> list[dict]:
+    """What has to be true before SUBMIT_ENABLED may be turned on.
+
+    ASSERTIONS, NOT A DESCRIPTION. Each row either holds or says what is wrong,
+    in the same shape as status.preflight()'s draft-readiness list, and each one
+    exists because of a way this could go wrong silently rather than loudly:
+
+      1. A stale valuation submits yesterday's opinion with today's confidence.
+      2. A failed source keeps the OLD file, on purpose -- so the pipeline
+         reports a clean run over a number nobody refreshed.
+      3. A transaction classified wrong is the difference between a free add
+         and a claim Sleeper will reject.
+      4. The dry-run slate is the thing a human is being asked to approve. If
+         it cannot be built, there is nothing to approve.
+      5. A locked player in a payload is a write that fails AFTER the plan has
+         been published as a decision.
+
+    This changes nothing. It cannot open the gate and it is not consulted when
+    a move is submitted -- may_submit() remains the single authority, and it is
+    a constant in this file. This is what the operator reads first.
+    """
+    from robo import LEAGUE_ID_2026, expected, ir, moves, season
+    from robo.rankings import build_board
+    league_id = league_id or LEAGUE_ID_2026
+    out = [_check("transaction gate", not SUBMIT_ENABLED,
+                  "already open" if SUBMIT_ENABLED else "")]
+    out[0]["label"] = ("transaction gate is %s"
+                       % ("OPEN" if SUBMIT_ENABLED else "closed"))
+
+    # 1. Fresh valuation artifacts.
+    try:
+        table = expected.load()
+        age = time.time() - float(table.get("computed") or 0)
+        out.append(_check(
+            "valuation is current", age < moves.ROS_VALUE_MAX_AGE,
+            "expected.json is %.1fh old; the limit is %.1fh"
+            % (age / 3600, moves.ROS_VALUE_MAX_AGE / 3600),
+            detail="%.1fh old" % (age / 3600)))
+        out.append(_check("valuation covers the wire",
+                          len(table.get("players") or {}) > 500,
+                          "only %d players priced" % len(table.get("players") or {}),
+                          detail="%d players priced" % len(table.get("players") or {})))
+    except Exception as e:
+        out.append(_check("valuation is current", False,
+                          f"expected.json unreadable: {type(e).__name__}: {e}"))
+    try:
+        from robo import model_proj
+        hours = model_proj.age_hours()
+        out.append(_check("weekly model projection is current",
+                          hours is not None and hours < 24,
+                          "model_week.json is %s"
+                          % ("missing" if hours is None else "%.1fh old" % hours),
+                          detail=("missing" if hours is None
+                                  else "%.1fh old" % hours)))
+    except Exception as e:
+        out.append(_check("weekly model projection is current", False,
+                          f"{type(e).__name__}: {e}"))
+
+    # 2. Zero source-validation failures. Every fetch in the pipeline keeps the
+    # old file when validation fails, so a bad pull is invisible in the data.
+    try:
+        from robo import status as st
+        bad = [r for r in st.ingests()
+               if r["status"] == st.BAD or r.get("failed_since")]
+        out.append(_check("every data source validated",
+                          not bad,
+                          "; ".join("%s: %s" % (r["label"], r.get("why") or "failed")
+                                    for r in bad)))
+    except Exception as e:
+        out.append(_check("every data source validated", False,
+                          f"freshness could not be read: {type(e).__name__}: {e}"))
+
+    # 3. Transaction classification. Checked for internal contradiction rather
+    # than against a second opinion: there isn't one, and a state that
+    # contradicts itself is the failure that would actually reach Sleeper.
+    try:
+        season.invalidate_live()
+        week = season.current_week()
+        held = season.rostered_ids(league_id)
+        board = [r["player_id"] for r in build_board()]
+        states = season.transaction_states(board, league_id, week=week)
+        wrong = []
+        for pid, s in states.items():
+            if pid in held and s["acquisition"] != "unavailable":
+                wrong.append(f"{pid} is rostered but reads {s['acquisition']}")
+            if s["acquisition"] == "weekly_waiver" and not s.get("unlock_at"):
+                wrong.append(f"{pid} is on weekly waivers with no unlock time")
+            if (s["roster_movement"] == "roster_locked"
+                    and s["acquisition"] == "free_now"):
+                wrong.append(f"{pid} is locked and free to add at the same time")
+        out.append(_check("transaction states are consistent", not wrong,
+                          "; ".join(wrong[:5])
+                          + (f" (+{len(wrong) - 5} more)" if len(wrong) > 5 else "")))
+    except Exception as e:
+        out.append(_check("transaction states are consistent", False,
+                          f"{type(e).__name__}: {e}"))
+        states = {}
+
+    # 4 and 5. The dry-run slate, and nothing locked in what it would send.
+    locked = {pid for pid, s in (states or {}).items()
+              if s["roster_movement"] == "roster_locked"}
+    payload_ids = []
+    try:
+        slate = moves.run("claims", apply=False, league_id=league_id,
+                          mode="ros", verbose=False)
+        ok = not slate.get("control_block")
+        out.append(_check("a waiver slate can be built", ok,
+                          slate.get("control_block") or ""))
+        budget = season.faab_left(league_id)
+        claims = [c for s in (slate.get("plans") or []) for c in s["claims"]]
+        over = [c for c in claims if int(c["bid"]) > budget]
+        out.append(_check("every bid is inside the budget", not over,
+                          "%d claim(s) bid more than the $%d left"
+                          % (len(over), budget),
+                          detail="%d claim(s) against $%d" % (len(claims), budget)))
+        payload_ids += [v for p in (slate.get("payloads") or [])
+                        for v in _payload_players(p)]
+    except Exception as e:
+        out.append(_check("a waiver slate can be built", False,
+                          f"{type(e).__name__}: {e}"))
+    try:
+        free = moves.run("free", apply=False, league_id=league_id,
+                         mode="ros", verbose=False)
+        payload_ids += [v for p in (free.get("payloads") or [])
+                        for v in _payload_players(p)]
+    except Exception as e:
+        out.append(_check("a free-agent pass can be built", False,
+                          f"{type(e).__name__}: {e}"))
+    try:
+        # The MOVES, not the target list. `target` restates the whole desired
+        # reserve, so a man who has sat on IR all week and is going nowhere
+        # appears in it -- and he is locked every Sunday, which would fail this
+        # check every week over a write that never happens.
+        sweep = ir.plan(league_id)
+        payload_ids += [str(m["player_id"]) for m in
+                        (sweep.get("reserve") or []) + (sweep.get("activate") or [])]
+    except Exception as e:
+        out.append(_check("an IR sweep can be built", False,
+                          f"{type(e).__name__}: {e}"))
+    caught = sorted(set(payload_ids) & locked)
+    out.append(_check("no locked player in any payload", not caught,
+                      "locked: " + ", ".join(caught)))
+    return out
+
+
+def _payload_players(payload: dict) -> list:
+    """Every player id inside one transaction payload.
+
+    Reads the PARALLEL-ARRAY form the writers actually send (`k_adds`/`v_adds`),
+    not a convenient reshaping of it -- the point of this check is that what
+    goes on the wire carries nobody Sleeper has locked.
+    """
+    return [str(pid) for key in ("k_adds", "k_drops")
+            for pid in (payload.get(key) or []) if pid is not None]
+
+
+def main():
+    import argparse
+    ap = argparse.ArgumentParser(
+        description="What has to be true before the transaction gate opens.")
+    ap.add_argument("--preflight", action="store_true")
+    args = ap.parse_args()
+    if not args.preflight:
+        print(GATE_MESSAGE if not may_submit() else
+              "the transaction gate is OPEN; --apply submits to Sleeper")
+        return
+    rows = preflight()
+    for r in rows:
+        note = r["why"] or r.get("detail") or ""
+        print(f"  {'OK  ' if r['ok'] else 'FAIL'}  {r['label']}"
+              + (f" -- {note}" if note else ""))
+    bad = [r for r in rows if not r["ok"]]
+    print("\n" + ("preflight clean; opening the gate is a commit to "
+                  "SUBMIT_ENABLED in robo/value.py and a process restart"
+                  if not bad else
+                  f"{len(bad)} check(s) failed; do not open the gate"))
+
+
+if __name__ == "__main__":
+    main()

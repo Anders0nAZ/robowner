@@ -237,6 +237,57 @@ def export_week(week: int, timeout: int = EXPORT_TIMEOUT_S) -> tuple[bool, str]:
     return ok, (f"regenerated in {how}" if ok else how)
 
 
+def monday_roster_guard(apply: bool = False,
+                        league_id: str = LEAGUE_ID_2026,
+                        week: int | None = None) -> dict:
+    """Protect Monday starters and fill only spots opened by this IR sweep."""
+    from robo import ir, lineup, moves
+    week = week or season.current_week()
+    out = {"week": week, "mode": "monday_guard"}
+    out["lineup_before"] = lineup.run(week=week, league_id=league_id,
+                                       apply=apply, verbose=False)
+    season.invalidate_live()
+    out["ir_first"] = ir.run(apply=apply, league_id=league_id, verbose=False)
+    season.invalidate_live()
+    out["lineup_after_ir"] = lineup.run(week=week, league_id=league_id,
+                                         apply=apply, verbose=False)
+    out["patch"] = moves.run("free", apply=apply, league_id=league_id,
+                              mode="patch", verbose=False)
+    season.invalidate_live()
+    out["ir_second"] = ir.run(apply=apply, league_id=league_id, verbose=False)
+
+    ir_runs = (out["ir_first"], out["ir_second"])
+    parked = {str(m["player_id"]): m for result in ir_runs
+              for m in (result.get("reserve") or [])}
+    activated = {str(m["player_id"]) for result in ir_runs
+                 for m in (result.get("activate") or [])}
+    created = [m for pid, m in parked.items() if pid not in activated]
+    out["ir_opened"] = len(created)
+    out["ir_fills"] = moves.run_ir_fills(len(created), created, apply=apply,
+                                          league_id=league_id, verbose=False)
+    season.invalidate_live()
+    out["lineup_final"] = lineup.run(week=week, league_id=league_id,
+                                      apply=apply, verbose=False)
+    return out
+
+
+def _monday_guard_summary(out: dict) -> str:
+    starters = out.get("lineup_before") or {}
+    patch = out.get("patch") or {}
+    fills = out.get("ir_fills") or {}
+    bits = [f"starter watch {'changed' if starters.get('changed') else 'clear'}"]
+    if patch.get("plans"):
+        bits.append(f"{len(patch['plans'])} emergency patch proposal(s)")
+    bits.append(f"{out.get('ir_opened', 0)} spot(s) opened by IR")
+    if fills.get("plans"):
+        tag = "submitted" if fills.get("submitted") else "proposed"
+        bits.append(f"{len(fills['plans'])} IR fill(s) {tag}")
+    else:
+        bits.append("no IR fill")
+    bits.append("ordinary moves and claims suppressed")
+    return "; ".join(bits)
+
+
 # -------------------------------------------------------------------- the chain
 
 def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
@@ -320,14 +371,20 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
         return f"{len(d['players'])} expected, {len(r['players'])} ros"
     step("rebuild", _rebuild)
 
-    step("lineup", lambda: _lineup(lineup, wk, apply))
-    step("ir", lambda: _ir(ir, apply))
-    step("lineup2", lambda: _lineup(lineup, wk, apply))
-    step("patch", lambda: _moves(moves, "patch", apply))
-    step("ir2", lambda: _ir(ir, apply))
-    step("fill", lambda: _moves(moves, "fill", apply))
-    step("stream", lambda: _stream(moves, wk, apply, league_id))
-    step("lineup3", lambda: _lineup(lineup, wk, apply))
+    if season.monday_guard_active():
+        step("monday", lambda: _monday_guard_summary(
+            monday_roster_guard(apply=apply, league_id=league_id, week=wk)))
+        step("fill", lambda: "suppressed: Monday guard permits only IR-created fills")
+        step("stream", lambda: "suppressed: Monday guard")
+    else:
+        step("lineup", lambda: _lineup(lineup, wk, apply))
+        step("ir", lambda: _ir(ir, apply))
+        step("lineup2", lambda: _lineup(lineup, wk, apply))
+        step("patch", lambda: _moves(moves, "patch", apply))
+        step("ir2", lambda: _ir(ir, apply))
+        step("fill", lambda: _moves(moves, "fill", apply))
+        step("stream", lambda: _stream(moves, wk, apply, league_id))
+        step("lineup3", lambda: _lineup(lineup, wk, apply))
     step("waivers", lambda: _waiver_watch(league_id))
 
     prov = model_proj.week_projections(wk)[1]
@@ -361,25 +418,44 @@ def _scout(pulled: dict) -> str:
     exactly what it is handed, so a narrow run that passed only its own reuse
     would silently truncate the file to the handful it looked at.
     """
-    from robo import scout
+    from robo import scout, scout_queue
     moved = [m["player_id"] for m in (pulled.get("changed") or [])
              if m.get("kind") in ("roster", "both")]
     if not moved:
-        return "no designation moved; nothing to re-read"
+        drained = scout_queue.drain(verbose=False)
+        return (f"no designation moved; queue {drained.get('status')} "
+                f"({drained.get('queued', 0)} pending)")
     b = scout.gather(only=moved)
     if not b:
-        return f"{len(moved)} designation(s) moved, none in the decision pool"
+        drained = scout_queue.drain(verbose=False)
+        return (f"{len(moved)} designation(s) moved, none in the decision pool; "
+                f"queue {drained.get('status')}")
     todo, reuse = scout.needs_judging(b)
     if not todo:
-        return f"{len(b)} in scope, all fingerprints unchanged"
-    v = scout.judge(todo, verbose=False)
-    keep = dict((scout.load_verdicts().get("verdicts") or {}))
-    for x in todo:
-        keep.pop(x["player_id"], None)
-    keep.update(reuse)
-    scout.write_verdicts(v, scout.LOCAL_MODEL, bundles=todo, reuse=keep)
-    dated = sum(1 for x in v if x.get("return_week") or x.get("role_week"))
-    return f"{len(todo)} re-read, {dated} carry a date"
+        drained = scout_queue.drain(verbose=False)
+        return (f"{len(b)} in scope, all fingerprints unchanged; "
+                f"queue {drained.get('status')} ({drained.get('queued', 0)} pending)")
+    roster = season.mine()
+    ours = {str(pid) for pid in (roster.get("players") or [])}
+    starters = {str(pid) for pid in (roster.get("starters") or [])}
+    states = season.transaction_states([x["player_id"] for x in todo])
+    categories = {}
+    for bundle in todo:
+        pid = str(bundle["player_id"])
+        if season.monday_guard_active() and pid in starters:
+            categories[pid] = "monday_starter"
+        elif pid in ours:
+            categories[pid] = "emergency"
+        elif states[pid]["acquisition"] in {"weekly_waiver", "drop_waiver"}:
+            categories[pid] = "waiver_candidate"
+        else:
+            categories[pid] = "background"
+    queued = scout_queue.enqueue(todo, categories=categories)
+    drained = scout_queue.drain(verbose=False)
+    return (f"{len(todo)} queued, {len(reuse)} reused, "
+            f"{queued['filtered_recaps']} recap(s) excluded; "
+            f"batch {drained.get('status')} ({len(drained.get('completed') or [])} "
+            f"completed, {drained.get('queued', 0)} pending)")
 
 
 def _fmt_pull(p: dict) -> str:
@@ -505,6 +581,14 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
         return f"WOULD stream {ours} -> {best} ({d['gain']:+.2f}) -- gate shut"
     if not apply:
         return f"would stream {ours} -> {best} ({d['gain']:+.2f})"
+    # The line-to-write interval is short, but kickoff is a hard boundary.
+    # Refresh both held and target locks immediately before submission.
+    season.invalidate_live()
+    live = season.week_points(wk, season.SEASON, league_id)
+    if (live.get(held[0]) or {}).get("locked"):
+        return f"hold {ours}: its game locked before submission"
+    if (live.get(best) or {}).get("locked"):
+        return f"hold {ours}: {best}'s game locked before submission"
     out = {"submitted": [], "applied": False}
     moves.submit_free(ctx, plan, out, league_id)
     return f"streamed {ours} -> {best} ({d['gain']:+.2f})"
@@ -533,7 +617,12 @@ def main():
     ap.add_argument("--pregame", action="store_true",
                     help="minutes before kickoff: skip scout (see run.__doc__)")
     a = ap.parse_args()
-    d = run(apply=a.apply, pregame=a.pregame)
+    from robo.runlock import DecisionRun
+    # Scheduled cascades own the shared writer lock. A news pulse never waits
+    # ahead of this path, and the offset watcher schedule avoids start races.
+    with DecisionRun("pregame cascade" if a.pregame else "full cascade",
+                     wait_s=15 * 60):
+        d = run(apply=a.apply, pregame=a.pregame)
     print(f"\nweekly projection in use: {d['weekly_projection']}")
     bad = [s for s in d["steps"] if not s["ok"]]
     if bad:

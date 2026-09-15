@@ -590,8 +590,25 @@ def _source_marker(step: str):
         else:
             event = "no event recorded yet"
         errs = len(d.get("source_errors") or [])
-        return d.get("last_poll"), "%s%s" % (
-            event, ", %d source error(s)" % errs if errs else "")
+        ignored = sum(int(x or 0) for x in (d.get("filtered") or {}).values())
+        paused = d.get("paused") or {}
+        if paused:
+            last_source = d.get("last_poll")
+            source_age = (max(0.0, (time.time() - float(last_source)) / 60.0)
+                          if last_source else None)
+            pause = ", paused: %s%s" % (
+                paused.get("reason"),
+                "; source poll %.0fm ago" % source_age
+                if source_age is not None else "; no source poll yet")
+        else:
+            pause = ""
+        # An intentional pause is a healthy scheduler heartbeat, while the
+        # detail still exposes when sources were last polled.
+        marker = d.get("last_attempt") if paused else d.get("last_poll")
+        return marker, "%s%s%s%s" % (
+            event, pause,
+            ", %d metadata-only signal(s) ignored" % ignored if ignored else "",
+            ", %d source error(s)" % errs if errs else "")
     if step == "ros":
         d = _read_json(DATA / "ros.json", {}) or {}
         return d.get("computed"), "%d players from week %s" % (
@@ -951,7 +968,7 @@ def inseason() -> dict:
     ranking board -- a status page that costs a board build every 15 minutes
     would be the most expensive thing in the project.
     """
-    from robo import ir, lineup as lu, model_proj, season, value
+    from robo import ir, lineup as lu, model_proj, scout_queue, season, value
 
     out: dict = {"status": UNK, "gated": not value.ready()}
     week = season.current_week()
@@ -962,6 +979,10 @@ def inseason() -> dict:
     out["next_waiver"] = _next_waiver_run()
     out["drift"] = season.audit()
     out["ir_warnings"] = _safe(ir.warnings, []) or []
+    # The prose queue. Work that has failed the model three times stops
+    # retrying and waits for a human, and a queue that quietly gives up on a
+    # player is indistinguishable from one that has nothing to do.
+    out["scout_queue"] = _safe(scout_queue.status, {}) or {}
 
     res = lu.run(week=week, apply=False, verbose=False)
     out["projected"] = res["total"]
@@ -983,7 +1004,8 @@ def inseason() -> dict:
     # choosing not to score. Everything else is informational.
     if res["holes"] or res["illegal"]:
         out["status"] = BAD
-    elif out["drift"] or out["ir_warnings"] or res["changed"]:
+    elif (out["drift"] or out["ir_warnings"] or res["changed"]
+            or out["scout_queue"].get("attention")):
         out["status"] = WARN
     else:
         out["status"] = OK
@@ -1468,14 +1490,25 @@ def _inseason_html(ins) -> str:
              "held: no rest-of-season valuation yet" if ins.get("gated")
              else "live"),
     ]
+    q = ins.get("scout_queue") or {}
+    if q:
+        roster_body.append(_row("prose queue", "%s waiting, last batch %s"
+                                % (q.get("queued", 0), _ago(q.get("last_batch_at")))))
+    for name in q.get("attention_players") or []:
+        roster_body.append(_row("prose queue stalled", _scrub(str(name))))
     for w in ins.get("ir_warnings") or []:
         roster_body.append(_row("attention", w))
     for d in ins.get("drift") or []:
         roster_body.append(_row("league shape drift", d))
-    roster_status = (WARN if (ins.get("ir_warnings") or ins.get("drift")) else OK)
+    roster_status = (WARN if (ins.get("ir_warnings") or ins.get("drift")
+                              or q.get("attention")) else OK)
     rbits = []
     if ins.get("ir_warnings"):
         rbits.append("%d reserve warning(s)" % len(ins["ir_warnings"]))
+    if q.get("attention"):
+        from robo import scout_queue
+        rbits.append("%d player(s) the prose queue stopped retrying after "
+                     "%d attempts" % (q["attention"], scout_queue.MAX_ATTEMPTS))
     if ins.get("drift"):
         rbits.append("%d league-shape disagreement(s)" % len(ins["drift"]))
     roster_why = {"status": roster_status, "why": "; ".join(rbits)}
