@@ -363,7 +363,14 @@ def quote(gain: float, week: int, faab_left: int,
             "highest_quantiles": (field or {}).get("highest_quantiles"),
             "model_version": (field or {}).get("version"),
             "shadow_price": {
-                "points_per_dollar": MIN_POINTS_PER_DOLLAR,
+                # THE REALISED PRICE, NOT THE FLOOR CONSTANT. Every number in
+                # the curve above uses `lam`, and this reported
+                # MIN_POINTS_PER_DOLLAR instead -- 0.40 against an actual
+                # 0.3765 in week 2 at a full budget. An audit that prints a
+                # different price from the one it charged cannot be used to
+                # check the bid by hand, which is the only thing it is for.
+                "points_per_dollar": round(lam, 6),
+                "floor_constant": MIN_POINTS_PER_DOLLAR,
                 "status": "provisional",
                 "basis": ("league spend and gross starting-contribution proxy; "
                           "not yet calibrated to realized paired lineup gain"),

@@ -322,6 +322,9 @@ def build(week: int | None = None, league_id: str = LEAGUE_ID_2026) -> dict:
             # wrong player as the reason for a number.
             "lead_of": rec["role"].get("lead_of"),
             "lead_id": rec["role"].get("lead_id"),
+            # Carried so a trace can say why a man with no projected
+            # opportunity holds a rank at all -- see roles._merge_depth_chart.
+            "from_depth_chart": rec["role"].get("from_depth_chart"),
             "absorbs": rec.get("absorbs"),
             "injury_status": rec.get("injury_status"),
             "eligible_week": rec.get("eligible_week"),
@@ -353,10 +356,27 @@ def load(refresh: bool = False) -> dict:
             pass
     d = build()
     try:
-        CACHE.write_text(json.dumps(d), encoding="utf-8")
+        save(d)
     except Exception:
         pass
     return d
+
+
+def save(table: dict) -> None:
+    """Atomically publish a build and retain its compact comparison series.
+
+    The archive is observational and must never prevent a roster valuation from
+    landing.  Cache replacement is therefore authoritative; history is best
+    effort after that succeeds.
+    """
+    tmp = CACHE.with_suffix(CACHE.suffix + ".tmp")
+    tmp.write_text(json.dumps(table), encoding="utf-8")
+    tmp.replace(CACHE)
+    try:
+        from robo import value_history
+        value_history.archive(table)
+    except Exception:
+        pass
 
 
 def find(name: str, table: dict | None = None) -> list[str]:
@@ -398,6 +418,9 @@ def trace(name: str = "", player_id: str | None = None) -> str:
     # absorption curve measures a share of the LEAD's vacated work, so from
     # rank 3 down the man he is behind and the job he would inherit are two
     # different people, and printing only the first explains the wrong number.
+    if r.get("from_depth_chart"):
+        L.append(f"    no projected opportunity at all -- this rank is Sleeper's "
+                 f"depth chart, where he is listed {r['from_depth_chart']}")
     if r.get("lead_of"):
         L.append(f"    inherits {(r['absorbs'] or 0):.0%} of {r['lead_of']}'s "
                  f"work if that job opens")
@@ -406,12 +429,36 @@ def trace(name: str = "", player_id: str | None = None) -> str:
     if r.get("feed_eligible"):
         L.append(f"    Sleeper projects nothing before week {r['feed_eligible']} "
                  f"-- his earliest ELIGIBLE date, which is a rule, not a forecast")
+    # NARRATE THE NUMBER THAT WAS BUILT. A verdict often carries no single
+    # `return_week` and a WINDOW instead -- return_week_min/max -- and that
+    # window is what availability() ramps across. Branching on the point
+    # estimate alone sent every such player to the "no dated estimate" line
+    # below, so the trace told the reader the feed's date stood while the A(w)
+    # column directly underneath climbed 0.000 -> 0.333 -> 0.667 -> 1.000 on a
+    # dated report the feed knew nothing about. Sam Darnold read "no dated
+    # estimate from reporting" against a 4-to-6-week absence that is the only
+    # reason his weeks 3-5 are zero.
+    lo, hi = r.get("scout_return_min"), r.get("scout_return_max")
     if r.get("scout_return"):
         L.append(f"    reporting says week {r['scout_return']}: "
                  f"{r.get('scout_basis') or 'no basis given'}")
         if r["scout_return"] != r.get("feed_eligible"):
             L.append(f"    -> the reported date is used, and the market's level "
                      f"is released with it")
+    elif lo is not None and hi is not None and lo != hi:
+        L.append(f"    reporting says weeks {lo}-{hi}: "
+                 f"{r.get('scout_basis') or 'no basis given'}")
+        # Two lines on purpose: ui.trace_block renders this with st.code, which
+        # does not wrap, so anything much past ~105 characters runs off the
+        # right edge of the panel and is only reachable by scrolling a code
+        # block most readers will not think to scroll.
+        L.append(f"    -> a RANGE, not a date, so A(w) ramps across it instead "
+                 f"of switching on:")
+        L.append(f"       {hi - lo + 1} equally likely return weeks, "
+                 f"weeks {lo} to {hi}")
+    elif lo is not None:
+        L.append(f"    reporting says week {lo}: "
+                 f"{r.get('scout_basis') or 'no basis given'}")
     elif r.get("feed_eligible"):
         L.append(f"    no dated estimate from reporting, so the feed's date stands")
     if r.get("role_change") and r["role_change"] != "none":
@@ -494,7 +541,7 @@ def main():
         return
     if args.rebuild:
         d = build()
-        CACHE.write_text(json.dumps(d), encoding="utf-8")
+        save(d)
         print(f"built {len(d['players'])} players -> {CACHE.name}")
         return
     if args.explain:

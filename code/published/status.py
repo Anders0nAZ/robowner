@@ -428,6 +428,13 @@ SOURCES = [
     ("model-horizon", "NFL model projection horizon", 30 * 3600,
      "RobonerModelCaptureDaily"),
     ("news-watch",  "Injury watcher", 25 * 60, "RobonerNewsWatch"),
+    # THE VALUATION THE BOT DECIDES ON. Six hours, matching
+    # moves.ROS_VALUE_MAX_AGE, because that is the age at which the ordinary
+    # channel stops accepting a candidate priced off this file -- the same rule
+    # as the model and ros rows: go amber when the code stops trusting it.
+    # It was absent entirely while every audit page and every transaction read
+    # it, so the freshness strip reported on the superseded table instead.
+    ("expected",    "Roster valuation",     6 * 3600,  "RobonerNewsWatch"),
     # 20 hours, matching ros.MAX_AGE_H, so the page goes amber at the same
     # moment the valuation stops trusting itself -- the same rule as the model
     # row above.
@@ -609,6 +616,10 @@ def _source_marker(step: str):
             event, pause,
             ", %d metadata-only signal(s) ignored" % ignored if ignored else "",
             ", %d source error(s)" % errs if errs else "")
+    if step == "expected":
+        d = _read_json(DATA / "expected.json", {}) or {}
+        return d.get("computed"), "%d players from week %s" % (
+            len(d.get("players", {})), d.get("week", "?"))
     if step == "ros":
         d = _read_json(DATA / "ros.json", {}) or {}
         return d.get("computed"), "%d players from week %s" % (

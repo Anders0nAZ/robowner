@@ -704,10 +704,32 @@ def player_value(name: str) -> str:
     man stands to inherit the job in front of him, which is the whole reason a
     rookie backup does not get cut for an established veteran.
     """
-    from robo import ros
+    from robo import expected, ros
     if not (name or "").strip():
         return "Name a player and I will price him."
-    out = ros.explain(name.strip())
+
+    # `ros.explain` PRINTS and returns None, so the old body here evaluated to
+    # the fallback for every player ever asked about while the real walkthrough
+    # went to the responder's stdout. Use the two functions that return text.
+    #
+    # And read the table the bot actually decides on. expected.json is the
+    # valuation; ros.json is the legacy public copy and it disagrees -- it still
+    # had Sam Darnold at 208.6 with a four-to-six week absence already priced
+    # into the engine at 139.7. Answering the league chat off the stale number
+    # is the worst place to be wrong, because it is the number they can quote back.
+    table = ros.load()
+    hits = ros.find(name.strip(), table)
+    if not hits:
+        return f"I have no rest-of-season number for {name}."
+    pid = hits[0]
+
+    # Kickers and defences are not a gap in expected.py, they are outside it by
+    # construction -- it models neither and says so -- and ros.py prices a
+    # defence off the betting market, which is the right source. So this is a
+    # split, not a fallback.
+    out = expected.trace(player_id=pid)
+    if not out or out.startswith("no expectation on file"):
+        out = ros.trace(player_id=pid)
     return out or f"I have no rest-of-season number for {name}."
 
 

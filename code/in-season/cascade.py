@@ -360,7 +360,7 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     # there is no reason not to: expected.build() measures about two seconds.
     def _rebuild():
         d = expected.build(league_id=league_id)
-        expected.CACHE.write_text(json.dumps(d), encoding="utf-8")
+        expected.save(d)
         r = ros.build(league_id=league_id)
         ros.CACHE.write_text(json.dumps(r), encoding="utf-8")
         # The simulator caches a Board per process and it was built from the

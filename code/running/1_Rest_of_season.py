@@ -20,7 +20,7 @@ path (`upside_of(..., record=...)`), not reimplemented.
 import pandas as pd
 import streamlit as st
 
-from robo import expected, ros, ui
+from robo import expected, ros, ui, value_history
 
 st.title("Rest of season")
 ui.gate_banner(st)
@@ -56,11 +56,27 @@ def trace_for(pid: str) -> str:
     # re-resolving the name here picked the linebacker while the table above
     # showed the quarterback.
     #
-    # reasons=True because this app is local and unredacted by design -- it is
-    # where the sentence behind a scout verdict is supposed to be readable. The
-    # default is off for skills.py, which answers the same question in the
-    # league chat.
+    # NO `reasons` FLAG HERE, and that is a real gap rather than an omission.
+    # This page used to call ros.trace(reasons=True), which printed the scout
+    # verdict's own sentence -- the thing the app docstring promises is readable
+    # locally. expected.trace has no such parameter: it reports the DATE and the
+    # basis string ("rotoballer: explicit timing") but not the reporting behind
+    # it. The verbatim reason still exists in data/news_verdicts.json and is
+    # shown below, out of the cached trace so the redaction split stays where
+    # skills.py can rely on it.
     return expected.trace(player_id=pid)
+
+
+@st.cache_data(ttl=600, show_spinner=False)
+def scout_reason(pid: str) -> dict:
+    """The verdict's own words. Local app only -- see status._scrub()."""
+    try:
+        from robo import scout
+        import json as _json
+        d = _json.loads(scout.VERDICTS.read_text(encoding="utf-8"))
+        return (d.get("verdicts") or {}).get(str(pid)) or {}
+    except Exception:
+        return {}
 
 
 rows, meta = board()
@@ -71,6 +87,11 @@ if not rows:
 
 own = ownership()
 wk = meta.get("week")
+current = {**meta, "players": {r["player_id"]: r for r in rows}}
+day_base = value_history.baseline(current, 1)
+week_base = value_history.baseline(current, 7)
+day_change = value_history.compare(current, day_base)
+week_change = value_history.compare(current, week_base)
 
 c = st.columns(4)
 c[0].metric("Week", wk)
@@ -93,8 +114,10 @@ with f1:
                      horizontal=True,
                      help="Who holds him right now, read live from Sleeper.")
 with f2:
-    sort_by = st.selectbox("Sort by", ["ros", "raw"],
-                           help="`ros` is the playoff-weighted weekly value.")
+    sort_by = st.selectbox("Sort by", ["ros", "raw", "day change", "week change"],
+                           help="Changes compare the same remaining weeks under "
+                                "today's playoff weights, so completed games do "
+                                "not appear as lost value.")
 with f3:
     q = st.text_input("Search", "", placeholder="name, or part of one")
 
@@ -108,12 +131,19 @@ elif scope == "free agents":
 view = ui.pos_filter(st, view)
 if q.strip():
     view = [r for r in view if q.strip().lower() in r["name"].lower()]
-view = sorted(view, key=lambda r: -r.get(sort_by, 0))
+change_for_sort = day_change if sort_by == "day change" else week_change
+if sort_by in {"day change", "week change"}:
+    view = sorted(view, key=lambda r: -(change_for_sort.get(r["player_id"], {})
+                                        .get("delta", float("-inf"))))
+else:
+    view = sorted(view, key=lambda r: -r.get(sort_by, 0))
 
 df = pd.DataFrame([{
     "player": r["name"], "pos": r["pos"], "team": r["team"] or "-",
     "owner": own.get(r["player_id"], "free"),
     "ros": r["ros"], "raw": r["raw"],
+    "day Δ": (day_change.get(r["player_id"]) or {}).get("delta"),
+    "week Δ": (week_change.get(r["player_id"]) or {}).get("delta"),
     "rank": r.get("rank"), "share": r.get("share"), "weeks": r["weeks"],
     "source": r.get("value_source", "weekly-model"),
 } for r in view])
@@ -132,12 +162,28 @@ st.dataframe(
         "raw": st.column_config.NumberColumn(
             "raw", format="%.1f",
             help="The unweighted sum of weekly modeled value."),
+        "day Δ": st.column_config.NumberColumn(
+            "day Δ", format="%+.1f",
+            help="Change versus the latest snapshot at least 24 hours old, "
+                 "after removing completed weeks and using today's weights."),
+        "week Δ": st.column_config.NumberColumn(
+            "week Δ", format="%+.1f",
+            help="Change versus the latest snapshot at least seven days old, "
+                 "after removing completed weeks and using today's weights."),
         "share": st.column_config.NumberColumn(
             "share", format="%.3f",
             help="His share of his position room's projected opportunity, THIS "
                  "week. A man barred from playing leaves the room, so the men "
                  "behind him move up for exactly the weeks he is out."),
     })
+available = []
+if day_base:
+    available.append(f"day baseline {value_history.age_label(current, day_base)}")
+if week_base:
+    available.append(f"week baseline {value_history.age_label(current, week_base)}")
+st.caption(("Adjusted deltas: " + " · ".join(available)) if available else
+           "Adjusted delta history starts with today's snapshot; comparisons "
+           "will appear after the first full day/week.")
 
 # ------------------------------------------------------------------- the detail
 
@@ -147,11 +193,15 @@ names = [r["name"] for r in view] or [r["name"] for r in rows]
 pick = st.selectbox("Player", names, help="Follows the filters above.")
 row = next(r for r in rows if r["name"] == pick)
 
-m = st.columns(4)
+m = st.columns(6)
 m[0].metric("rest of season", f"{row['ros']:.1f}")
 m[1].metric("weekly sum", f"{row['raw']:.1f}")
-m[2].metric("weeks modeled", row["weeks"])
-m[3].metric("source", row.get("value_source", "weekly-model"))
+m[2].metric("day change", (f"{day_change[row['player_id']]['delta']:+.1f}"
+                            if row["player_id"] in day_change else "—"))
+m[3].metric("week change", (f"{week_change[row['player_id']]['delta']:+.1f}"
+                             if row["player_id"] in week_change else "—"))
+m[4].metric("weeks modeled", row["weeks"])
+m[5].metric("source", row.get("value_source", "weekly-model"))
 bits = []
 if row.get("lead_of"):
     bits.append(f"inherits {(row.get('absorbs') or 0):.0%} of {row['lead_of']}'s "
@@ -230,3 +280,22 @@ with st.expander("Show the full trace", expanded=False):
                "each value came from. Same text as "
                f"`python -m robo.expected --explain \"{pick}\"`.")
     ui.trace_block(st, trace_for(row["player_id"]))
+
+verdict = scout_reason(row["player_id"])
+if verdict.get("reason"):
+    with st.expander(
+            f"What the reporting actually said — {verdict.get('verdict', '?')}"
+            f" (confidence {verdict.get('confidence', '?')})", expanded=False):
+        st.caption(
+            "The scout verdict's own words, from data/news_verdicts.json. "
+            "Local only: these quote injury reporting verbatim and are the "
+            "reason ros.trace carries a `reasons` flag that is off everywhere "
+            "the league can read the output.")
+        st.write(verdict["reason"])
+        meta = {k: verdict.get(k) for k in
+                ("return_week", "return_week_min", "return_week_max",
+                 "return_basis", "timing_actionable", "timing_sentence",
+                 "out_for_season", "judged_at")
+                if verdict.get(k) is not None}
+        if meta:
+            st.json(meta, expanded=False)

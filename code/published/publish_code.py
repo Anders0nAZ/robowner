@@ -64,8 +64,8 @@ CATEGORIES = [
      "projections, ten seasons of usage, and the betting market.",
      ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
       "newswatch", "waiver_audit",
-      "ros", "expected", "returns", "marginal", "roles", "playoffs",
-      "streaming", "faab", "faab_field"]),
+      "ros", "expected", "value_history", "returns", "marginal", "roles",
+      "playoffs", "streaming", "faab", "faab_field"]),
     ("chat", "Talking",
      "The bot's voice in the league chats, the tools it calls to look things "
      "up mid-conversation, and its memory of what has been said.",
@@ -81,8 +81,8 @@ CATEGORIES = [
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
      ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
-      "audit_gui", "ui", "1_Rest_of_season", "2_News_pulse",
-      "3_Ordinary_moves", "4_FAAB", "5_Roles"]),
+      "audit_gui", "ui", "1_Rest_of_season", "2_Value_movers", "3_News_pulse",
+      "4_Ordinary_moves", "5_FAAB", "6_Roles"]),
 ]
 
 

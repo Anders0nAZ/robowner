@@ -56,6 +56,25 @@ for slate in doc.get("plans") or []:
                                       if q.get("expected_highest") is not None else "pooled"))
         band = q.get("near_optimal") or [claim.get("bid", 0), claim.get("bid", 0)]
         c[3].metric("Near-optimal", f"${band[0]}–${band[1]}")
+        # WHY WE ARE NOT BIDDING NEAR THE EXPECTED HIGH. Those two metrics sit
+        # next to each other -- "expected high $34" beside "near-optimal $1-$1"
+        # -- and read as a contradiction until you know the bid is capped by
+        # arithmetic, not by nerve: a dollar costs `lam` lineup points, so a
+        # gain of G cannot justify more than G/lam dollars no matter who else
+        # is bidding. Past that the claim is worth less than the budget it eats.
+        lam = float((q.get("shadow_price") or {}).get("points_per_dollar") or 0)
+        res = q.get("reservation_bid")
+        if res is not None and lam > 0:
+            hi = q.get("expected_highest")
+            line = (f"Reservation price **\\${res}** — at {lam:.2f} lineup points "
+                    f"per dollar, a gain of {float(q.get('gain') or 0):+.2f} cannot "
+                    f"justify more. The curve stops there.")
+            if hi is not None and float(hi) > res:
+                line += (f" Beating the expected high of \\${float(hi):.0f} would "
+                         f"need a gain of about {(float(hi) + 1) * lam:.1f} points, "
+                         f"so this one is unreachable by construction rather than "
+                         f"by choice.")
+            st.caption(line)
         direct = claim.get("direct_ros") or {}
         if direct:
             d = st.columns(4)
@@ -66,7 +85,7 @@ for slate in doc.get("plans") or []:
             st.caption("The simple comparator subtracts the two players' weekly-model ROS totals. "
                        "The paired figure above remains authoritative because it measures the "
                        "change in Robowner's optimized lineups from the same weekly inputs.")
-        st.caption(q.get("reason") or "No quote narrative recorded")
+        st.caption(ui.money(q.get("reason") or "No quote narrative recorded"))
         shadow = q.get("shadow_price") or {}
         if shadow:
             st.caption(f"FAAB shadow price: {float(shadow.get('points_per_dollar') or 0):.2f} "

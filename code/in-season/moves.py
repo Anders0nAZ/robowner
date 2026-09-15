@@ -452,18 +452,26 @@ def _coverage_after(ctx: dict, add_id: str, drop_id: str | None,
                 return True
         return False
 
-    counts = {p: 0 for p in MIN_ROSTER_COVERAGE}
-    specialists = {"K": 0, "DEF": 0}
-    for pid in active:
-        pos = (erows.get(pid) or {}).get("pos") or (players.get(pid) or {}).get("position")
-        if pos in counts and available_soon(pid):
-            counts[pos] += 1
-        if pos in specialists:
-            specialists[pos] += 1
+    def tally(ids: set[str]) -> tuple[dict, dict]:
+        c = {p: 0 for p in MIN_ROSTER_COVERAGE}
+        s = {"K": 0, "DEF": 0}
+        for pid in ids:
+            pos = ((erows.get(pid) or {}).get("pos")
+                   or (players.get(pid) or {}).get("position"))
+            if pos in c and available_soon(pid):
+                c[pos] += 1
+            if pos in s:
+                s[pos] += 1
+        return c, s
+
+    counts, specialists = tally(active)
+    # WHERE WE ALREADY STAND, so the floor can be a direction rather than a wall.
+    before, _ = tally(held - reserve)
     audit = {
         "active_after": len(active),
         "minimums": dict(MIN_ROSTER_COVERAGE),
         "counts": counts,
+        "counts_before": before,
         "specialists": specialists,
         "weeks": [],
     }
@@ -474,10 +482,30 @@ def _coverage_after(ctx: dict, add_id: str, drop_id: str | None,
             record.update(audit)
         return ok, why
 
+    # NON-WORSENING, NOT A WALL. The floor used to reject any roster that did
+    # not clear it, which is the wrong test when we are ALREADY under it: with
+    # our third quarterback on IR the active QB count is 2 against a floor of 3,
+    # so every candidate failed "QB2/3" and the ordinary channel returned zero
+    # options for reasons that had nothing to do with the candidate. Worse, the
+    # rejection was position-selective without meaning to be -- adding a QB
+    # passed and adding anyone else did not -- so the control was quietly
+    # steering every proposal toward any warm quarterback, which is most of how
+    # a third-string QB who cannot play came to be the only thing on the board.
+    #
+    # A shortfall we are already in is a REASON TO PRIORITISE, handled by
+    # `meets_floor` below and the ordering in plan_claims. What stays forbidden
+    # is making it worse: a move may not take a position below the floor, nor
+    # below where it already sits if that is lower still.
     short = [f"{p}{counts[p]}/{minimum}" for p, minimum in MIN_ROSTER_COVERAGE.items()
              if counts[p] < minimum]
-    if short:
-        return finish(False, "coverage floor would fail: " + ", ".join(short))
+    worse = [f"{p}{counts[p]}/{minimum}" for p, minimum in MIN_ROSTER_COVERAGE.items()
+             if counts[p] < min(minimum, before[p])]
+    audit["short_after"] = short
+    audit["meets_floor"] = not short
+    audit["relieves"] = sorted(p for p, minimum in MIN_ROSTER_COVERAGE.items()
+                               if before[p] < minimum and counts[p] > before[p])
+    if worse:
+        return finish(False, "coverage floor would fail: " + ", ".join(worse))
     missing = [p for p, n in specialists.items() if n < 1]
     if missing:
         return finish(False, "roster cannot fill " + ", ".join(missing))
@@ -531,9 +559,21 @@ def _controlled_ros_options(ctx: dict, table: dict,
                            "coverage": coverage})
             continue
         direct = _direct_ros(table, add_id, drop_id)
-        checks.append({**check, "eligible": True, "reason": "coverage preserved",
-                       "coverage": coverage, "direct_ros": direct})
+        # PRIORITY, NOT PERMISSION. 0 is a move that leaves every floor met --
+        # including one that lifts us back over a floor we are under -- and 1 is
+        # a move that is merely not worse. plan_claims orders on this before it
+        # orders on value, so a roster under its quarterback floor asks for a
+        # quarterback FIRST and still prices everyone else behind him instead of
+        # refusing to look. See _coverage_after for why this stopped being a veto.
+        priority = 0 if coverage.get("meets_floor") else 1
+        reason = ("coverage preserved" if coverage.get("meets_floor")
+                  else "below floor and not worsened: "
+                       + ", ".join(coverage.get("short_after") or []))
+        checks.append({**check, "eligible": True, "reason": reason,
+                       "coverage": coverage, "direct_ros": direct,
+                       "coverage_priority": priority})
         accepted.append({**option, "coverage": coverage,
+                         "coverage_priority": priority,
                          "direct_ros": direct,
                          "valuation_computed": table.get("computed")})
     return accepted
@@ -1038,7 +1078,14 @@ def plan_free(ctx: dict) -> list[dict]:
     # season totals across different positions. That arithmetic put a defence and
     # a fourth receiver on the same axis and scored a +1.6 swap at +87.
     P = priced(ctx)
-    for drop in P["drops"][:max(1, slots)]:
+    # THE FREE CHANNEL DOES NOT SPEND ITS ONE MUTATION ON AN EMPTY SPOT. `ros`
+    # allows a single drop (ROS_MAX_MUTATIONS) and this loop takes only the
+    # first entries, so a None sitting at the front would be the ONLY drop it
+    # ever saw and every incumbent swap would silently vanish. Filling an open
+    # slot from the free wire is already the cascade's `fill` step, which runs
+    # daily and needs no mutation budget because nobody is dropped.
+    slot_drops = [d for d in P["drops"] if not (d is None and mode == "ros")]
+    for drop in slot_drops[:max(1, slots)]:
         o = best_free([x for x in P["free"] if x["add"] not in used], drop,
                       fill=(mode == "fill"))
         if not o:
@@ -1075,6 +1122,7 @@ def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
             "real": True,
             "se": round(o["se"], 2), "ceiling": round(o["ceiling"], 1),
             "coverage": o.get("coverage"), "direct_ros": direct,
+            "coverage_priority": o.get("coverage_priority", 0),
             "valuation_computed": o.get("valuation_computed"),
             "why": ((why or f"{kind}; +/- {o['se']:.1f}, ceiling {o['ceiling']:.1f}")
                     + comparison)}
@@ -1227,7 +1275,14 @@ def _priced(ctx: dict) -> dict:
                                 "drop_price": round(cost, 3),
                                 "reason": "available for an upgrade comparison"})
             priced_drops.append((cost, pid))
-        drops = [pid for _, pid in sorted(priced_drops)]
+        # AN EMPTY ROSTER SPOT IS A DROP THAT COSTS NOTHING, and until now the
+        # ordinary channel could not see one: `fill` and `news` both put None in
+        # here, `ros` never did, and `ros` is the only mode the Tuesday waiver
+        # task runs. So a night with an open slot and a full FAAB budget built a
+        # slate of swaps or nothing at all. Prepended AFTER the sort -- putting
+        # None into priced_drops would compare None to a str on a cost tie.
+        drops = ([None] if ctx["slots"]["open"] > 0 else []) \
+            + [pid for _, pid in sorted(priced_drops)]
     affected_weeks = None
     if ctx["mode"] == "news":
         affected_weeks = set()
@@ -1310,8 +1365,15 @@ def plan_claims(ctx: dict) -> list[dict]:
         # alternative here charged the same opportunity cost twice.
         alt = best_free(P["free"], drop)
         picks = []
+        # THE COVERAGE FLOOR ORDERS THE LADDER; IT NO LONGER CLOSES THE DOOR.
+        # One slate, first winner takes the slot, and the rungs below cost
+        # nothing when they bounce -- so a roster under its quarterback floor
+        # asks for a quarterback at the top rung and still names the best of
+        # everyone else beneath him. That is strictly more than the old control
+        # allowed, which was a quarterback or nothing. Within a priority the
+        # ordering is unchanged: value, highest first.
         for o in sorted((x for x in P["wire"] if x["drop"] == drop),
-                        key=lambda x: -x["gain"]):
+                        key=lambda x: (x.get("coverage_priority", 0), -x["gain"])):
             if len(picks) >= SLATE_DEPTH or o["add"] in used:
                 continue
             if not clears(o):
@@ -1351,8 +1413,15 @@ def plan_claims(ctx: dict) -> list[dict]:
     # Settled history shows Sleeper assigns its global seq by descending bid;
     # equal-bid claims retain submission order.  Keep the field for compatibility
     # but call it priority everywhere user-facing until the settled seq exists.
+    # Coverage priority sits between the bid and the value, because equal bids
+    # are the common case here -- the ladder quotes $1 across a whole slate in a
+    # quiet week -- and on an equal bid the tiebreak decides who Sleeper reaches
+    # first. Without it the floor-relieving rung loses the tie to a bigger
+    # number and the ordering the slate was built to express is thrown away at
+    # the last step.
     flat = [(s, c) for s in slates for c in s["claims"]]
-    flat.sort(key=lambda sc: (-sc[1]["bid"], -sc[1]["gain"], sc[1]["add"]["player_id"]))
+    flat.sort(key=lambda sc: (-sc[1]["bid"], sc[1].get("coverage_priority", 0),
+                              -sc[1]["gain"], sc[1]["add"]["player_id"]))
     for i, (_, c) in enumerate(flat):
         c["seq"] = i
         c["priority"] = i
@@ -1497,12 +1566,30 @@ def render_claims(ctx: dict, slates: list[dict]) -> str:
     if not slates:
         L.append("  no claim clears the bar")
     for s in slates:
-        L.append(f"  slot freed by dropping {s['drop']['name']} "
-                 f"({s['drop_value']:.1f}) - priority list, first winner takes it:")
+        if s["drop"]["player_id"] is None:
+            L.append("  filling the open roster spot, nobody dropped"
+                     " - priority list, first winner takes it:")
+        else:
+            L.append(f"  slot freed by dropping {s['drop']['name']} "
+                     f"({s['drop_value']:.1f}) - priority list, first winner takes it:")
         for c in s["claims"]:
+            # LEAD WITH THE NUMBER THE DECISION WAS MADE ON. In ordinary ros
+            # claims `gain` and `bid_gain` are the same simulated quantity and
+            # this changes nothing. In news mode they are not: `gain` there is a
+            # raw rest-of-season difference, and against an empty roster spot it
+            # degenerates to the candidate's whole season total -- the
+            # add_value-minus-drop_value shape marginal.py exists to replace. It
+            # printed "gain +32.26" beside a paired value of +1.34 for a third
+            # string quarterback. The ROS comparison is still the news channel's
+            # admission test, so it stays on the line; it just stops sitting
+            # where a reader takes the decision number to be.
+            paired = c.get("bid_gain")
+            headline = (f"gain {c['gain']:+.1f}" if paired is None
+                        or abs(float(paired) - float(c["gain"])) < 0.05
+                        else f"lineup {float(paired):+.2f} (ros {c['gain']:+.1f})")
             L.append(f"    priority {c.get('priority', c.get('seq', 0)):<3} ${c['bid']:<4} "
                      f"{c['add']['name']:<24} {c['add']['pos']:<4} "
-                     f"{c['add_value']:>7.1f}  gain {c['gain']:+.1f}{_tag(c['real'])}"
+                     f"{c['add_value']:>7.1f}  {headline}{_tag(c['real'])}"
                      + (f"   {c['why']}" if c.get("why") else ""))
             q = c.get("bid_quote") or {}
             if q:
@@ -1567,9 +1654,20 @@ def _after_free_context(ctx: dict, plan: dict) -> dict:
                           if str(pid) != str(drop_id)]
     roster["reserve"] = [str(pid) for pid in (roster.get("reserve") or [])
                          if str(pid) != str(drop_id)]
+    # RECOUNT THE SLOTS. Everything else here is rebuilt from the hypothetical
+    # roster and `slots` was being copied through unchanged, which is only
+    # harmless while the free channel cannot take the open spot -- it skips a
+    # None drop in ros mode for exactly that reason. If that ever changes back,
+    # a stale `open` here would have the claims channel bid for a slot the free
+    # pass just filled. Cheap to keep honest, and it is derived, not fetched.
+    active = [pid for pid in held if pid not in set(roster.get("reserve") or [])]
+    slots = dict(ctx.get("slots") or {})
+    slots["active"] = len(active)
+    slots["open"] = max(0, int(slots.get("roster_max") or len(active)) - len(active))
     return {
         **{k: v for k, v in ctx.items() if not k.startswith("_")},
         "roster": roster,
+        "slots": slots,
         "starters": set(roster.get("starters") or []),
         "reserve": set(roster.get("reserve") or []),
         "available": [row for row in ctx["available"]
@@ -1666,6 +1764,9 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         policy_margin = (gain - MIN_GAIN_TO_ADD if starter
                          else ceiling - marginal.HIT_POINTS)
         picked = (add_id, drop_id) in selected
+        cov_priority = int(option.get("coverage_priority") or 0)
+        best_priority = min((int(o.get("coverage_priority") or 0)
+                             for o in options), default=0)
         if picked:
             verdict = "selected"
         elif noise_margin <= 0:
@@ -1673,6 +1774,13 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         elif policy_margin < 0:
             verdict = ("below starting-gain bar" if starter
                        else "below bench-ceiling bar")
+        elif cov_priority > best_priority:
+            # NOT THE SAME THING AS LOSING ON VALUE, and the old text said it
+            # was. Since the coverage floor became an ordering rather than a
+            # veto, an option can clear every bar and still sit below a smaller
+            # gain because that one refills a position we are short at. A
+            # reader who cannot tell those apart cannot check the policy.
+            verdict = "cleared; outranked by the coverage floor"
         else:
             verdict = "cleared; lower-ranked option"
         rows.append({"add": identity(add_id), "drop": identity(drop_id),
@@ -1682,8 +1790,11 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                      "policy_margin": round(policy_margin, 3),
                      "selected": picked, "verdict": verdict,
                      "coverage": option.get("coverage"),
+                     "coverage_priority": cov_priority,
                      "direct_ros": option.get("direct_ros")})
-    rows.sort(key=lambda r: (not r["selected"],
+    # Ordered the way the ladder is actually built, so the table a reader scans
+    # top-down matches the priority list that was submitted.
+    rows.sort(key=lambda r: (not r["selected"], r["coverage_priority"],
                              -min(r["noise_margin"], r["policy_margin"]),
                              r["add"]["player_id"]))
     controls = []
@@ -1696,7 +1807,8 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                        "starting_gain": MIN_GAIN_TO_ADD,
                        "bench_ceiling": marginal.HIT_POINTS,
                        "drop_floor": DROP_FLOOR,
-                       "mutation_limit": ROS_MAX_MUTATIONS},
+                       "mutation_limit": ROS_MAX_MUTATIONS,
+                       "coverage_floor": dict(MIN_ROSTER_COVERAGE)},
         "drop_checks": ctx.get("_ros_drop_checks") or [],
         "control_checks": controls,
         "options": rows,

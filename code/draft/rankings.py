@@ -139,6 +139,26 @@ def missing_key_rate(pid: str, week_proj: dict, scoring: dict,
     return round(extra, 2)
 
 
+def _in_play_this_season() -> set[str]:
+    """Anyone the model forecasts a scoring week for, however small.
+
+    Membership only. Nothing here reaches `proj_pts`, VORP or `blend_rank`:
+    those stay the preseason season forecast, and every in-season consumer that
+    matters ranks through `value.value_of` -> `expected.json` anyway. This just
+    stops the board from being a closed August universe.
+
+    Fails OPEN-to-the-old-behaviour rather than guessing: if the horizon is
+    missing, stale or for the wrong season, `horizon_projections` says so and we
+    return an empty set, which leaves the `pts > 0` gate exactly as it was.
+    """
+    from robo import model_proj
+    weeks, _why = model_proj.horizon_projections()
+    return {str(pid)
+            for block in (weeks or {}).values()
+            for pid, row in (block or {}).items()
+            if float((row or {}).get("mean") or 0) > 0}
+
+
 def build_board() -> list[dict]:
     scoring = json.loads((DATA / "league_kb.json").read_text(encoding="utf-8"))["scoring_settings"]
     s25 = stats_2025()
@@ -149,6 +169,7 @@ def build_board() -> list[dict]:
         ffc[key] = r
 
     rows = []
+    in_play = _in_play_this_season()
     for pr in load_projections():
         p = pr["player"]
         stats = pr["stats"] or {}
@@ -156,10 +177,20 @@ def build_board() -> list[dict]:
         if pos not in REPLACEMENT_RANK:
             continue
         pts = custom_points(stats, scoring)
-        if pts <= 0:
-            continue
         name = f"{p.get('first_name','')} {p.get('last_name','')}".strip()
         pid = pr.get("player_id") or p.get("player_id")
+        # A ZERO SEASON FORECAST IS NOT ABSENCE OF VALUE IN SEPTEMBER. This
+        # gate is a preseason statement -- Sleeper files a backup who was
+        # nobody's starter in August as literally `{'pts': 0, 'vol': {}}` -- and
+        # the board is what `season.free_agents` filters, so dropping him here
+        # makes him uncallable by every channel for the rest of the year. Drew
+        # Lock started Seattle's week 2 at 15.7 and was not among the 636 rows,
+        # which is also why the news pulse labelled him "other roster": that
+        # string is what newswatch prints for anyone outside the candidate pool.
+        # The model horizon is the right second opinion -- local, validated, and
+        # already rebuilt by the step before this one.
+        if pts <= 0 and str(pid) not in in_play:
+            continue
         pts = round(pts + missing_key_points(pid, stats, scoring, s25), 1)
         is_def = pos == "DEF"
         key = pid if is_def else norm(name)

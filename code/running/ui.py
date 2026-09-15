@@ -72,7 +72,7 @@ def gate_banner(st) -> None:
                    "number here is the provisional preseason board.")
 
 
-def artifacts(steps=("ros", "playoff-odds", "model", "board", "usage")) -> list:
+def artifacts(steps=("expected", "ros", "playoff-odds", "model", "board")) -> list:
     """Freshness for the files a page reads, from the status page's collector.
 
     Reuses status._source_marker rather than re-reading each file: the budgets
@@ -94,6 +94,20 @@ def artifacts(steps=("ros", "playoff-odds", "model", "board", "usage")) -> list:
                     "stale": bool(ts and budgets.get(step)
                                   and time.time() - ts > budgets[step])})
     return out
+
+
+def money(text: str) -> str:
+    """Escape bare dollar signs so Streamlit stops eating them as LaTeX.
+
+    Streamlit's markdown treats `$...$` as a maths span, so any sentence with
+    two dollar amounts in it gets the text between them italicised and the
+    dollars deleted. The FAAB quote narrative is exactly that shape --
+    "P(win) 25% at $1 via opponent model; a dollar is priced at 0.38 lineup
+    pts; reservation $12" rendered as "at 1*viaopponentmodel*; ... reservation
+    12", which is unreadable and, worse, silently changes the numbers a reader
+    is trying to check.
+    """
+    return (text or "").replace("$", r"\$")
 
 
 def trace_block(st, text: str) -> None:

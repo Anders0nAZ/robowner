@@ -10,7 +10,10 @@ from robo import expected, roles, ui
 st.title("Roles")
 ui.gate_banner(st)
 st.caption("The historical absorption fit and the current position rooms saved in "
-           "the authoritative rest-of-season table. No depth-chart ranks are used.")
+           "the authoritative rest-of-season table. Rank comes from projected "
+           "opportunity; Sleeper's depth chart is used for one thing only — "
+           "placing a man the season forecast omits entirely — and never to "
+           "decide who holds the lead role. Those rows are marked.")
 
 
 @st.cache_data(ttl=600, show_spinner=False)
@@ -96,13 +99,25 @@ st.caption(f"Saved in data/expected.json {ui.fmt_age(table.get('computed'))}; "
 st.dataframe(pd.DataFrame([{
     "rank": p.get("rank"), "player": p.get("name"),
     "share": f"{float(p.get('share') or 0):.1%}",
-    "lead": p.get("lead_of") or "holds lead role",
+    # A 0.0% share next to a real `absorbs` looks like a bug unless the reader
+    # is told the slot is a depth-chart placement rather than a forecast.
+    # A man with no rank is not IN the room -- the season file forecasts him
+    # nothing and Sleeper lists him nowhere on the chart. Rendering him as
+    # "projected opportunity / holds lead role" claimed the two strongest
+    # things on the row about the one player the model knows least about.
+    "slot from": ("not in the room" if p.get("rank") is None else
+                  f"depth chart (listed {p['from_depth_chart']})"
+                  if p.get("from_depth_chart") else "projected opportunity"),
+    "lead": ("—" if p.get("rank") is None
+             else p.get("lead_of") or "holds lead role"),
     "absorbs": f"{float(p.get('absorbs') or 0):.1%}",
     "ROS": p.get("ros"), "eligible week": p.get("eligible_week"),
 } for p in room]), use_container_width=True, hide_index=True,
     column_config={
         "ROS": st.column_config.NumberColumn(format="%.1f"),
     })
+st.caption("`absorbs` is a share of the LEAD's vacated work, not of the man one "
+           "rung up — from rank 3 down those are different people.")
 
 with st.expander("Raw fitted evidence"):
     st.json(fit, expanded=False)

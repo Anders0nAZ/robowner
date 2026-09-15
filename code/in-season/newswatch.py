@@ -849,7 +849,7 @@ def rebuild_and_move(affected: set[str], apply: bool,
     export_ok, export = cascade.export_week(week)
     model = refresh.pull_model() if export_ok else "kept prior model"
     ex = expected.build(league_id=LEAGUE_ID_2026)
-    _write(expected.CACHE, ex)
+    expected.save(ex)
     pre_expected = pre_expected or {"players": {}, "weights": ex.get("weights") or {}}
     deltas = event_deltas(pre_expected, ex, affected, events or [])
     # expected.json is the roster engine. ros.json is the slower legacy/public

@@ -126,12 +126,15 @@ def refresh_buzz():
 def capture_projections():
     """One snapshot a day of every remaining week, and of the season file.
 
-    Evidence, not input: nothing reads these. They exist to settle whether
-    Sleeper reprices FUTURE weeks on news, which ros.py currently assumes at
-    half strength because it has never been observable -- and to time how long
-    the season projection trails a roster event, which is the window a
-    valuation built on that file cannot see across. Runs after `projections`,
-    which is the file it reads. See robo/projarchive.py.
+    Evidence, not input: nothing reads these. They settled whether Sleeper
+    reprices FUTURE weeks on news -- it does not, measured 15 Sep 2026 by
+    bracketing a dated multi-week absence between two captures; the man stayed
+    projected for weeks he cannot play. No dial rides on that any more
+    (ros.NEWS_APPLY_FUTURE is gone), but the answer is why expected.py's
+    availability ramp is the only thing applying an absence forward. They also
+    time how long the season projection trails a roster event, which is the
+    window a valuation built on that file cannot see across. Runs after
+    `projections`, which is the file it reads. See robo/projarchive.py.
     """
     from robo import projarchive
     snap = projarchive.capture()
@@ -213,7 +216,7 @@ def rebuild_expected():
     import json as _json
     from robo import expected
     d = expected.build()
-    expected.CACHE.write_text(_json.dumps(d), encoding="utf-8")
+    expected.save(d)
     dated = sum(1 for r in d["players"].values() if r.get("scout_return"))
     return f"{len(d['players'])} players, {dated} carrying a reported return"
 

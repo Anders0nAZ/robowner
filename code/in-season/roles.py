@@ -600,6 +600,26 @@ def _projected_rooms() -> dict:
     changed teams, which is precisely the cold start; and it is CURRENT BY
     CONSTRUCTION, which the nflverse rooms are not -- theirs are last season's
     rosters, so Arizona's still contains Kyler Murray, who plays for Minnesota.
+
+    WHERE THAT ARGUMENT RUNS OUT: `opp <= 0` DROPS A MAN ENTIRELY, and absence
+    is worse than a formality. Seattle's season file carries Drew Lock as
+    `{'pts': 0, 'vol': {}}` -- no projected attempts at all, because in August he
+    was nobody's starter -- while giving the QB3 a line. So the room read
+    {Darnold, Milroe} with the actual backup missing, Milroe collected the rank-2
+    absorption curve (0.840 against 0.05 at rank 3), and a Darnold absence paid
+    the third-stringer. The continuity argument above is exactly what fails at
+    zero: there is no cliff to fall off only if you are standing on the curve.
+
+    So the depth chart is consulted for ONE thing -- placing men the projection
+    omits -- and never for who owns the job. THE OPPORTUNITY LEADER KEEPS RANK 1
+    UNCONDITIONALLY. That is not deference to the old argument, it is a measured
+    necessity: Sleeper moved Lock from depth_chart_order 2 to 1 within hours of
+    Darnold being ruled out, so the chart tracks WHO STARTS THIS WEEK, not who
+    holds the job. Ranking on it would have made Lock the lead and Darnold --
+    who returns in week 6-8 and is still projected 478 attempts -- his
+    successor, inheriting from the man he is standing in for. Inserted men are
+    ordered among themselves and against the rest of the tail by the chart,
+    which is the one question a depth chart does answer: who is next in line.
     """
     from robo import rankings
     out: dict = {}
@@ -618,11 +638,53 @@ def _projected_rooms() -> dict:
             {"player_id": pid, "name": f"{p.get('first_name')} {p.get('last_name')}",
              "opp": round(opp, 1)})
     for room in out.values():
-        total = sum(m["opp"] for m in room) or 1.0
         room.sort(key=lambda m: (-m["opp"], m["player_id"]))
+    _merge_depth_chart(out)
+    for room in out.values():
+        total = sum(m["opp"] for m in room) or 1.0
         for i, m in enumerate(room, 1):
             m["rank"], m["share"] = i, round(m["opp"] / total, 4)
     return out
+
+
+def _merge_depth_chart(rooms: dict) -> None:
+    """Place men the season projection omits, below the opportunity leader.
+
+    In place, and only ever ADDITIVE: nobody already in a room moves above
+    anyone else already in it, and rank 1 is untouchable -- see the docstring
+    above for why the chart cannot be trusted with that question.
+
+    An inserted man carries `opp` 0.0 and therefore `share` 0.0, which is
+    honest: we are claiming he is next in line, not that anyone forecasts him
+    touches. `absorption()` keys off RANK, so that is all the inheritance
+    machinery needs, and a reader can tell an inserted man from a projected one
+    by the zero.
+    """
+    from robo import sleeper_read as api
+    chart: dict = {}
+    for pid, p in (api.players() or {}).items():
+        order, tm = p.get("depth_chart_order"), p.get("team")
+        pos = p.get("position")
+        if order and tm and pos in PROJ_OPPORTUNITY:
+            chart.setdefault((tm, pos), []).append((int(order), str(pid),
+                                                    p.get("full_name") or str(pid)))
+    for key, room in rooms.items():
+        listed = {m["player_id"] for m in room}
+        missing = sorted(e for e in chart.get(key, []) if e[1] not in listed)
+        if not missing:
+            continue
+        lead, tail = room[:1], room[1:]
+        for order, pid, name in missing:
+            at = len(tail)
+            for i, m in enumerate(tail):
+                theirs = next((o for o, q, _ in chart.get(key, []) if q == m["player_id"]),
+                              None)
+                if theirs is None or theirs > order:
+                    at = i
+                    break
+            tail.insert(at, {"player_id": pid, "name": name, "opp": 0.0,
+                             "from_depth_chart": order})
+        room[:] = lead + tail
 
 
 @lru_cache(maxsize=32)
@@ -713,14 +775,25 @@ def projected_role(sleeper_id: str, team: str, pos: str,
         record.update({"absorb_why": why, "miss_rate": miss_rate(pos),
                        "cell": ((load_fit().get("curve") or {}).get(pos)
                                 or {}).get(str(me["rank"]))})
+    # SAY WHERE THE SLOT CAME FROM. A man placed by _merge_depth_chart carries
+    # no projected opportunity at all, so the default sentence reads "projected
+    # 0% of the SEA QB room (0 opportunities)" for the player the whole
+    # inheritance is riding on. That is true and useless. The reader needs to
+    # know the rank is a depth-chart placement, because it is the one number
+    # here that did not come from the forecast.
+    dc = me.get("from_depth_chart")
     base.update({"rank": me["rank"], "share": me["share"],
                  "ahead_of": ahead["name"] if ahead else None,
                  "ahead_id": ahead["player_id"] if ahead else None,
                  "lead_of": lead["name"] if lead and lead is not me else None,
                  "lead_id": lead["player_id"] if lead and lead is not me else None,
                  "absorbs": round(frac, 4),
-                 "why": f"projected {me['share']:.0%} of the {tm} {pos} room "
-                        f"({me['opp']:g} opportunities); {why}"})
+                 "from_depth_chart": dc,
+                 "why": (f"no projected {tm} {pos} opportunity; placed at rank "
+                         f"{me['rank']} from Sleeper's depth chart (listed "
+                         f"{dc}); {why}" if dc else
+                         f"projected {me['share']:.0%} of the {tm} {pos} room "
+                         f"({me['opp']:g} opportunities); {why}")})
     return base
 
 
