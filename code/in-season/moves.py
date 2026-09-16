@@ -143,7 +143,7 @@ NEWS_SIMS = 48
 # The event path rebuilds immediately before it evaluates, so fifteen minutes
 # is already generous there.  Scheduled ROS has two hand-offs: Wednesday's free
 # pass follows the 09:00 cascade by about half an hour, while Tuesday claims
-# follow the 16:00 cascade by four hours.  The ten-minute watcher rebuilds on
+# follow the 16:00 cascade by four hours.  The news pulse rebuilds on
 # meaningful intervening news.  Six hours therefore covers both quiet hand-offs
 # while still refusing a prior-day valuation.  These are freshness controls,
 # not tuning knobs for how readily the bot makes a move.
@@ -1954,7 +1954,7 @@ def maintain_pending_claims(apply: bool = False,
                             reason: str = "roster-state check") -> dict:
     """Cheap no-op while state is unchanged; full reslate when it is not.
 
-    The ten-minute watcher and successful roster/lineup/IR writes call this.
+    The news pulse and successful roster/lineup/IR writes call this.
     Monday preserves the existing guard: provably unsafe owned claims may be
     cancelled, but no new waiver transaction is submitted.
     """
@@ -2202,14 +2202,11 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
         print(f"  ** WAIVER PORTFOLIO BLOCKED: {rec['blocked']}")
     if rec.get("error"):
         print(f"  ** WAIVER PORTFOLIO FAILED: {rec['error']}")
-    if rec.get("applied"):
-        adds = [s.get("add_name") or s["add_id"] for s in desired]
-        _record("waiver", "Waiver portfolio revised",
-                f"Queued {len(desired)} claim(s): " + ", ".join(adds) + ".",
-                f"Reconciled the complete pending portfolio from the live roster; "
-                f"worst-case exposure ${ctx.get('_claim_exposure', 0)}.",
-                {"claims": desired, "cancelled": rec.get("cancelled") or [],
-                 "week": ctx["week"], "fingerprint": fp})
+    # Pending claims are deliberately absent from the PUBLIC decision log.
+    # Publishing this ladder here exposed both targets and exact bids before
+    # waivers ran. waiver_manager retains the full local audit and publishes
+    # the confirmed outcomes only after every claim in the submitted batch has
+    # left Sleeper's pending queue. Replaced/cancelled claims are never public.
     return out
 
 

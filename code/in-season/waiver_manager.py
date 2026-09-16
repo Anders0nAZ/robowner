@@ -11,6 +11,7 @@ from __future__ import annotations
 import hashlib
 import json
 import time
+from collections import defaultdict
 from pathlib import Path
 
 from robo import DATA, LEAGUE_ID_2026
@@ -160,7 +161,9 @@ def _refresh_missing(doc: dict, pending_by_id: dict[str, dict],
             continue
         saved = doc["active"].pop(txid)
         result = _settled_status(txid, league_id, roster_id, week)
-        row = {**saved, "transaction_id": txid, "result": result,
+        row = {**saved, "transaction_id": txid,
+               "batch_id": saved.get("batch_id") or f"legacy:{txid}",
+               "week": saved.get("week", week), "result": result,
                "left_pending_at": time.time()}
         doc.setdefault("history", []).append(row)
         settled.append(row)
@@ -168,12 +171,121 @@ def _refresh_missing(doc: dict, pending_by_id: dict[str, dict],
     return settled
 
 
+def _refresh_unresolved(doc: dict, league_id: str, roster_id: int,
+                        week: int) -> bool:
+    """Retry outcome lookup when pending disappeared before history caught up."""
+    changed = False
+    for row in doc.get("history") or []:
+        result = row.get("result") or {}
+        if result.get("status") != "unresolved":
+            continue
+        refreshed = _settled_status(str(row.get("transaction_id")), league_id,
+                                    roster_id, int(row.get("week") or week))
+        if refreshed.get("status") != "unresolved":
+            row["result"] = refreshed
+            changed = True
+    return changed
+
+
+def _publication_key(batch_id: str) -> str:
+    return f"waiver-settlement:{batch_id}"
+
+
+def _record_settlement(batch_id: str, rows: list[dict]) -> None:
+    """Publish one batch only after Sleeper has confirmed every outcome.
+
+    The deterministic key makes the operation retry-safe if the process dies
+    after decisions.record() writes its local entry but before this module can
+    mark the lifecycle rows published.
+    """
+    from robo import decisions
+
+    key = _publication_key(batch_id)
+    if any((entry.get("data") or {}).get("publication_key") == key
+           for entry in decisions._load()):
+        return
+
+    completed = [row for row in rows
+                 if (row.get("result") or {}).get("status") == "completed"]
+    unsuccessful = [row for row in rows if row not in completed]
+
+    def name(spec: dict, side: str) -> str:
+        return str(spec.get(f"{side}_name") or spec.get(f"{side}_id") or
+                   "open roster spot")
+
+    wins = []
+    for row in completed:
+        spec = row.get("spec") or {}
+        phrase = f"Claimed {name(spec, 'add')} for ${int(spec.get('bid') or 0)}"
+        if spec.get("drop_id") is not None:
+            phrase += f", dropping {name(spec, 'drop')}"
+        wins.append(phrase + ".")
+    misses = []
+    for row in unsuccessful:
+        spec = row.get("spec") or {}
+        status = (row.get("result") or {}).get("status") or "unknown"
+        misses.append(f"{name(spec, 'add')} (${int(spec.get('bid') or 0)}, {status})")
+
+    if wins:
+        decision = " ".join(wins)
+        if misses:
+            decision += " Unsuccessful: " + ", ".join(misses) + "."
+    else:
+        decision = "No claims cleared. Unsuccessful: " + ", ".join(misses) + "."
+
+    public_rows = []
+    for row in rows:
+        spec = row.get("spec") or {}
+        public_rows.append({
+            "transaction_id": row.get("transaction_id"),
+            "status": (row.get("result") or {}).get("status"),
+            "add": name(spec, "add"), "drop": name(spec, "drop"),
+            "bid": int(spec.get("bid") or 0), "gain": spec.get("gain"),
+            "source": row.get("source"),
+        })
+    decisions.record(
+        "waiver", "Waivers settled", decision,
+        "Sleeper confirmed the outcomes; claim targets and bids stayed private "
+        "while the portfolio was pending.",
+        data={"publication_key": key, "week": rows[0].get("week"),
+              "claims": public_rows})
+
+
+def _publish_ready(doc: dict) -> bool:
+    """Publish terminal batches; return whether lifecycle state changed."""
+    active_batches = {str(row.get("batch_id"))
+                      for row in (doc.get("active") or {}).values()
+                      if row.get("batch_id")}
+    batches = defaultdict(list)
+    for row in doc.get("history") or []:
+        batch_id = row.get("batch_id")
+        result = row.get("result") or {}
+        if (not batch_id or row.get("published_at")
+                or result.get("status") == "cancelled"):
+            continue
+        batches[str(batch_id)].append(row)
+
+    changed = False
+    for batch_id, rows in batches.items():
+        statuses = {(row.get("result") or {}).get("status") for row in rows}
+        if (batch_id in active_batches
+                or statuses & {None, "pending", "unknown", "unresolved"}):
+            continue
+        _record_settlement(batch_id, rows)
+        published_at = time.time()
+        for row in rows:
+            row["published_at"] = published_at
+            row["publication_key"] = _publication_key(batch_id)
+        changed = True
+    return changed
+
+
 def _valuation_vintage(ctx: dict) -> str | None:
     """The valuation this context is priced on.
 
     `moves._context` fills `_expected_table` LAZILY, so the same live facts
     fingerprint differently depending on whether pricing has run yet. The
-    submitting caller has priced; the ten-minute maintenance check has not, so
+    submitting caller has priced; the per-pulse maintenance check has not, so
     the two could never agree and the cheap "nothing changed" path -- the whole
     reason the check is cheap -- never fired. Resolve the vintage the same way
     from either side.
@@ -228,8 +340,13 @@ def inspect(league_id: str, roster_id: int, week: int) -> dict:
     # An id recorded in the manifest with a different live payload is not
     # ownership. Treat it exactly like any other foreign/manual claim.
     foreign = [row for txid, row in by_id.items() if txid not in matched_ids]
-    if settled:
+    resolved = _refresh_unresolved(doc, league_id, roster_id, week)
+    if settled or resolved:
         _write(doc)
+    published = _publish_ready(doc)
+    if published:
+        _write(doc)
+    if settled:
         for row in settled:
             _event("settled", transaction_id=row["transaction_id"],
                    result=row.get("result"), spec=row.get("spec"))
@@ -266,7 +383,8 @@ def _cancel(txid: str, saved: dict, doc: dict, league_id: str,
 
 
 def _submit(spec: dict, roster_id: int, league_id: str, source: str,
-            fingerprint: str, doc: dict) -> dict:
+            fingerprint: str, doc: dict, batch_id: str | None = None,
+            week: int | None = None) -> dict:
     from robo import sleeper_write as sw
     before = {str(x["transaction_id"])
               for x in sw.pending_waiver_claims(roster_id, league_id)}
@@ -281,7 +399,8 @@ def _submit(spec: dict, roster_id: int, league_id: str, source: str,
         raise RuntimeError(f"Sleeper reused pre-existing transaction_id {txid}")
     saved = {"transaction_id": txid, "leg": int(row.get("leg") or 0),
              "source": source, "fingerprint": fingerprint,
-             "submitted_at": time.time(), "spec": spec}
+             "submitted_at": time.time(), "spec": spec,
+             "batch_id": batch_id or f"legacy:{txid}", "week": week}
     doc.setdefault("active", {})[txid] = saved
     doc["last_fingerprint"] = fingerprint
     _write(doc)  # persist ownership before another write can happen
@@ -373,6 +492,7 @@ def reconcile(desired: list[dict], *, league_id: str, roster_id: int,
                  if txid in snap["pending_by_id"]]
     old_ids = {str(x["transaction_id"]) for x in old_saved}
     new_ids = []
+    batch_id = f"{int(week)}:{time.time_ns()}"
     try:
         for saved in sorted(old_saved,
                             key=lambda x: (x.get("spec") or {}).get("submit_order", 0)):
@@ -381,7 +501,8 @@ def reconcile(desired: list[dict], *, league_id: str, roster_id: int,
                     "portfolio replaced")
             result["cancelled"].append(txid)
         for spec in desired:
-            saved = _submit(spec, roster_id, league_id, source, fingerprint, doc)
+            saved = _submit(spec, roster_id, league_id, source, fingerprint, doc,
+                            batch_id=batch_id, week=week)
             new_ids.append(saved["transaction_id"])
             result["submitted"].append(saved)
         result["applied"] = True
@@ -440,7 +561,9 @@ def reconcile(desired: list[dict], *, league_id: str, roster_id: int,
                     continue
                 try:
                     restored = _submit(normalize_spec(saved["spec"]), roster_id,
-                                       league_id, "rollback", start_fp, doc)
+                                       league_id, "rollback", start_fp, doc,
+                                       batch_id=saved.get("batch_id"),
+                                       week=saved.get("week", week))
                     result["restored"].append(restored)
                 except Exception as restore_exc:
                     result.setdefault("rollback_errors", []).append(str(restore_exc))

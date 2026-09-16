@@ -225,7 +225,7 @@ def game_pause_reason(week: int | None = None, now: float | None = None) -> str:
     Sleeper's game status is the same source used to lock lineup players. A
     clock-derived approximation would either keep firing after an early final
     or resume during overtime. If the schedule cannot be read, fail closed:
-    the next ten-minute run can try again without mutating valuation state.
+    the next scheduled run can try again without mutating valuation state.
     """
     week = week if week is not None else season.current_week()
     try:
@@ -783,7 +783,7 @@ def update_timing(events: list[dict], affected: set[str], rows: dict, week: int,
     # A Monday feed can move hundreds of rows together. Deterministic timing is
     # applied above in the same run; model-read timing is advisory only and must
     # not delay the valuation/action cascade, so the rest is handed to
-    # robo.scout_queue and drained four players at a time on later polls.
+    # robo.scout_queue and drained one bounded batch per later poll.
     #
     # NOTHING IS GATHERED HERE. Building a corpus costs a Sleeper read per
     # player, which is the whole reason this work is deferred -- paying two
@@ -1139,8 +1139,8 @@ def main():
             return
         from robo.runlock import DecisionRun, RunBusy
         try:
-            # Never wait behind a scheduled cascade. The pulse is retried in
-            # ten minutes; the lineup run has a kickoff deadline.
+            # Never wait behind a scheduled cascade. The pulse is retried on
+            # its own interval; the lineup run has a kickoff deadline.
             with DecisionRun("news pulse"):
                 try:
                     poll(apply=not a.dry_run)

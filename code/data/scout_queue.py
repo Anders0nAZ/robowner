@@ -2,12 +2,12 @@
 
 THE QUEUE HOLDS IDS, NOT BUNDLES. A bundle costs about a second to build --
 almost all of it one Sleeper news read per player -- so the news pulse cannot
-afford to build two hundred of them to decide that four are worth a model. It
-enqueues the ids it noticed and the corpus is gathered four at a time inside
+afford to build two hundred of them to decide which few are worth a model. It
+enqueues the ids it noticed and the corpus is gathered one batch at a time inside
 drain(), which also means a batch always judges the reporting as it stands when
 the model actually reads it rather than as it stood when somebody queued it.
 
-ONE QUEUE, THREE PRODUCERS. The ten-minute news pulse, the decision cascade and
+ONE QUEUE, THREE PRODUCERS. The twenty-minute news pulse, the decision cascade and
 the daily refresh all defer their prose work here. They had two separate queues
 for a day: the pulse kept its own pending list in news_watch.json with no retry
 budget and no way to say a player had failed three times, while the cascade and
@@ -38,8 +38,9 @@ SCHEMA = 2
 BATCH_SIZE = 8
 # A FLOOR UNDER THE PACE, NOT THE GOVERNOR OF IT. This sat at ten minutes with
 # no comment, which made it look like a considered GPU budget. It was not: ten
-# minutes is RobonerNewsWatch's own repeat interval, and the real rate has
-# always been how often anything CALLS drain() -- once per pulse -- not this.
+# minutes was RobonerNewsWatch's own repeat interval at the time (twenty since
+# 15 Sep 2026), and the real rate has always been how often anything CALLS
+# drain() -- once per pulse -- not this.
 #
 # What it is not protecting, all measured:
 #   * Model-load contention. VRAMMonitor's estimate_cost_mb returns 0 for a
@@ -150,7 +151,7 @@ def _place(doc: dict, pid: str, name: str, cat: str, fingerprint: str | None,
         # priority, but it does NOT create a second item or send this one back
         # to the end of the line: the corpus is gathered fresh at drain time, so
         # re-queuing cannot make the reading any newer, and resetting `attempts`
-        # every ten minutes would mean a player who fails forever never reaches
+        # on every pulse would mean a player who fails forever never reaches
         # the attention list.
         changed = bool(fingerprint) and fingerprint != old.get("fingerprint")
         if priority < int(old.get("priority", 99)):
@@ -270,8 +271,8 @@ def drain(now: float | None = None, timeout: int = 120,
     The rate limit counts MODEL calls, not calls to this function: a batch that
     turns out to need no judging -- everyone in it has dropped out of the
     decision pool, or nobody's reporting has moved since his last verdict -- has
-    not spent the resource the limit protects, and making it wait ten minutes
-    would stall a queue for work that costs nothing.
+    not spent the resource the limit protects, and making it wait out the
+    interval would stall a queue for work that costs nothing.
     """
     from robo import scout
     now = time.time() if now is None else float(now)
@@ -336,7 +337,7 @@ def drain(now: float | None = None, timeout: int = 120,
             # A dead model is the common case here -- Ollama restarting, or a
             # batch past its timeout. Back the whole batch off on the retry
             # ladder rather than letting the exception out, where the caller
-            # would record an error and then ask again in ten minutes forever.
+            # would record an error and then ask again on every pulse forever.
             why = f"{type(e).__name__}: {str(e)[:120]}"
             stalled = []
             for b in todo:

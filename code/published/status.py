@@ -427,7 +427,10 @@ SOURCES = [
     ("model",       "Roboner NFL model projections", 30 * 3600, "RobonerRefresh"),
     ("model-horizon", "NFL model projection horizon", 30 * 3600,
      "RobonerModelCaptureDaily"),
-    ("news-watch",  "Injury watcher", 25 * 60, "RobonerNewsWatch"),
+    # TWO MISSED PULSES PLUS SLACK, so this has to move whenever the task's
+    # repeat interval does. At 25 minutes against a 20-minute pulse -- it was
+    # sized for the old 10 -- a single late run reported the watcher stale.
+    ("news-watch",  "Injury watcher", 50 * 60, "RobonerNewsWatch"),
     # THE VALUATION THE BOT DECIDES ON. Six hours, matching
     # moves.ROS_VALUE_MAX_AGE, because that is the age at which the ordinary
     # channel stops accepting a candidate priced off this file -- the same rule
@@ -711,7 +714,7 @@ def ingests() -> list:
             ts = mark_ts or entry.get("last_ok")
             status, why = _age_verdict(ts, max_age)
         # Some marked artifacts have more than one legitimate producer. The
-        # ten-minute watcher, for example, refreshes the validated ESPN cache
+        # news pulse, for example, refreshes the validated ESPN cache
         # after the daily pipeline may have failed. A newer internal marker is
         # therefore evidence of recovery even when refresh.log has no later OK.
         recovered_at = max(entry.get("last_ok") or 0,

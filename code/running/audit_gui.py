@@ -1,4 +1,4 @@
-"""Roboner audit — deep-dive the modules and the decisions.
+"""Roboner audit — follow a decision front to back.
 
 Local only. Run it with AuditGUI.bat, or:
 
@@ -9,10 +9,18 @@ statement about what it will and will not let a human change. This one changes
 nothing at all: it reads what the bot computed and explains how. Keeping them
 apart keeps both descriptions true.
 
-WHAT IT IS FOR. robo/value.py currently has VALUATION_READY on and
-SUBMIT_ENABLED off -- the numbers are real and nothing is being sent -- pending
-a module-by-module review. Before this, the only way to interrogate a number was
-`python -m robo.ros --explain`. This is that review's tool.
+WHY FOUR PAGES AND NOT SIX. The app used to have one page per MODULE, which
+meant the sidebar listed the stages of a single pipeline as though they were
+alternatives, and one waiver claim was split across two of them -- the claim
+and its drop on one page, the bid that priced it on another, reading the same
+record through the same dropdown. The pages now follow the question instead:
+what would it do NOW, why did it DECIDE that, what is a PLAYER worth, and how
+was the machinery CALIBRATED. The trigger that started a run -- the clock or
+the news -- is a badge on the timeline, not a page of its own, because it does
+not change what the run did.
+
+THIS FILE IS THE ROUTER. It owns the page registry so the sidebar reads in
+plain words; the pages themselves live in pages/.
 
 UNREDACTED. The local counterpart to status.report(): full paths, the complete
 model anchor, a scout verdict's reason. An audit tool that hides its inputs
@@ -22,63 +30,18 @@ published. Nothing here writes to decision-log/ or calls decisions.publish().
 
 import streamlit as st
 
-from robo import ui
-
 st.set_page_config(page_title="Roboner audit", page_icon="🔍", layout="wide")
 
-st.title("🔍 Roboner audit")
-st.caption("What the bot computed, and how. Read-only — nothing on these pages "
-           "changes a setting or sends anything to Sleeper.")
-
-ui.gate_banner(st)
-
-st.subheader("The artifacts these pages read")
-rows = ui.artifacts()
-cols = st.columns(len(rows))
-for c, r in zip(cols, rows):
-    with c:
-        st.metric(r["label"], r["age"],
-                  delta="stale" if r["stale"] else None,
-                  delta_color="inverse" if r["stale"] else "off")
-        st.caption(r["detail"] or "—")
-
-st.divider()
-
-left, right = st.columns(2)
-with left:
-    st.subheader("Player value and event decisions")
-    st.markdown(
-        "**Rest of season** — every player's value from this week to the end, "
-        "and a per-player traceback that walks the calculation forward: what "
-        "each remaining week is worth and why, where each week's rate came "
-        "from, how news is applied, and the full inheritance chain behind the "
-        "`upside` term. The board also shows adjusted day-over-day and "
-        "week-over-week changes. **Value movers** ranks the largest changes "
-        "without counting completed games as losses.\n\n"
-        "The number a page shows is the one from `data/expected.json` — what the bot "
-        "actually acted on — not a fresh computation that might disagree with "
-        "it. Kickers and team defences are the exception and still come from "
-        "`ros.json`, because `expected.py` models neither.\n\n"
-        "**News pulse** — every event-triggered rebuild as an immutable cascade: "
-        "what fired, which room was expanded, exact before/after values, causal "
-        "admission, every candidate and coverage-safe drop check, the apples-to-apples "
-        "comparison, and whether anything could or did reach Sleeper.")
-with right:
-    st.subheader("Scheduled moves and role evidence")
-    st.markdown(
-        "**Ordinary moves** — the ordered free-agent then waiver evaluation, "
-        "including what cleared, every roster exclusion and its reason, the "
-        "construction controls, and the candidate board with its exact margins "
-        "above or below the noise and policy bars.\n\n"
-        "**FAAB** — the whole objective curve behind every selected bid, the "
-        "near-optimal band, FAAB shadow price, predicted rival distribution, "
-        "and its historical holdout check.\n\n"
-        "**Roles** — the fitted absorption curve and takeover rates with sample "
-        "sizes, plus the current saved position room for any team. Thin cells "
-        "show the pooled value the model actually uses.")
-
-st.divider()
-st.caption("Settings live in the admin panel on port 8502. This app has no "
-           "field that changes the bot's behaviour, including the submit gate — "
-           "that is a constant in `robo/value.py`, kept out of the settings "
-           "registry so turning the bot loose on the roster takes a commit.")
+# url_path is pinned rather than derived from the filename, because the Now
+# page deep-links into a specific decision with `Decisions?run=<fingerprint>`.
+# A path that moved when a file was renumbered would break that link silently.
+st.navigation([
+    st.Page("pages/0_Now.py", title="Now", icon="🔍",
+            url_path="Now", default=True),
+    st.Page("pages/1_Decisions.py", title="Decisions", icon="🧾",
+            url_path="Decisions"),
+    st.Page("pages/2_Players.py", title="Players", icon="📈",
+            url_path="Players"),
+    st.Page("pages/3_Calibration.py", title="Calibration", icon="🔧",
+            url_path="Calibration"),
+]).run()

@@ -441,13 +441,13 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 # ONE MINUTE, NOT THIRTY. The machine-wide default is
                 # OLLAMA_KEEP_ALIVE=30s and a per-request value overrides it,
                 # so this line alone is what pinned 17.7GB of VRAM around the
-                # clock: a batch every ten minutes re-armed a thirty-minute
+                # clock: a batch every pulse re-armed a thirty-minute
                 # hold, and the timer could never expire.
                 #
                 # A minute still bridges a continuous drain, where the gap
                 # between one batch's model call and the next is only the
                 # corpus gather -- about a second a player. Between the
-                # ten-minute pulses it deliberately does NOT bridge: the model
+                # pulses it deliberately does NOT bridge: the model
                 # unloads and the next batch reloads it, which is the point.
                 # That reload also puts scout back through VRAMMonitor's
                 # admission gate instead of sailing past it at cost 0, so a

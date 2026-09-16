@@ -110,14 +110,27 @@ def archive(table: dict, history: Path | None = None) -> Path | None:
     return path
 
 
-def baseline(current: dict, days: int, history: Path | None = None) -> dict | None:
-    """Latest snapshot at least ``days`` old and from the same season."""
+def baseline(current: dict, days: int, history: Path | None = None,
+             method: str | None = None) -> dict | None:
+    """Latest snapshot at least ``days`` old and from the same season.
+
+    An OBSERVED snapshot always beats a reconstructed one of the same age.
+    `robo/value_backfill.py` writes reconstructions of vintages that predate
+    this archive, and each knows only one half of a value change -- projection
+    drift or news. They are a floor under the comparison, not a substitute for
+    having been there, so they are only returned when nothing was observed at
+    that age, or when a caller asks for one half by name.
+    """
     target = float(current.get("computed") or 0.0) - days * 86400
     season = str(current.get("season") or "")
     eligible = [d for d in snapshots(history)
                 if float(d.get("computed") or 0.0) <= target
                 and str(d.get("season") or "") == season]
-    return eligible[-1] if eligible else None
+    if method is not None:
+        eligible = [d for d in eligible if d.get("method") == method]
+        return eligible[-1] if eligible else None
+    observed = [d for d in eligible if not d.get("reconstructed")]
+    return (observed or eligible)[-1] if eligible else None
 
 
 def compare(current: dict, prior: dict | None) -> dict[str, dict]:

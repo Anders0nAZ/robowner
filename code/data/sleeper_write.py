@@ -10,8 +10,11 @@ The waiver bid encoding is verified live. Pending claims are read through
 GraphQL because the public REST transaction feed contains settled transactions,
 not the pending queue that has to be reconciled before settlement.
 
-NOTE: every write here should be paired with a robo.decisions.record() call
-by the caller — league rule: all Robowner actions are publicly logged.
+NOTE: every write here should be paired with a robo.decisions.record() call by
+the caller — league rule: all Robowner actions are publicly logged. Waiver
+submissions are the exception in timing: their local lifecycle record is
+immediate, but the public decision waits until settlement so the league cannot
+see targets or bids while claims are pending.
 """
 
 import json

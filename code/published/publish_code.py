@@ -81,8 +81,8 @@ CATEGORIES = [
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
      ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
-      "audit_gui", "ui", "1_Rest_of_season", "2_Value_movers", "3_News_pulse",
-      "4_Ordinary_moves", "5_FAAB", "6_Roles"]),
+      "audit_gui", "ui", "decision_audit", "narrate", "evidence",
+      "value_backfill", "0_Now", "1_Decisions", "2_Players", "3_Calibration"]),
 ]
 
 
