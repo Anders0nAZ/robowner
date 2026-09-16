@@ -100,10 +100,21 @@ def ingest_sleeper_chat() -> int:
 
 # ------------------------------------------------------------------ search
 
+# ABOVE THE VRAM GATE'S HOLD, not equal to it. The gate on :11434 queues a
+# request that would not fit in VRAM and fails open after MAX_HOLD_SECONDS =
+# 120, which its own comment sizes "under the historian 240s timeout". This was
+# 120: the client gave up at the exact instant the gate would have released it,
+# so any embed that arrived while the GPU was busy lost the race by
+# construction. chat-memory failed on five of the last seven daily refreshes
+# with a 120s read timeout, and it was the one check standing between the
+# preflight and a clean run.
+EMBED_TIMEOUT_S = 240
+
+
 def _embed(texts: list[str], prefix: str) -> list[list[float]]:
     r = requests.post(f"{OLLAMA}/api/embed",
                       json={"model": EMBED_MODEL, "input": [prefix + t for t in texts]},
-                      timeout=120)
+                      timeout=EMBED_TIMEOUT_S)
     r.raise_for_status()
     return r.json()["embeddings"]
 

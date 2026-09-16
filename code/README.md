@@ -55,6 +55,7 @@ Weekly lineups, injured reserve, and the add/drop and waiver machinery. What a p
 | [`value.py`](in-season/value.py) | Rest-of-season player value -- the transaction valuation seam. |
 | [`moves.py`](in-season/moves.py) | Roster moves: free-agent adds and FAAB waiver claims. One policy, two channels. |
 | [`newswatch.py`](in-season/newswatch.py) | Ten-minute injury and opportunity watcher. |
+| [`waiver_manager.py`](in-season/waiver_manager.py) | Own, reconcile, and audit Robowner's pending waiver portfolio. |
 | [`waiver_audit.py`](in-season/waiver_audit.py) | Immutable records of ordinary ROS waiver evaluations. |
 | [`ros.py`](in-season/ros.py) | What a player is worth from here to the end -- the number moves.py was waiting on. |
 | [`expected.py`](in-season/expected.py) | Injury-responsive weekly value for roster management. |

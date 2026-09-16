@@ -25,6 +25,7 @@ python -m robo.lineup [--week N|auto] [--season 2026] [--apply]
 """
 
 import argparse
+from functools import lru_cache
 
 from robo import LEAGUE_ID_2026, model_proj, season, settings
 from robo import sleeper_read as api
@@ -123,59 +124,108 @@ def startable(c: dict) -> bool:
     return c["has_game"] and (c["injury"] or "") not in NEVER_START
 
 
+def slot_weight(c: dict) -> float:
+    """What this player is worth to any slot he is legal in.
+
+    It is a function of the PLAYER and never of the slot, which is half of why
+    optimize() can be greedy. See there.
+    """
+    return (c["pts"] + _FILL
+            - (0.0 if startable(c) else _UNSTARTABLE)
+            + (0.0 if c["injury"] else _HEALTHY_TIEBREAK))
+
+
+@lru_cache(maxsize=8)
+def _tightest_first(slots: tuple) -> tuple:
+    """Slot indices ordered narrowest eligibility first, ties by slot order."""
+    return tuple(sorted(range(len(slots)),
+                        key=lambda i: (len(SLOT_ELIGIBLE[slots[i]]), i)))
+
+
 def optimize(candidates: list[dict],
              pinned: dict[int, dict] | None = None) -> tuple[list, float]:
-    """Best legal assignment of players to SLOTS. Exact, not greedy.
+    """Best legal assignment of players to SLOTS. Greedy, and exact.
 
-    An exact answer is affordable here and a greedy one was not obviously
-    correct: with FLEX and SUPER_FLEX both drawing on the same pool, taking the
-    best receiver for WR2 can be the wrong move if it strands the flex. The
-    space is tiny -- at most 17 players over 10 slots -- so this is a DP over
-    subsets of SLOTS (2^10 = 1024 states), which is exhaustive and still runs
-    in milliseconds.
+    Take the players in descending weight and give each one the TIGHTEST slot
+    still open to him. That is exact here, not an approximation, because of two
+    properties of this league:
+
+      * SLOT_ELIGIBLE is a LAMINAR family -- every pair of eligibility sets is
+        nested or disjoint. {QB}, {RB}, {WR} and {TE} sit inside {RB,WR,TE},
+        which sits inside {QB,RB,WR,TE}; {K} and {DEF} are disjoint singletons.
+      * slot_weight() depends on the player alone, never on where he lands.
+
+    Together those make the legal assignments a transversal matroid, and greedy
+    is exact on a matroid.
+
+    THIS WAS A DP OVER SUBSETS OF SLOTS, rejecting greedy because "taking the
+    best receiver for WR2 can be the wrong move if it strands the flex". That
+    is a true objection to a DIFFERENT algorithm -- walking SLOTS and picking
+    the best player for each. Walking PLAYERS and taking the tightest slot
+    cannot strand a flex: a man only reaches FLEX when every slot that is
+    tighter for him is gone, and whoever took it outranks him.
+
+    The DP's other justification, that 2^10 states is tiny and exhaustive is
+    affordable, was true of ONE call. marginal.price_options makes about 2.7
+    million of them in a single ordinary-move run -- 854 (add, drop) pairs over
+    200 simulated seasons and 16 weeks -- and at 2.45ms each that was 842
+    seconds of a run whose data fetching costs 1.2. This is 9us and returns the
+    same lineup: tests/test_lineup_optimizer.py keeps the DP as an oracle and
+    asserts they agree, slot by slot, including on ties.
+
+    Descending weight already orders exactly as the DP's exploration did --
+    weight folds in the healthy tiebreak and the unstartable penalty -- and
+    player_id breaks what is left, so two runs over one roster cannot publish
+    two different lineups.
 
     `pinned` maps a slot index to a player who cannot be moved out of it,
     because his game has already kicked off.
     """
     pinned = pinned or {}
-    base_mask = 0
-    base_val = 0.0
-    for i, p in pinned.items():
-        base_mask |= 1 << i
-        base_val += p["pts"]
-    # Sorted, not roster-order. Ties are real here -- two players projecting the
-    # same points are genuinely interchangeable between an eligible dedicated
-    # slot and FLEX -- and which one the DP reaches first decides the labelling.
-    # Fixing the exploration order makes that arbitrary-but-harmless choice
-    # STABLE, so the same roster never produces two different published lineups.
-    # Same reasoning as choose_pick's tie ordering in draft_agent.
-    pool = sorted((c for c in candidates
-                   if c["player_id"] not in {p["player_id"] for p in pinned.values()}),
-                  key=lambda c: (-c["pts"], bool(c["injury"]), c["player_id"]))
+    held = {p["player_id"] for p in pinned.values()}
+    pool = sorted((c for c in candidates if c["player_id"] not in held),
+                  key=lambda c: (-slot_weight(c), c["player_id"]))
 
-    full = (1 << len(SLOTS)) - 1
-    # dp[mask] -> (value, {slot_index: player})
-    dp = {base_mask: (base_val, dict(pinned))}
+    order = _tightest_first(tuple(SLOTS))
+    asg = dict(pinned)
     for c in pool:
-        nxt = dict(dp)
-        weight = (c["pts"] + _FILL
-                  - (0.0 if startable(c) else _UNSTARTABLE)
-                  + (0.0 if c["injury"] else _HEALTHY_TIEBREAK))
-        for mask, (val, asg) in dp.items():
-            for i, slot in enumerate(SLOTS):
-                if mask & (1 << i) or c["pos"] not in SLOT_ELIGIBLE[slot]:
-                    continue
-                nm = mask | (1 << i)
-                nv = val + weight
-                if nv > nxt.get(nm, (float("-inf"), None))[0]:
-                    nxt[nm] = (nv, {**asg, i: c})
-        dp = nxt
+        if len(asg) == len(SLOTS):
+            break
+        for i in order:
+            if i not in asg and c["pos"] in SLOT_ELIGIBLE[SLOTS[i]]:
+                asg[i] = c
+                break
 
-    best_mask = max(dp, key=lambda m: dp[m][0])
-    _, asg = dp[best_mask]
     final = [asg.get(i) for i in range(len(SLOTS))]
+    _canonicalise(final, pinned)
     total = round(sum(p["pts"] for p in final if p), 1)
     return final, total
+
+
+def _canonicalise(final: list, pinned: dict) -> None:
+    """Order interchangeable slots by projection, highest first.
+
+    RB1 and RB2 accept exactly the same men, so which of the two a given player
+    lands in carries no meaning -- and run() compares starter_ids to Sleeper's
+    list POSITIONALLY, so an arbitrary swap reads as a changed lineup. It is
+    caught today by MIN_GAIN_TO_CHANGE, since a swap gains 0.0, but resting on
+    that means the published order wobbles whenever something else justifies
+    the write. The old DP made this choice arbitrarily too and said so. Making
+    it by projection costs nothing and gives one answer.
+
+    A pinned slot is skipped: its occupant's game has kicked off and he cannot
+    be moved, which is the whole point of pinning him.
+    """
+    groups: dict[str, list[int]] = {}
+    for i, slot in enumerate(SLOTS):
+        groups.setdefault(slot, []).append(i)
+    for idx in groups.values():
+        if len(idx) < 2 or any(i in pinned for i in idx):
+            continue
+        men = sorted((final[i] for i in idx if final[i]),
+                     key=lambda p: (-p["pts"], p["player_id"]))
+        for i, man in zip(idx, men + [None] * len(idx)):
+            final[i] = man
 
 
 def pin_locked(cands: list[dict], current: list[str]) -> dict[int, dict]:
@@ -345,6 +395,13 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
            data={"starters": starter_ids, "previous": current,
                  "projected": total, "week": week,
                  "source": provenance, "modelled": modelled})
+    try:
+        from robo import moves
+        out["waiver_maintenance"] = moves.maintain_pending_claims(
+            apply=True, league_id=league_id, reason="lineup changed")
+    except Exception as e:
+        out["waiver_maintenance"] = {"status": "failed",
+                                     "error": f"{type(e).__name__}: {e}"}
     if verbose:
         print("applied.")
     return out

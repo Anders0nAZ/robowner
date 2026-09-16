@@ -123,7 +123,7 @@ def remaining_schedule(from_week: int, last_week: int,
 def strength(weeks: list[int], league_id: str = LEAGUE_ID_2026) -> dict:
     """roster_id -> {week: expected points from that week's optimal lineup}.
 
-    Uses lineup.optimize, the same exact DP that sets our own lineup, so a
+    Uses lineup.optimize, the same exact optimizer that sets our own lineup, so a
     team's strength is what it would score if it started its best eleven --
     not the sum of everyone it rosters. A bye week shows up as a real dip
     because the bye players are unstartable and the optimizer leaves the slot

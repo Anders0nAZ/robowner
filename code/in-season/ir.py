@@ -182,6 +182,14 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     record("ir", "Injured reserve updated", "Moved " + ", ".join(moved) + ".",
            why + ".", data={"reserve": p["target"], "previous": p["current"]})
 
+    try:
+        from robo import moves
+        p["waiver_maintenance"] = moves.maintain_pending_claims(
+            apply=True, league_id=league_id, reason="IR roster changed")
+    except Exception as e:
+        p["waiver_maintenance"] = {"status": "failed",
+                                    "error": f"{type(e).__name__}: {e}"}
+
     if verbose:
         print("applied.")
     return p

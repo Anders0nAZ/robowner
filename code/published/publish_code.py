@@ -63,7 +63,7 @@ CATEGORIES = [
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
      ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
-      "newswatch", "waiver_audit",
+      "newswatch", "waiver_manager", "waiver_audit",
       "ros", "expected", "value_history", "returns", "marginal", "roles",
       "playoffs", "streaming", "faab", "faab_field"]),
     ("chat", "Talking",

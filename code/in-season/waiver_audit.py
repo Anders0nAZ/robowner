@@ -10,7 +10,7 @@ from robo import DATA
 
 AUDIT_DIR = DATA / "waiver_events"
 NEWS_STATE = DATA / "news_watch.json"
-SCHEMA = 2
+SCHEMA = 3
 
 
 def _jsonable(value):
@@ -45,6 +45,8 @@ def record(ctx: dict, plans: list[dict], result: dict) -> Path | None:
         market = {"pricing_status": "snapshot unavailable; not used for bid pricing"}
     doc = {"schema": SCHEMA, "at": time.time(), "fingerprint": fingerprint,
            **core, "faab_left": ctx.get("faab"),
+           "worst_case_faab": ctx.get("_claim_exposure", 0),
+           "defence_group_error": ctx.get("_defence_group_error"),
            "hours_to_kickoff": ctx.get("hours_to_kickoff"),
            "sequence_basis": ctx.get("_sequence_basis"),
            "free_plans": ctx.get("_sequence_free_plans") or [],
@@ -60,7 +62,33 @@ def record(ctx: dict, plans: list[dict], result: dict) -> Path | None:
     tmp = path.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(doc, indent=1, default=_jsonable), encoding="utf-8")
     tmp.replace(path)
+    _prune()
     return path
+
+
+# These are ~800KB each and nothing was deleting them. That was survivable
+# while the only writer was the Tuesday slate and the Wednesday move pass --
+# about two a week. The news channel now rebuilds the full ROS portfolio on
+# every pulse that carries an event, so the rate went to one per pulse: 72 a
+# day, 56MB a day, into a directory git is tracking. Retention belongs here
+# either way; a record that grows without bound is not a record, it is a leak.
+KEEP_EVENTS = 200
+
+
+def _prune(keep: int = KEEP_EVENTS) -> int:
+    """Drop the oldest evaluations beyond `keep`. Never raises."""
+    try:
+        paths = sorted(AUDIT_DIR.glob("*.json"), key=lambda p: p.stat().st_mtime)
+    except OSError:
+        return 0
+    dropped = 0
+    for path in paths[:-keep] if len(paths) > keep else []:
+        try:
+            path.unlink()
+            dropped += 1
+        except OSError:
+            continue
+    return dropped
 
 
 def events(limit: int = 100) -> list[dict]:

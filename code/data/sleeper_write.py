@@ -6,12 +6,9 @@ Mutation signatures were pulled from the server's own GraphQL introspection
 end-to-end in a throwaway mock draft: create_draft -> update_draft_status ->
 draft_pick_player -> REST-verified -> update_draft_queue -> delete_draft.
 
-Still unverified live: submit_waiver_claim's k_settings/v_settings ARRAY ENCODING.
-The bid KEY itself is no longer a guess -- "waiver_bid" was read straight off 93
-completed 2025 waiver transactions in this league (30 Aug 2026), so only the
-question of whether the parallel-array form reaches Sleeper's settings blob
-intact is open. A mis-encoded bid reads as 0, which in FAAB loses to any positive
-bid: we lose a player, not the budget.
+The waiver bid encoding is verified live. Pending claims are read through
+GraphQL because the public REST transaction feed contains settled transactions,
+not the pending queue that has to be reconciled before settlement.
 
 NOTE: every write here should be paired with a robo.decisions.record() call
 by the caller — league rule: all Robowner actions are publicly logged.
@@ -177,8 +174,14 @@ def set_draft_queue(draft_id: str, player_ids: list[str]) -> list[str]:
 
 def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
                         league_id: str = LEAGUE_ID_2026) -> dict:
-    """FAAB waiver claim. Signature from introspection; bid key assumed
-    'waiver_bid' — exercise once against a real waiver before trusting."""
+    """Submit one FAAB claim and return its transaction object.
+
+    A no-drop claim sends EMPTY drop arrays, the same as league_create_transaction
+    does for a no-drop free add. Neither shape has been exercised against a live
+    claim and an omitted variable arrives as null, which is the shape a resolver
+    that zips the two arrays without guarding would reject -- so empty is the
+    lower-risk half of a question nothing here can answer.
+    """
     q = f"""
     mutation submit_waiver_claim($k_adds: [String], $v_adds: [Int],
                                  $k_drops: [String], $v_drops: [Int],
@@ -186,7 +189,7 @@ def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
         submit_waiver_claim(league_id: "{league_id}",
             k_adds: $k_adds, v_adds: $v_adds, k_drops: $k_drops, v_drops: $v_drops,
             k_settings: $k_settings, v_settings: $v_settings) {{
-            transaction_id status type settings
+            transaction_id leg status type adds drops settings created
         }}
     }}"""
     v = {
@@ -194,7 +197,104 @@ def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
         "k_drops": list(drops.keys()), "v_drops": list(drops.values()),
         "k_settings": ["waiver_bid"], "v_settings": [bid],
     }
-    return gql("submit_waiver_claim", q, v)
+    return gql("submit_waiver_claim", q, v)["submit_waiver_claim"]
+
+
+def _mine(rows, roster_id: int) -> list[dict]:
+    """Waiver rows belonging to one roster.
+
+    THE SERVER IGNORES `roster_id`. Measured 15 Sep 2026 against the 2025
+    league: the identical query with and without it returned the identical 50
+    rows, spread across eight different rosters. Every consumer here is asking
+    "what does MY roster have outstanding", and the lifecycle controller treats
+    an unrecognised pending claim as foreign and stops automating -- so an
+    unfiltered read would hand it eleven rivals' claims every waiver night and
+    block the bot on all of them. Filter on the field that actually names the
+    roster.
+    """
+    want = int(roster_id)
+
+    def ours(row) -> bool:
+        if want in {int(r) for r in (row.get("roster_ids") or [])}:
+            return True
+        # `roster_ids` absent is the dangerous direction -- a claim of ours read
+        # as somebody else's looks like it left the pending queue, and the
+        # controller would settle it as unresolved and send a duplicate. The
+        # add/drop maps carry the same fact: their VALUES are roster ids.
+        for side in ("adds", "drops"):
+            for rid in (row.get(side) or {}).values():
+                if int(rid) == want:
+                    return True
+        return False
+
+    return [row for row in rows if row.get("type") == "waiver" and ours(row)]
+
+
+def pending_waiver_claims(roster_id: int,
+                          league_id: str = LEAGUE_ID_2026,
+                          limit: int = 500) -> list[dict]:
+    """Authenticated live pending queue for one roster.
+
+    REST is deliberately not used here: a pending claim is invisible there.
+    The transaction id and leg are both required to cancel a claim.
+
+    The limit has to cover the WHOLE LEAGUE, not our share of it, because the
+    server returns everyone and `_mine` does the filtering. One of our claims
+    pushed out of a short window would read as gone from the pending queue,
+    which the controller would settle as unresolved and then re-submit.
+    """
+    q = f"""
+    query league_transactions {{
+        league_transactions(league_id: "{league_id}",
+                            status: "pending", limit: {int(limit)}) {{
+            transaction_id leg status type adds drops settings created status_updated
+            roster_ids creator metadata
+        }}
+    }}"""
+    rows = gql("league_transactions", q)["league_transactions"] or []
+    return _mine(rows, roster_id)
+
+
+def waiver_claim_history(roster_id: int,
+                         league_id: str = LEAGUE_ID_2026,
+                         statuses=("complete",),
+                         limit: int = 500) -> list[dict]:
+    """Authenticated settled claim history, deduplicated by transaction id.
+
+    Completed claims only. `status: "failed"` returns nothing here -- measured
+    15 Sep 2026 on a league whose REST feed carries 70 failed claims across
+    weeks 1-7 -- so REST is the authority for a failure and the lifecycle
+    controller falls back to it. This query earns its place on the other half:
+    it shows a just-processed win before the REST feed catches up.
+    """
+    out = {}
+    for status in statuses:
+        q = f"""
+        query league_transactions {{
+            league_transactions(league_id: "{league_id}",
+                                status: "{status}", limit: {int(limit)}) {{
+                transaction_id leg status type adds drops settings created status_updated
+                roster_ids creator metadata
+            }}
+        }}"""
+        rows = gql("league_transactions", q)["league_transactions"] or []
+        for row in _mine(rows, roster_id):
+            if row.get("transaction_id") is not None:
+                out[str(row["transaction_id"])] = row
+    return list(out.values())
+
+
+def cancel_waiver_claim(transaction_id: str, leg: int,
+                        league_id: str = LEAGUE_ID_2026) -> dict:
+    """Cancel one pending waiver claim. Signature verified by introspection."""
+    q = f"""
+    mutation cancel_waiver_claim {{
+        cancel_waiver_claim(league_id: "{league_id}",
+                            transaction_id: "{transaction_id}", leg: {int(leg)}) {{
+            transaction_id leg status type adds drops settings created status_updated
+        }}
+    }}"""
+    return gql("cancel_waiver_claim", q)["cancel_waiver_claim"]
 
 
 if __name__ == "__main__":

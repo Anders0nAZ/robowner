@@ -28,8 +28,34 @@ from robo import DATA
 
 QUEUE = DATA / "scout_queue.json"
 SCHEMA = 2
-BATCH_SIZE = 4
-MIN_BATCH_INTERVAL = 10 * 60
+# THE SLOT IS THE SCARCE THING, NOT THE GPU. needs_judging() already spares the
+# model for a player whose reporting has not moved -- but that check happens
+# INSIDE drain(), after the corpus is gathered, so an item that turns out to be
+# a no-op has still consumed one of these slots. Measured over a 76-item drain:
+# 37% of completions never reached the model (26% unchanged, 11% out of pool),
+# and in the oldest cohort -- fifteen hours queued -- 87% evaporated. At four,
+# a batch holding three stale items did one player's worth of real work.
+BATCH_SIZE = 8
+# A FLOOR UNDER THE PACE, NOT THE GOVERNOR OF IT. This sat at ten minutes with
+# no comment, which made it look like a considered GPU budget. It was not: ten
+# minutes is RobonerNewsWatch's own repeat interval, and the real rate has
+# always been how often anything CALLS drain() -- once per pulse -- not this.
+#
+# What it is not protecting, all measured:
+#   * Model-load contention. VRAMMonitor's estimate_cost_mb returns 0 for a
+#     model already resident, so a batch against the loaded 27b is admitted
+#     instantly and this limiter never enters that decision. The gate owns it.
+#   * The chat responder. Ollama interleaves rather than serialising -- two
+#     concurrent requests measured 3.3s wall against 2.5s for one -- and the
+#     responder answers about one and a half times a day.
+#
+# So it kept a 149-deep backlog permanently undrained while the GPU sat idle
+# 94% of the time. Thirty seconds keeps a floor -- a runaway producer still has
+# to pace itself -- without being the thing that governs the rate. A batch
+# costs well over a minute (the model, plus one Sleeper corpus read per player),
+# so the batch is always slower than the limit and the limit never binds in
+# normal running. What governs the rate is how often something CALLS drain().
+MIN_BATCH_INTERVAL = 30
 RETRY_DELAYS = (10 * 60, 30 * 60, 60 * 60)
 MAX_ATTEMPTS = 3
 PRIORITY = {"monday_starter": 0, "emergency": 1,
@@ -398,6 +424,9 @@ def main():
     import argparse
     ap = argparse.ArgumentParser()
     ap.add_argument("--drain", action="store_true", help="run one batch now")
+    ap.add_argument("--until-empty", action="store_true",
+                    help="keep draining until the queue is empty (paced by "
+                         "MIN_BATCH_INTERVAL); nothing scheduled does this")
     ap.add_argument("--retry", action="store_true",
                     help="return everything in the attention list to the queue")
     args = ap.parse_args()
@@ -413,6 +442,30 @@ def main():
         print(f"{n} item(s) returned to the queue")
     if args.drain:
         print(drain(verbose=True))
+    if args.until_empty:
+        # THE PIECE THAT MAKES THE INTERVAL MEAN ANYTHING. Every producer calls
+        # drain() exactly once and returns, so the queue has never had a way to
+        # work a backlog down -- lowering MIN_BATCH_INTERVAL on its own changes
+        # nothing when nobody asks twice. This is the manual catch-up: it is
+        # deliberately not scheduled, because a backlog that needs an hour of
+        # GPU is a thing to run knowingly, not a thing to discover.
+        batches = 0
+        while True:
+            got = drain(verbose=True)
+            state = got.get("status")
+            if state == "idle":
+                print(f"queue empty after {batches} batch(es)")
+                break
+            if state == "rate_limited":
+                time.sleep(max(1.0, float(got.get("retry_in") or 1)))
+                continue
+            if state not in ("processed", "ok"):
+                print(f"stopping: {state} -- {got.get('error') or 'see above'}")
+                break
+            batches += 1
+            if not got.get("queued"):
+                print(f"queue empty after {batches} batch(es)")
+                break
     s = status()
     print(f"{s['queued']} pending, {s['attention']} needing attention, "
           f"{s['filtered_recaps']} recap(s) excluded to date")

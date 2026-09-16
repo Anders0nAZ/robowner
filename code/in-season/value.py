@@ -30,8 +30,12 @@ from robo import ros
 # the one the bot would act on.
 VALUATION_READY = True
 
-# May the bot ACT on it? No. The injury-response implementation remains in dry
-# review until Nate explicitly approves opening the transaction gate.
+# May the bot ACT on it? YES, since 15 Sep 2026, on Nate's explicit approval
+# after a full review of the waiver portfolio, the claim tiering and the bid
+# model. `python -m robo.value --preflight` was clean at the time it was
+# opened: fresh valuation and model artifacts, every source validated,
+# transaction states self-consistent, a buildable slate, every bid inside the
+# budget and no locked player in any payload.
 #
 # THESE ARE TWO DIFFERENT QUESTIONS AND WERE ONE FLAG FOR A DAY, WHICH WAS A
 # MISTAKE. Collapsing them means the only way to stop the bot submitting is to
@@ -39,6 +43,10 @@ VALUATION_READY = True
 # reading stand-in numbers to decide whether to trust the real ones, which is
 # exactly backwards. Split, a dry run shows precisely what would have been
 # submitted, priced on the real valuation, and submits none of it.
+#
+# TO CLOSE IT AGAIN: set this False. That is the whole kill switch for roster
+# writes, and it beats disabling tasks because it leaves the bot reading,
+# planning and publishing while it stops it acting.
 SUBMIT_ENABLED = False
 
 GATE_MESSAGE = (
@@ -186,8 +194,11 @@ def _check(label: str, ok: bool, why: str = "", detail: str = "") -> dict:
     "only 802 players priced" beside a green OK is the kind of line that sends
     somebody looking for a problem that is not there.
     """
-    return {"label": label, "ok": bool(ok), "why": "" if ok else why,
-            "detail": detail}
+    # `check` is the STABLE identity. `label` is prose and one row rewrites its
+    # own to say which way the gate is set, so a caller keying on it to find a
+    # specific assertion finds nothing the moment that happens.
+    return {"check": label, "label": label, "ok": bool(ok),
+            "why": "" if ok else why, "detail": detail}
 
 
 def preflight(league_id: str | None = None) -> list[dict]:
@@ -359,13 +370,29 @@ def main():
     rows = preflight()
     for r in rows:
         note = r["why"] or r.get("detail") or ""
+        if r["check"] == "transaction gate":
+            # Not OK/FAIL. It is the switch, and an open gate printing FAIL
+            # reads as a fault rather than as the thing we chose on purpose.
+            print(f"  GATE  {r['label']}")
+            continue
         print(f"  {'OK  ' if r['ok'] else 'FAIL'}  {r['label']}"
               + (f" -- {note}" if note else ""))
-    bad = [r for r in rows if not r["ok"]]
-    print("\n" + ("preflight clean; opening the gate is a commit to "
-                  "SUBMIT_ENABLED in robo/value.py and a process restart"
-                  if not bad else
-                  f"{len(bad)} check(s) failed; do not open the gate"))
+    # THE GATE ROW IS A STATE, NOT A FAULT. Every other row is an assertion
+    # about readiness; this one reports which side of the switch we are on, and
+    # counting it as a failure made the whole report read "do not open the
+    # gate" from the moment the gate was opened -- which is the exact moment
+    # the operator starts running this WEEKLY to check everything else.
+    bad = [r for r in rows if not r["ok"] and r["check"] != "transaction gate"]
+    if bad:
+        print(f"\n{len(bad)} check(s) failed; "
+              + ("close the gate until they are fixed" if may_submit()
+                 else "do not open the gate"))
+    elif may_submit():
+        print("\npreflight clean; the gate is OPEN and --apply submits to "
+              "Sleeper. Close it by setting SUBMIT_ENABLED False in robo/value.py.")
+    else:
+        print("\npreflight clean; opening the gate is a commit to "
+              "SUBMIT_ENABLED in robo/value.py and a process restart")
 
 
 if __name__ == "__main__":

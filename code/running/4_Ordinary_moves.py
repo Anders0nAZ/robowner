@@ -152,13 +152,8 @@ else:
     else:
         st.caption("No candidates reached the simulator in this phase.")
 
-    # CLEARED BUT NEVER OFFERED. ROS_MAX_MUTATIONS caps how many SLATES get
-    # built, and an open roster spot sorts first because it costs nothing to
-    # fill -- so on a night with a spare slot every add-against-our-own-roster
-    # comparison is priced, clears every bar, and is then dropped on the floor
-    # without appearing anywhere. That is a defensible policy and an
-    # indefensible silence: the page showed the winners and the near-misses and
-    # left out the options that passed and were not offered.
+    # Cleared skill swaps beyond the explicit skill-drop limit remain visible.
+    # Open capacity and DEF streaming no longer consume that limit.
     unslated = [o for o in options
                 if o.get("drop", {}).get("player_id") is not None
                 and not o.get("selected")
@@ -166,13 +161,12 @@ else:
     if unslated:
         with st.expander(
                 f"Cleared against our own roster but not offered "
-                f"({len(unslated)}) — mutation budget spent elsewhere"):
+                f"({len(unslated)}) — skill-drop limit reached"):
             st.caption(
-                f"Every bar passed; no slate was available. `mutation_limit` is "
-                f"{thresholds.get('mutation_limit')} for this mode, and an open "
-                "roster spot takes the slot ahead of any swap because nobody is "
-                "dropped to use it. These are the trades that were priced and "
-                "then never put in front of Sleeper.")
+                f"Every bar passed, but `skill_drop_limit` is "
+                f"{thresholds.get('skill_drop_limit')} for this mode. Open-slot "
+                "fills and DEF replacements are accounted for separately and "
+                "do not consume this limit.")
             st.dataframe(pd.DataFrame([{
                 "add": player(o.get("add")), "pos": (o.get("add") or {}).get("pos"),
                 "drop": player(o.get("drop")),

@@ -893,8 +893,14 @@ def rebuild_and_move(affected: set[str], apply: bool,
         delta["acquisition_candidate"] = pid in available
     free = moves.run("free", apply=apply, mode="news", affected=affected,
                      league_id=LEAGUE_ID_2026, verbose=True, _ctx=ctx)
-    claims = moves.run("claims", apply=apply, mode="news", affected=affected,
-                       league_id=LEAGUE_ID_2026, verbose=True, _ctx=ctx)
+    # A news event may revise waivers, but it may never APPEND one isolated
+    # event claim to an older Tuesday slate. Rebuild the complete canonical ROS
+    # portfolio from the live roster after the free-agent channel had its turn;
+    # waiver_manager then replaces only bot-owned pending transactions.
+    claims_ctx = moves._context(LEAGUE_ID_2026, mode="ros")
+    claims = moves.run("claims", apply=apply, mode="ros",
+                       league_id=LEAGUE_ID_2026, verbose=True, _ctx=claims_ctx,
+                       source="newswatch")
     return {"capture": capture, "capture_ok": capture_ok,
             "export": export, "export_ok": export_ok, "model": model,
             "expected_players": len(ex.get("players") or {}),
@@ -1079,6 +1085,19 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
         audit_json, audit_report = _write_audit(fp, audit)
         audit_path = {"json": str(audit_json), "report": str(audit_report)}
 
+    # Pending claims outlive the decision run that created them. A human
+    # lineup edit, an IR move, or a quiet roster change can invalidate the drop
+    # without producing a new news event, so every pulse performs the cheap
+    # fingerprint check. It only invokes the full planner when facts changed.
+    try:
+        from robo import moves as _moves
+        maintenance = _moves.maintain_pending_claims(
+            apply=apply and not errors, league_id=LEAGUE_ID_2026,
+            reason="newswatch state change")
+    except Exception as e:
+        maintenance = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
+        errors.append(f"waiver maintenance: {str(e)[:120]}")
+
     now = time.time()
     state = {"schema": 4, "last_poll": now, "last_attempt": now,
              "paused": None, "week": week,
@@ -1091,6 +1110,7 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
              "trending_top": top, "handled": handled,
              "monday_categories": categories,
              "filtered": filter_stats,
+             "waiver_maintenance": maintenance,
              "source_errors": errors,
              "last_event": ({"at": now, "fingerprint": fp, "events": events,
                              "affected": sorted(affected), "timing": timing,

@@ -5,12 +5,52 @@ from datetime import datetime
 import pandas as pd
 import streamlit as st
 
-from robo import ui, waiver_audit
+from robo import ui, waiver_audit, waiver_manager
 
 st.title("FAAB")
 ui.gate_banner(st)
 st.caption("Frozen evaluations from the scheduled roster manager. Opponent forecasts are "
            "private and never enter the public decision log.")
+
+@st.cache_data(ttl=20, show_spinner=False)
+def live_portfolio():
+    """Two authenticated Sleeper reads, and it settles anything that has left
+    the pending queue -- so it runs on a timer, not on every widget click."""
+    return waiver_manager.status()
+
+
+try:
+    live = live_portfolio()
+    x = st.columns(4)
+    x[0].metric("Pending now", len(live.get("pending") or []))
+    x[1].metric("Bot-owned", len(live.get("owned") or []))
+    x[2].metric("Foreign", len(live.get("foreign") or []))
+    x[3].metric("Worst-case exposure",
+                f"${live.get('worst_case_exposure', 0)}")
+    if live.get("foreign"):
+        st.error("Automation is blocked: at least one pending claim is not in the bot ownership ledger.")
+    with st.expander("Live pending ownership and settlement state"):
+        st.json({"groups": live.get("groups"), "owned": live.get("owned"),
+                 "foreign": live.get("foreign"),
+                 "settled_this_read": live.get("settled"),
+                 "recent_outcomes": ((live.get("state") or {}).get("history") or [])[-20:]})
+    with st.expander("Reconciliation journal — what was cancelled, sent, rolled back"):
+        events = live.get("events") or []
+        if not events:
+            st.caption("Nothing has been submitted or cancelled yet.")
+        else:
+            st.dataframe(pd.DataFrame([{
+                "at": datetime.fromtimestamp(float(e.get("at") or 0))
+                        .astimezone().strftime("%b %d %I:%M:%S %p"),
+                "event": e.get("kind"),
+                "source": e.get("source"),
+                "transaction": e.get("transaction_id"),
+                "detail": e.get("reason") or e.get("error")
+                          or (e.get("result") or {}).get("status") or "",
+            } for e in events]), use_container_width=True, hide_index=True)
+            st.json(events[0])
+except Exception as e:
+    st.warning(f"Live pending queue unavailable: {type(e).__name__}")
 
 
 @st.cache_data(ttl=10, show_spinner=False)
@@ -42,7 +82,9 @@ if not doc.get("plans"):
     st.info("No waiver claim cleared the roster controls and value bars in this pass.")
 
 for slate in doc.get("plans") or []:
-    st.subheader(f"Drop {(slate.get('drop') or {}).get('name')}")
+    st.subheader(f"{slate.get('group_id') or 'claim group'} · "
+                 f"capacity {slate.get('capacity', 1)} · "
+                 f"worst-case ${slate.get('exposure', 0)}")
     for claim in slate.get("claims") or []:
         add = claim.get("add") or {}
         q = claim.get("bid_quote") or {}

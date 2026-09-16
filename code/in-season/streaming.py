@@ -214,9 +214,13 @@ def best_available(week: int, league_id=None, season_yr=None) -> dict | None:
     yr = str(season_yr or _season.SEASON)
     held = _season.rostered_ids(league_id)
     locks = _season.week_points(week, yr, league_id)
-    for r in rank_week(week, season_yr, pos="DEF"):
+    board = rank_week(week, season_yr, pos="DEF")
+    states = _season.transaction_states([r["team"] for r in board], league_id,
+                                        week=week)
+    for r in board:
         if (r["team"] not in held
-                and not (locks.get(r["team"]) or {}).get("locked")):
+                and not (locks.get(r["team"]) or {}).get("locked")
+                and (states.get(r["team"]) or {}).get("acquisition") == "free_now"):
             return r
     return None
 
