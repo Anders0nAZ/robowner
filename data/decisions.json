@@ -744,5 +744,20 @@
    ],
    "previous": []
   }
+ },
+ {
+  "id": 28,
+  "ts": "2026-09-16T14:03:25+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Carson Beck back to the active roster.",
+  "rationale": "no longer carries an IR-eligible designation (healthy), so he cannot stay on reserve.",
+  "status": "final",
+  "data": {
+   "reserve": [],
+   "previous": [
+    "13272"
+   ]
+  }
  }
 ]
