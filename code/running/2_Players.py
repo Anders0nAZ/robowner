@@ -138,8 +138,19 @@ c[3].metric("Playoff weeks weighted",
 st.caption(
     f"Built from the NFL model's weekly means for weeks {wk}-17, with Sleeper as a "
     "missing-row fallback, fitted role inheritance, and return bounds. No season-total "
-    "calibration is used. Kickers and defences are absent by design: they refill from "
-    "the wire weekly and robo/streaming.py prices them.")
+    "calibration is used.")
+# DEFENCES ARE NOT MISSING, THEY ARE PRICED SOMEWHERE ELSE. Saying only that
+# they are "absent by design" left a reader looking for a table that exists on
+# another page.
+st.caption(
+    "**Kickers and defences are not in this table.** Neither is modelled here: they "
+    "refill from the wire every week, and Sleeper's weekly feed drops every points-"
+    "allowed tier, so a defence scored off it comes back near nothing and carries no "
+    "matchup — which for a defence is the whole question. A defence is priced off the "
+    "opponent's implied point total instead, and this week's ranking and the "
+    "hold-or-stream call are on the **Now** page. Kickers are ranked nowhere on "
+    "purpose: the same fit on 1,478 kicker weeks is flat and non-monotone.")
+st.page_link("pages/0_Now.py", label="Defence streaming →", icon="🛡️")
 
 # ------------------------------------------------------------------- the board
 st.subheader("The board")

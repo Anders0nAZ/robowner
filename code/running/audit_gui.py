@@ -35,9 +35,10 @@ st.set_page_config(page_title="Roboner audit", page_icon="🔍", layout="wide")
 # url_path is pinned rather than derived from the filename, because the Now
 # page deep-links into a specific decision with `Decisions?run=<fingerprint>`.
 # A path that moved when a file was renumbered would break that link silently.
+# The DEFAULT page is the exception: Streamlit serves it at the root and there
+# is no second path to it, so naming one here would only be a path that 404s.
 st.navigation([
-    st.Page("pages/0_Now.py", title="Now", icon="🔍",
-            url_path="Now", default=True),
+    st.Page("pages/0_Now.py", title="Now", icon="🔍", default=True),
     st.Page("pages/1_Decisions.py", title="Decisions", icon="🧾",
             url_path="Decisions"),
     st.Page("pages/2_Players.py", title="Players", icon="📈",

@@ -29,6 +29,38 @@ def live_portfolio():
     return waiver_manager.status()
 
 
+@st.cache_data(ttl=600, show_spinner="Pricing this week's defences…")
+def defence_stream() -> dict:
+    """This week's streaming decision, priced the way the bot prices it.
+
+    DEFENCES ARE THE ONE THING THE VALUATION CANNOT ANSWER. expected.py models
+    neither kickers nor defences, and Sleeper's weekly feed drops every
+    `pts_allow` tier plus the return and turnover touchdowns, so a defence
+    scored off that feed comes back near nothing and carries no matchup at all
+    -- which for a defence is the entire question. ros.py therefore REPLACES a
+    defence's number with the market. That makes this the only place in the app
+    where "what should we do about our defence" can be asked, and it is a
+    weekly recurring decision rather than a reaction to news, so it belongs
+    beside the slate rather than in a valuation table it is absent from.
+
+    Everything here is read through streaming.swap(), which is the same call
+    the waiver planner makes -- not a second opinion assembled for display.
+    """
+    from robo import season, sleeper_read, streaming
+    week = season.current_week()
+    board = streaming.rank_week(week)
+    if not board:
+        return {"week": week, "board": [], "unpriced": True}
+    players = sleeper_read.players()
+    mine = {str(p) for p in (season.mine().get("players") or [])}
+    held = {str(p) for p in season.rostered_ids()}
+    ours = [p for p in mine if (players.get(p) or {}).get("position") == "DEF"]
+    swaps = [{**streaming.swap(week, d), "ours": d} for d in sorted(ours)]
+    return {"week": week, "board": board, "ours": ours, "swaps": swaps,
+            "held": held, "mine": mine, "bar": streaming.MIN_STREAM_GAIN,
+            "unpriced": False}
+
+
 run = latest_run()
 if not run:
     st.warning("No decision run has been recorded yet. Nothing to show until the news "
@@ -71,6 +103,74 @@ else:
             st.caption(ui.money(narrate.claim_story(row["raw"])))
 
 st.markdown(f"[Open this decision front to back →](Decisions?run={run['fingerprint']})")
+
+# --------------------------------------------------------- defence stream
+st.subheader("The defence")
+try:
+    d = defence_stream()
+    if d.get("unpriced"):
+        st.info(f"No lines are posted for week {d['week']} yet, so there is no ranking — "
+                "only the absence of one. A defence is priced off the opponent's implied "
+                "point total and nothing else, so an unpriced week cannot be ranked.")
+    elif not d.get("ours"):
+        st.warning("No defence on the roster. A starting slot with nobody in it is a "
+                   "patch, which outranks every ordinary upgrade.")
+    else:
+        for s in d["swaps"]:
+            mine_row, best = s.get("mine") or {}, s.get("best") or {}
+            gain, bar = float(s.get("gain") or 0.0), d["bar"]
+            streams = gain >= bar and not s.get("locked")
+            c = st.columns(4)
+            c[0].metric("We hold", s["ours"],
+                        f"{mine_row.get('pts', 0):.2f} pts" if mine_row else "unpriced",
+                        delta_color="off",
+                        help="Expected points off the opponent's implied total, on this "
+                             "league's own scoring.")
+            c[1].metric("Best free", best.get("team", "—"),
+                        f"{best.get('pts', 0):.2f} pts" if best else None,
+                        delta_color="off",
+                        help="Best defence actually acquirable — not the best on the "
+                             "board. Ranking all thirty-two would propose a move Sleeper "
+                             "cannot execute.")
+            c[2].metric("Gain", f"{gain:+.2f}")
+            c[3].metric("Verdict", "stream" if streams else "hold")
+            if s.get("locked"):
+                st.caption(f"Hold {s['ours']}: its game has already locked.")
+            else:
+                st.caption(
+                    f"{s.get('why', '')}. Streaming needs **{bar:+.2f}**; this is "
+                    f"{gain:+.2f}, so the bot "
+                    + ("**streams**." if streams else "**holds**.")
+                    + " A defence refills from the wire every week, which is why the bar "
+                      "is a fixed gain rather than a comparison of season totals.")
+
+    board = d.get("board") or []
+    if board:
+        with st.expander(f"Every defence, week {d['week']} — best matchup first"):
+            st.caption("Ranked purely by the opponent's implied point total, fitted on "
+                       "2,174 of this league's own defence weeks: 11.39 points against "
+                       "the weakest offences down to 4.72 against the strongest, monotone "
+                       "across all eight buckets. The same fit refuses to rank kickers — "
+                       "on 1,478 kicker weeks it runs flat and non-monotone, so there is "
+                       "no kicker equivalent of this table and that is deliberate.")
+            st.dataframe(pd.DataFrame([{
+                "defence": r["team"],
+                "owner": ("ours" if r["team"] in d["mine"] else
+                          "rostered" if r["team"] in d["held"] else "free"),
+                "opponent": ("vs " if r["home"] else "@ ") + r["opponent"],
+                "opponent implied total": r["implied"],
+                "expected points": r["pts"],
+            } for r in board]), use_container_width=True, hide_index=True, height=380,
+                column_config={
+                    "opponent implied total": st.column_config.NumberColumn(
+                        format="%.2f",
+                        help="What the betting market expects the opposing offence to "
+                             "score. Lower is better for the defence."),
+                    "expected points": st.column_config.NumberColumn(format="%.2f"),
+                })
+except Exception as e:  # nflverse lines or Sleeper unavailable
+    st.warning(f"Defence streaming unavailable: {type(e).__name__}. A defence is priced "
+               "off the betting market, so an unreadable schedule means no ranking.")
 
 # ------------------------------------------------------- roster it acts on
 st.subheader("The roster it would act on")
