@@ -330,6 +330,23 @@ def _droppables(ctx: dict) -> list[dict]:
     return sorted(out, key=lambda d: d["value"])
 
 
+def _ticket_tail(pid: str, ctx: dict) -> float | None:
+    """The loss tail if it protects him, else None. One predicate, two pools.
+
+    Returns the NUMBER rather than a boolean because both callers want to say
+    why: a pool that silently drops a man reads identically to a pool that
+    never considered him, which is the failure mode ros/block modes already
+    refuse ("a silent no-op would look identical to nothing cleared").
+    """
+    if TICKET_PROTECT_POINTS <= 0 or ctx["mode"] == "patch":
+        return None
+    sh = value.hold_shape({"player_id": pid}, ctx["week"])
+    if not sh or sh.get("starter"):
+        return None
+    tail = float(sh.get("tail") or 0.0)
+    return tail if tail >= TICKET_PROTECT_POINTS else None
+
+
 def _protected_ticket(row: dict, ctx: dict) -> bool:
     """Is this a bench man whose loss tail says he is a real lottery ticket?
 
@@ -350,12 +367,7 @@ def _protected_ticket(row: dict, ctx: dict) -> bool:
     precedence: an unfillable starting slot is a certain loss this week and
     outranks protecting a contingency.
     """
-    if TICKET_PROTECT_POINTS <= 0 or ctx["mode"] == "patch":
-        return False
-    sh = value.hold_shape(row, ctx["week"])
-    if not sh or sh.get("starter"):
-        return False
-    return float(sh.get("tail") or 0.0) >= TICKET_PROTECT_POINTS
+    return _ticket_tail(str(row.get("player_id")), ctx) is not None
 
 
 def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[dict]:
@@ -1364,6 +1376,22 @@ def _priced(ctx: dict) -> dict:
                                     "drop_price": round(cost, 3),
                                     "reason": (f"drop price {cost:.1f} exceeds the "
                                                f"{DROP_FLOOR:.1f} protection floor")})
+                continue
+            # THE SAME GATE _droppables APPLIES, THROUGH THE SAME PREDICATE.
+            # This loop is a second drop pool -- it feeds the option board the
+            # waiver planner reads, while _droppables feeds the free-agent
+            # planner -- and a gate added to only one of them protects a
+            # lottery ticket from being cut for a free agent and not from being
+            # cut for a claim. It also made the audit record CONTRADICT the
+            # decision: Kaelon Black was excluded from one pool while this loop
+            # wrote him down as "available for an upgrade comparison".
+            tail = _ticket_tail(pid, ctx)
+            if tail is not None:
+                drop_checks.append({**check, "eligible": False,
+                                    "drop_price": round(cost, 3),
+                                    "reason": (f"held as a lottery ticket: losing him "
+                                               f"costs {tail:.1f} in the worst world, "
+                                               f"over the {TICKET_PROTECT_POINTS:.1f} bar")})
                 continue
             drop_checks.append({**check, "eligible": True,
                                 "drop_price": round(cost, 3),
