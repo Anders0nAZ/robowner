@@ -67,6 +67,13 @@ def _render_audit(doc: dict) -> str:
                      + "; ".join(e.get("reasons") or []))
         for c in e.get("changes") or []:
             lines.append(f"       {c.get('field')}: {c.get('before')} -> {c.get('after')}")
+            # A content hash says the story moved and not what it says. Where
+            # the headline was captured it belongs right under the comparison
+            # it explains.
+            h = c.get("headline") or {}
+            if h.get("title"):
+                lines.append(f"         \"{h['title']}\""
+                             + (f" [{h['source']}]" if h.get("source") else ""))
     timing = doc.get("timing") or {}
     if timing:
         lines += ["", "TIMING  " + str(timing.get("summary") or timing)]
@@ -385,13 +392,24 @@ def _content_fingerprint(items: list[dict]) -> str:
     return hashlib.sha1(body.encode("utf-8")).hexdigest()[:16]
 
 
-def sleeper_news_fingerprints(player_ids) -> dict[str, str]:
+def sleeper_news_fingerprints(player_ids, record: dict | None = None) -> dict[str, str]:
     """Fetch many players' story bodies in a handful of GraphQL requests.
 
     This is the verification stage behind ``news_updated``. A source timestamp
     may wake it, but only a changed text hash is allowed to wake the model.
     Unlike scout.player_news(), failures raise so the caller can preserve the
     last fingerprints rather than mistaking an outage for deleted reporting.
+
+    THE HASH DECIDES; THE HEADLINE EXPLAINS. This fetched every story body,
+    hashed it, and threw the text away, so a trigger recorded
+    `sleeper_news_content: e6cd3d77e11c5745 -> 3a78e059e90078fb` and the audit
+    page rendered two hex strings where a reader wanted the news. `record`
+    collects the latest headline per player for display only -- the comparison
+    upstream stays on the hash, because a headline that is merely reworded must
+    not wake the model and only a content hash can tell those apart.
+
+    Follows the local NFL model's `record` contract: real code path, zero cost
+    when None.
     """
     from robo.sleeper_write import gql
     ids = sorted({str(pid) for pid in player_ids if str(pid)})
@@ -414,6 +432,16 @@ def sleeper_news_fingerprints(player_ids) -> dict[str, str]:
                               "description": meta.get("description"),
                               "analysis": meta.get("analysis")})
             out[pid] = _content_fingerprint(items)
+            if record is not None and items:
+                top = items[0]
+                record[pid] = {
+                    "source": top.get("source"),
+                    "title": top.get("title"),
+                    # Trimmed rather than stored whole: the audit table wants a
+                    # line, and the full body is a GraphQL read away for anyone
+                    # who wants it.
+                    "description": (str(top.get("description") or "")[:400]
+                                    or None)}
     return out
 
 
@@ -464,7 +492,8 @@ def detect(prior: dict, current: dict, espn: dict,
            news_fingerprints: dict | None = None,
            pft_fingerprints: set[str] | None = None,
            filter_stats: dict | None = None,
-           completed: set[str] | None = None) -> list[dict]:
+           completed: set[str] | None = None,
+           headlines: dict | None = None) -> list[dict]:
     old = prior.get("weekly") or {}
     seen_pft = set(prior.get("pft_fingerprints") or [])
     old_top = set(prior.get("trending_top") or [])
@@ -473,20 +502,25 @@ def detect(prior: dict, current: dict, espn: dict,
     pft_fingerprints = pft_fingerprints or set()
     filter_stats = filter_stats if filter_stats is not None else {}
     completed = completed or set()
+    headlines = headlines or {}
     events = {}
 
     def filtered(kind: str):
         filter_stats[kind] = int(filter_stats.get(kind) or 0) + 1
 
     def add(pid: str, reason: str, item: dict | None = None,
-            field: str | None = None, before=None, after=None):
+            field: str | None = None, before=None, after=None,
+            headline: dict | None = None):
         e = events.setdefault(pid, {"player_id": pid,
                                     "name": (current.get(pid) or {}).get("name"),
                                     "reasons": [], "pft": [],
                                     "changes": []})
         e["reasons"].append(reason)
         if field:
-            e["changes"].append({"field": field, "before": before, "after": after})
+            change = {"field": field, "before": before, "after": after}
+            if headline:
+                change["headline"] = headline
+            e["changes"].append(change)
         if item:
             e["pft"].append(item)
 
@@ -503,8 +537,12 @@ def detect(prior: dict, current: dict, espn: dict,
             # Missing old hashes are a migration baseline, not evidence. A
             # failed verification omits after_fp and likewise cannot trigger.
             if before_fp is not None and after_fp is not None and before_fp != after_fp:
+                # The hash is what fired this; the headline is what a human
+                # reading the audit actually needs. Carried beside the
+                # comparison rather than replacing it.
                 add(pid, "Sleeper news content changed",
-                    field="sleeper_news_content", before=before_fp, after=after_fp)
+                    field="sleeper_news_content", before=before_fp,
+                    after=after_fp, headline=headlines.get(pid))
             elif before_fp is not None and after_fp is not None:
                 filtered("sleeper_timestamp_only")
         if "depth_order" in was and now.get("depth_order") != was.get("depth_order"):
@@ -969,9 +1007,10 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
     verify_ids = list(weekly) if "sleeper_news_fingerprints" not in prior else changed_news
     news_fp = dict(old_news_fp)
     news_verified = not verify_ids
+    headlines: dict = {}
     if verify_ids:
         try:
-            news_fp.update(sleeper_news_fingerprints(verify_ids))
+            news_fp.update(sleeper_news_fingerprints(verify_ids, record=headlines))
             news_verified = True
         except Exception as e:
             errors.append(f"Sleeper news verification: {str(e)[:120]}")
@@ -981,7 +1020,8 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
     filter_stats = {}
     events = detect(prior, weekly, espn, pft, top,
                     news_fingerprints=news_fp, pft_fingerprints=pft_fp,
-                    filter_stats=filter_stats, completed=completed_teams(week))
+                    filter_stats=filter_stats, completed=completed_teams(week),
+                    headlines=headlines)
     if events and not _debounced and inactive_burst(events):
         _log(f"inactive release burst ({len(events)} events); consolidating for "
              f"{INACTIVE_DEBOUNCE_S}s; {event_mix(events)}")

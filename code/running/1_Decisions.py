@@ -48,6 +48,13 @@ def _show(field, value) -> str:
 
     `news_updated` is milliseconds since the epoch, which says nothing at all
     until it is a clock time.
+
+    `sleeper_news_content` is a CONTENT HASH -- that is what the watcher
+    compares, deliberately, because a reworded headline must not wake the model
+    and only a hash can tell a rewording from a new fact. Rendering the hex
+    verbatim put two sixteen-character strings in front of a reader who wanted
+    the news, so it is labelled as what it is and the headline is shown beside
+    it where the record carries one.
     """
     if value is None:
         return "—"
@@ -56,9 +63,27 @@ def _show(field, value) -> str:
             return news_audit.local_time(float(value) / 1000)
         except (TypeError, ValueError):
             pass
+    if field == "sleeper_news_content":
+        return f"story hash {str(value)[:8]}…"
     if isinstance(value, (dict, list)):
         return json.dumps(value, sort_keys=True)
     return str(value)
+
+
+def _headline(change: dict) -> str:
+    """The story behind a content-hash trigger, when the record kept one.
+
+    Records written before the watcher started capturing it hold only the hash,
+    and say so rather than showing a blank that reads like "no news".
+    """
+    h = change.get("headline") or {}
+    if not h:
+        return ("(headline not recorded — this run predates the watcher "
+                "keeping it)" if change.get("field") == "sleeper_news_content"
+                else "")
+    bits = [x for x in (h.get("title"), h.get("description")) if x]
+    src = f" [{h['source']}]" if h.get("source") else ""
+    return (" — ".join(bits) + src) if bits else ""
 
 
 docs = runs()
@@ -206,9 +231,19 @@ if doc["kind"] == decision_audit.NEWS:
                 "signal": c.get("field"),
                 "before": _show(c.get("field"), c.get("before")),
                 "after": _show(c.get("field"), c.get("after")),
+                "the story": _headline(c),
                 "why it counted": "; ".join(e.get("reasons") or [])})
     if rows:
-        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True)
+        st.dataframe(pd.DataFrame(rows), use_container_width=True, hide_index=True,
+                     column_config={
+                         "the story": st.column_config.TextColumn(width="large"),
+                         "before": st.column_config.TextColumn(
+                             help="For a story change this is a CONTENT HASH, "
+                                  "which is what the watcher compares: a "
+                                  "reworded headline must not wake the model and "
+                                  "only a hash separates a rewording from a new "
+                                  "fact."),
+                     })
 
     timing = doc.get("timing") or {}
     t = st.columns(4)
