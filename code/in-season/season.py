@@ -226,6 +226,7 @@ def game_status(season: str = SEASON) -> dict[str, str]:
 
 
 def weekly_raw(week: int, season: str = SEASON) -> list[dict]:
+    """Sleeper's weekly PROJECTIONS. Not results -- see week_points below."""
     url = (f"https://api.sleeper.app/projections/nfl/{season}/{week}"
            "?season_type=regular&position[]=QB&position[]=RB&position[]=WR"
            "&position[]=TE&position[]=K&position[]=DEF")
@@ -245,6 +246,14 @@ def week_points(week: int, season: str = SEASON,
 
     `locked` is the game's own status, so we never have to reason about kickoff
     times or time zones to know whether a player can still be moved.
+
+    `pts` IS A PROJECTION, NOT A RESULT, whatever the name suggests. weekly_raw
+    reads /projections/, so this answers "what is he expected to score" even for
+    a week that finished last Sunday. Actual scoring lives at
+    stats/nfl/regular/<season>/<week> and nothing here reads it. The name has
+    already cost one investigation two passes -- a comparison of "projected
+    versus actual" built on this function compares a projection with itself and
+    reports near-perfect agreement.
     """
     sc = scoring(league_id)
     gs = game_status(season)

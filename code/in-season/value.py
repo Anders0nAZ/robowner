@@ -175,6 +175,13 @@ def hold_of(row: dict, week: int) -> tuple[float, bool]:
     choosing between them here rather than in moves.py keeps this module what it
     claims to be -- the one place that decides which number a decision is
     allowed to use.
+
+    THIS RETURNS THE MEAN, AND THE TAIL IS A SEPARATE QUESTION. See hold_shape:
+    the loss tail protects a lottery ticket from being cut, but it is a GATE and
+    not a price, exactly as the ceiling is on the add side. Ranking one man's
+    tail against another man's mean in a single sorted pool put Kaelon Black
+    above Nico Collins as the more expensive cut, which is not a protection --
+    it is a different incoherence in the other direction.
     """
     if ready():
         try:
@@ -183,6 +190,33 @@ def hold_of(row: dict, week: int) -> tuple[float, bool]:
         except Exception:
             pass
     return value_of(row, week, "hold")
+
+
+def hold_shape(row: dict, week: int) -> dict | None:
+    """The full distribution behind hold_of, for the protection gate.
+
+    WHY A GATE AND NOT A PRICE. moves.clears() judges a bench ACQUISITION on
+    `ceiling >= HIT_POINTS` -- a bar -- while best_free still RANKS on the mean.
+    The ceiling decides whether a man is worth a transaction at all; the mean
+    decides which of the survivors is best. Mirroring that on the drop side
+    keeps one statistic doing one job: the mean orders the pool, and the loss
+    tail says whether a man may be in it.
+
+    Pricing the drop on the mean alone was the real asymmetry -- shape() calls
+    the mean "selecting on noise" down there and names Kaelon Black as the
+    example, and the add side agrees, so a lottery ticket was bought on his tail
+    and sold on his middle.
+
+    None for a man the simulator does not carry, so the caller keeps whatever
+    behaviour it had rather than reading an absent shape as "unprotected".
+    """
+    if not ready():
+        return None
+    try:
+        from robo import marginal
+        return marginal.drop_shape(row["player_id"])
+    except Exception:
+        return None
 
 
 # ----------------------------------------------------------- opening the gate
@@ -272,6 +306,23 @@ def preflight(league_id: str | None = None) -> list[dict]:
     except Exception as e:
         out.append(_check("every data source validated", False,
                           f"freshness could not be read: {type(e).__name__}: {e}"))
+
+    # 2b. The usage panel holds the latest COMPLETED week. Age cannot answer
+    # this: a file rewritten every morning with last week's contents passes a
+    # timestamp check forever, which is how the frozen season-projection spine
+    # went unnoticed for two weeks. Asserted rather than reported because the
+    # takeover prior is fitted on this panel and a stale one silently prices
+    # every backup off a week that has already been played.
+    try:
+        from robo import roles, season as _season
+        fr = roles.freshness(_season.SEASON)
+        out.append(_check("usage panel holds the last completed week",
+                          bool(fr.get("ok")), fr.get("why") or "",
+                          f"through week {fr.get('have_week')}"
+                          if fr.get("have_week") is not None else ""))
+    except Exception as e:
+        out.append(_check("usage panel holds the last completed week", False,
+                          f"panel could not be read: {type(e).__name__}: {e}"))
 
     # 3. Transaction classification. Checked for internal contradiction rather
     # than against a second opinion: there isn't one, and a state that

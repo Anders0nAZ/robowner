@@ -88,6 +88,17 @@ UPSIDE_PCTL = 75
 # expected gain before it will move is refusing the only distribution on offer.
 HIT_POINTS = 7.0
 
+# How much of roles.takeover_rate() the simulator actually spends. A backup's
+# realistic path to value is usually winning the job outright rather than an
+# injury, and until this existed the simulator drew only injury vacancies, so
+# that whole thesis priced at nothing. 0.0 restores exactly that behaviour and
+# is the A/B baseline; 1.0 spends the fitted rate as measured.
+#
+# It is a dial rather than a bare on/off because the fitted cells are thin where
+# they matter most -- an early-round rookie RB is n=31 -- and the honest response
+# to a thin signal is less of it, not a different number.
+TAKEOVER_WEIGHT = 1.0
+
 settings.apply(__name__, globals())
 
 
@@ -190,6 +201,36 @@ def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
     return out
 
 
+def _displacements(took: dict, S: dict) -> dict:
+    """(room, sim) -> earliest week somebody took that room's job.
+
+    Precomputed because the alternative is rescanning every takeover for every
+    player-week-world, which is 185 million comparisons on a 200-sim board. The
+    lead is then a single dict lookup in the hot loop.
+    """
+    out = {}
+    for (pid, sim), tw in (took or {}).items():
+        p = S.get(pid)
+        if not p or tw is None or not all(p.get("room") or ()):
+            continue
+        key = (p["room"], sim)
+        if key not in out or tw < out[key]:
+            out[key] = tw
+    return out
+
+
+def _room_leads(S: dict) -> dict:
+    """(team, pos) -> the man holding the job.
+
+    The injured lead often is not one of *our* players or the candidate being
+    priced (Bowers while pricing free-agent Mayer is the canonical case). Room
+    state therefore comes from the complete modeled player table, not just the
+    hypothetical roster; the draws stay limited to `ids`.
+    """
+    return {p["room"]: pid for pid, p in S.items()
+            if p and p.get("rank") == 1 and all(p.get("room") or ())}
+
+
 def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
     """The worlds. Fixed once and reused for every hypothetical.
 
@@ -208,15 +249,7 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
     import random
     rng = random.Random(seed)
     vac = {}
-    room_leads = {}
-    # The injured lead often is not one of *our* players or the candidate being
-    # priced (Bowers while pricing free-agent Mayer is the canonical case).
-    # Room state therefore comes from the complete modeled player table, not
-    # just the hypothetical roster.  The draws themselves remain limited to
-    # ``ids`` below.
-    for pid, p in S.items():
-        if p and p.get("rank") == 1 and all(p.get("room") or ()):
-            room_leads[p["room"]] = pid
+    room_leads = _room_leads(S)
     for (tm, pos) in sorted(_rooms_of(ids, S)):
         for w in weeks:
             lead = S.get(room_leads.get((tm, pos))) or {}
@@ -248,7 +281,56 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
         m, sd = _absorb_dist(p["pos"], p.get("rank"))
         for s, v in enumerate(_draw_shares(rng, m, sd, sims)):
             share[(pid, s)] = v
-    return vac, avail, share
+    return vac, avail, share, _takeovers(ids, S, weeks, sims, rng)
+
+
+def _takeovers(ids: list[str], S: dict, weeks: list[int], sims: int, rng) -> dict:
+    """{(pid, sim): week he took the job} -- ONE draw per season, then permanent.
+
+    A DIFFERENT EVENT FROM THE VACANCY ABOVE, and the whole thesis of a bench
+    rookie. vac answers "the man ahead got hurt, how much does he pick up",
+    which is temporary by construction and is the only thing this simulator
+    could see. roles._takeover() measures the other one -- the round-three
+    rookie who is an every-week starter by week 8 because he outplayed the
+    incumbent -- and until now it was fitted, stored, and read by nobody. A back
+    whose realistic path to value is winning the job outright therefore priced
+    at roughly nothing in every world, which is what made him look free to cut.
+
+    THE COMPOUNDING TRAP, WHICH THIS DELIBERATELY AVOIDS. draws() warns that
+    carrying a WEEKLY vacancy forward turns a 7% hazard into 71% by week 17 and
+    once priced Carson Beck at 300 to drop. That failure comes from accumulating
+    a per-week rate. This is a single Bernoulli per simulated SEASON at a rate
+    fitted on seasons, and the landing week is drawn only to place an event that
+    has already been decided. The two must never share a code path: a per-week
+    reading of this rate would reproduce exactly that bug.
+
+    A man already holding the job cannot take it, and neither can a position
+    with no fitted cell -- roles.takeover_rate() returns 0.0 there and says so.
+    """
+    from robo import season as _season
+    took = {}
+    if not weeks:
+        return took
+    for pid in ids:
+        p = S.get(pid)
+        if not p or p.get("rank") == 1:
+            continue
+        pos = p.get("pos")
+        if pos not in roles.OPPORTUNITY:
+            continue
+        prior = roles.takeover_prior(pid, pos, _season.SEASON,
+                                     team=p.get("team"), week=weeks[0])
+        rate = (prior.get("p") or 0.0) * TAKEOVER_WEIGHT
+        if rate <= 0:
+            continue
+        for s in range(sims):
+            if rng.random() < rate:
+                # Uniform over the weeks we are pricing. The fit counts "holding
+                # the job by week 10" over a whole season, so it carries no
+                # landing distribution of its own, and inventing a shaped one
+                # would be a second unfitted assumption wearing a fitted number.
+                took[(pid, s)] = weeks[rng.randrange(len(weeks))]
+    return took
 
 
 def _draw_shares(rng, m: float, sd: float, sims: int) -> list[float]:
@@ -292,8 +374,11 @@ def _absorb_dist(pos: str, rank) -> tuple[float, float]:
 # -------------------------------------------------------------- the simulation
 
 def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
-                  vac, avail, share, sims: int, repl: dict | None = None) -> list[float]:
+                  vac, avail, share, sims: int, repl: dict | None = None,
+                  took: dict | None = None) -> list[float]:
     """One optimal-lineup season total per simulated world."""
+    took = took or {}
+    displaced = _displacements(took, S)
     out = []
     for s in range(sims):
         tot = 0.0
@@ -311,6 +396,22 @@ def season_totals(ids: list[str], S: dict, weeks: list[int], weights: dict,
                 s1, s2, a, final, miss, lead_pts, rank_w, provider = (
                     tuple(cell) + (0.0,) * max(0, 8 - len(cell)))
                 tm, pos = p["room"]
+                # HE TOOK THE JOB, so from this week he IS the role: he scores
+                # the lead's own number rather than his own plus a drawn slice
+                # of it, and the injury branch below does not also apply -- a
+                # man cannot inherit from himself.
+                tw = took.get((pid, s))
+                if tw is not None and w >= tw and lead_pts:
+                    cands.append({"player_id": pid, "name": p["name"], "pos": p["pos"],
+                                  "pts": max(provider, lead_pts), "has_game": True,
+                                  "injury": None, "locked": False})
+                    continue
+                # ...and the man he displaced stops being it. Only matters when
+                # we hold both, which is rare, but without it a takeover is a
+                # world where our roster collects the same role twice.
+                dw = displaced.get((p["room"], s))
+                if p.get("rank") == 1 and dw is not None and w >= dw:
+                    continue
                 opened = bool(tm) and vac.get((tm, pos, w, s), False)
                 if opened and p.get("rank") == 1:
                     continue                # it is HIS job that came open
@@ -376,7 +477,8 @@ class Board:
         # Every id that could appear in ANY hypothetical is drawn for up front,
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
-        self.vac, self.avail, self.share = draws(pool, self.S, self.weeks, sims)
+        self.vac, self.avail, self.share, self.took = draws(
+            pool, self.S, self.weeks, sims)
         # The men under consideration are held OUT of the wire floor. See
         # replacement(): they are unrostered, so leaving them in makes each one
         # the baseline his own acquisition is measured against.
@@ -389,7 +491,8 @@ class Board:
 
     def totals(self, ids):
         return season_totals(ids, self.S, self.weeks, self.weights,
-                             self.vac, self.avail, self.share, self.sims, self.repl)
+                             self.vac, self.avail, self.share, self.sims, self.repl,
+                             self.took)
 
     def score(self, totals):
         return _score(totals, self.contender)
@@ -444,6 +547,43 @@ class Board:
         """What we give up by cutting him -- delta and its standard error."""
         d, se = self._paired(self.totals([p for p in self.mine if p != pid]))
         return -d, se
+
+    def drop_shape(self, pid: str) -> dict:
+        """The whole distribution of what cutting him costs, signed as a COST.
+
+        THE SAME ARGUMENT shape() MAKES ABOUT ADDING, APPLIED TO CUTTING. A bench
+        spot is judged on the ceiling when we acquire -- moves.clears() reads
+        `ceiling >= HIT_POINTS` and says the mean down there "would always prefer
+        a safe body to a man who might become something". Pricing the drop on the
+        mean asks the question shape() already calls the wrong one, so the same
+        man is bought on his tail and sold on his middle and the round trip is
+        coherent nowhere.
+
+        `tail` is -p10 because shape() keeps both tails for exactly this: a drop
+        produces negative deltas, so the world where losing him hurt most is the
+        LOW one, and reading the high tail returns the world where he did not
+        matter, which is always about zero.
+
+        THE TAIL IS FLOORED AT THE MEAN, and that is not belt-and-braces. p10
+        only resolves a tail for a man who matters in more than a tenth of the
+        worlds. Below that the tenth percentile sits inside the mass where he
+        never mattered and reads exactly zero -- so the deepest lottery tickets,
+        the ones this exists to protect, priced as FREE to cut while a man with
+        a modest steady role priced above them. Measured before the floor:
+        Boston mean 0.16 against a tail of -0.00, Strange 0.02 against -0.00.
+        Cutting a man cannot cost less than his expected cost, so the protective
+        reading is the worse of the two and `tail >= mean` becomes true by
+        construction -- which is also the cheapest check that the sign has not
+        been inverted.
+
+        A zero tail is still a real answer: it means the simulator finds no
+        world where this man matters, which is a statement about the model's
+        coverage as much as about the player. See the takeover event in draws().
+        """
+        sh = self.shape(self.totals([p for p in self.mine if p != pid]))
+        mean = -sh["mean"]
+        return {"mean": mean, "tail": max(-sh["p10"], mean), "se": sh["se"],
+                "p_matters": sh["p_hit"]}
 
     def move_value(self, add: str, drop: str) -> tuple[float, float]:
         ids = [p for p in self.mine if p != drop] + [add]
@@ -671,6 +811,25 @@ def drop_price(pid: str, league_id: str = LEAGUE_ID_2026) -> float:
     return round(b.drop_price(pid)[0], 2)
 
 
+def drop_shape(pid: str, league_id: str = LEAGUE_ID_2026) -> dict | None:
+    """The distribution of what cutting him costs, plus whether he starts.
+
+    `starter` travels with the numbers because it is what decides WHICH of them
+    a caller may read, and separating the two invites a caller to pick a tail
+    for a man who plays every week. value.hold_of is the one place allowed to
+    make that choice; this hands it everything it needs to.
+
+    None for a man the board does not carry, so the caller falls back rather
+    than reading a zero as a free cut.
+    """
+    b = board(league_id)
+    if pid not in b.mine:
+        return None
+    sh = b.drop_shape(pid)
+    return {**{k: round(v, 3) for k, v in sh.items()},
+            "starter": starts_in_the_median_world(b, list(b.mine), pid)}
+
+
 def moves_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS,
                  top: int = 12) -> str:
     """Every add moves.py would consider, priced both ways.
@@ -790,16 +949,69 @@ def calibrate() -> str:
     return "\n".join(L)
 
 
+def hold_report(league_id: str = LEAGUE_ID_2026) -> str:
+    """What each man we hold costs to cut, and on which statistic.
+
+    THE POINT IS THE TWO COLUMNS AND THE GATE BETWEEN THEM. `mean` orders the
+    drop pool; `tail` -- the world where losing him hurt most -- decides whether
+    he belongs in it at all, mirroring the ceiling bar clears() applies when
+    acquiring. Printing only the number a decision used would hide exactly the
+    comparison this exists to make.
+    """
+    from robo import moves as _moves, season as _season
+    b = board(league_id)
+    ex = series(league_id)["players"]
+    wk = _season.current_week()
+    rows = []
+    for pid in b.mine:
+        sh = b.drop_shape(pid)
+        r = ex.get(pid) or {}
+        pos = r.get("pos") or "?"
+        starter = starts_in_the_median_world(b, list(b.mine), pid)
+        # A man who already HOLDS the job cannot take it, and _takeovers skips
+        # him. Printing a probability for him anyway would show a number the
+        # simulator never drew.
+        lead = (b.S.get(pid) or {}).get("rank") == 1
+        tk = ({} if lead or pos not in roles.OPPORTUNITY else
+              roles.takeover_prior(pid, pos, _season.SEASON, team=r.get("team"),
+                                   week=wk))
+        rows.append({"name": r.get("name") or pid, "pos": pos, "starter": starter,
+                     "mean": sh["mean"], "tail": sh["tail"],
+                     "p": sh["p_matters"], "tk": tk})
+    rows.sort(key=lambda x: x["mean"])
+    L = [f"HOLD SIDE - week {wk}, {b.sims} simulated seasons",
+         f"  protection bar {_moves.TICKET_PROTECT_POINTS} on the loss tail for a "
+         f"bench man; takeover weight {TAKEOVER_WEIGHT}", "",
+         f"  {'player':<22}{'pos':<5}{'mean':>8}{'tail':>8}{'P(mat)':>8}"
+         f"{'start':>7}{'P(take)':>9}  takeover basis"]
+    for x in rows:
+        tk = x["tk"]
+        held = (not x["starter"] and x["tail"] >= _moves.TICKET_PROTECT_POINTS
+                and _moves.TICKET_PROTECT_POINTS > 0)
+        pt = f"{tk['p']:.3f}" if tk else "held job"
+        L.append(f"  {x['name']:<22}{x['pos']:<5}{x['mean']:>8.2f}{x['tail']:>8.2f}"
+                 f"{x['p']:>8.2f}{str(x['starter'])[:5]:>7}{pt:>9}  "
+                 f"{'HELD  ' if held else '      '}{tk.get('why', '')}")
+    L += ["", "  HELD = a bench man the loss tail protects from an ordinary cut.",
+          "  patch mode ignores that: an unfillable starting slot is a certain",
+          "  loss this week and outranks protecting a contingency."]
+    return "\n".join(L)
+
+
 def main():
     ap = argparse.ArgumentParser(description="what a roster move is really worth")
     ap.add_argument("--calibrate", action="store_true",
                     help="what an add has been worth in this league's history")
     ap.add_argument("--roster", action="store_true", help="what each man we hold is worth")
     ap.add_argument("--moves", action="store_true", help="every live proposal, old vs new")
+    ap.add_argument("--hold", action="store_true",
+                    help="drop cost per man: mean, loss tail, and the protection gate")
     ap.add_argument("--sims", type=int, default=SIMS)
     a = ap.parse_args()
     if a.calibrate:
         print(calibrate())
+    elif a.hold:
+        print(hold_report())
     else:
         print(moves_report(sims=a.sims) if a.moves else roster_report(sims=a.sims))
 

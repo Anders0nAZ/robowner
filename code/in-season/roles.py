@@ -90,6 +90,21 @@ FIT_FIRST, FIT_LAST = 2016, 2025
 # third-year player who never played has answered the question.
 DRAFT_PRIOR_SEASONS = 2
 
+# How far realised usage may move a man off his cohort takeover rate, shrunk
+# again by how many weeks have actually been played. The cohort rate is a base
+# rate for a draft class; a rookie already carrying an established share is a
+# better bet than it and one who is not on the field is a worse one. 0.0 leaves
+# the fitted cohort rate alone and is the A/B baseline.
+TAKEOVER_USAGE_WEIGHT = 1.0
+
+# The most a scout verdict may move that probability, either way. News adjusts
+# P(he wins the job) and NEVER a points total -- scout keeps role_signal and
+# trust_multiplier apart precisely because collapsing them put a hamstring
+# discount on a week-14 projection. The span is small on purpose: one model
+# reading of one beat report should tilt a thesis, not replace it. 0.0 ignores
+# news here entirely.
+TAKEOVER_NEWS_SPAN = 0.25
+
 from robo import settings as _settings  # noqa: E402
 _settings.apply(__name__, globals())
 
@@ -119,6 +134,22 @@ def _stats(seasons):
     return pl.concat(frames) if frames else None
 
 
+def _opp_expr():
+    """What counts as an opportunity, in one place.
+
+    The fitted panel and the runtime room must agree on this or a share
+    measured now is not comparable with the rate fitted on history, and the
+    disagreement would be invisible -- both would still be numbers between zero
+    and one.
+    """
+    import polars as pl
+    return (pl.when(pl.col("position") == "RB")
+              .then(pl.col("carries") + pl.col("targets"))
+            .when(pl.col("position") == "QB")
+              .then(pl.col("attempts") + pl.col("carries"))
+            .otherwise(pl.col("targets")))
+
+
 def panel(seasons, window: int = WINDOW):
     """Player-week shares of team positional opportunity, with trailing rank.
 
@@ -135,10 +166,7 @@ def panel(seasons, window: int = WINDOW):
     d = _stats(seasons)
     if d is None or d.height == 0:
         return None
-    d = d.with_columns(
-        pl.when(pl.col("position") == "RB").then(pl.col("carries") + pl.col("targets"))
-          .when(pl.col("position") == "QB").then(pl.col("attempts") + pl.col("carries"))
-          .otherwise(pl.col("targets")).alias("opp"))
+    d = d.with_columns(_opp_expr().alias("opp"))
 
     team_weeks = d.select(["season", "team", "week"]).unique()
     span = d.group_by(["season", "team", "position", "player_id",
@@ -363,6 +391,140 @@ def takeover_rate(pos: str, exp: int | None, rnd: int | None) -> tuple[float, st
 
 
 @lru_cache(maxsize=1)
+def _draft_capital() -> dict:
+    """sleeper_id -> (draft_year, round). The split takeover_rate() pays on.
+
+    Sleeper's own player dump carries `years_exp` but leaves `draft_round` null,
+    so the round has to come from the same nflverse table _takeover() fitted on
+    -- otherwise a runtime prior would be reading a different definition of
+    "early-round rookie" than the rate it is about to index.
+    """
+    out = {}
+    try:
+        import polars as pl
+        by_gsis = _by_gsis()
+        d = pl.read_parquet(PARQUET / "draft_picks.parquet").select(
+            ["season", "round", "gsis_id"])
+        for row in d.iter_rows(named=True):
+            sid = by_gsis.get(row.get("gsis_id"))
+            if sid:
+                out[sid] = (row.get("season"), row.get("round"))
+    except Exception:
+        return {}
+    return out
+
+
+def current_room(team: str, pos: str, through_week: int, season_yr) -> dict:
+    """Realised opportunity share this season, from ONE completed week up.
+
+    SEPARATE FROM panel(), WHICH IS BUILT FOR FITTING AND MUST STAY THAT WAY.
+    There the share is `shift(1).rolling_mean(window, min_samples=2)`: the shift
+    stops a week leaking into its own prediction and the minimum keeps a fitted
+    cell honest. Both are right for measuring history and wrong for asking who
+    holds the job right now -- at week 2 they require two prior observations, so
+    nobody in the league returns a `usage` tier and every runtime caller
+    silently falls back to a draft-capital cold start.
+
+    So this reads the same parquet with neither. It is not a second fit and
+    nothing is fitted on it; it reports what has happened, with `weeks_used` so
+    a one-game room can never be mistaken for a settled one.
+    """
+    out = {"share": {}, "weeks_used": 0, "why": ""}
+    try:
+        import polars as pl
+        p = PARQUET / f"player_stats_{int(season_yr)}.parquet"
+        if not p.exists():
+            out["why"] = f"no player_stats_{int(season_yr)}.parquet yet"
+            return out
+        df = pl.read_parquet(p).filter(
+            (pl.col("team") == team)
+            & (pl.col("position") == (pos or "").upper())
+            & (pl.col("week") <= int(through_week)))
+        if df.height == 0:
+            out["why"] = f"no {pos} usage rows for {team} yet"
+            return out
+        df = df.with_columns(_opp_expr().alias("opp"))
+        weeks = df["week"].unique().to_list()
+        tot = float(df["opp"].sum())
+        if tot <= 0:
+            out["why"] = f"{team} {pos} recorded no opportunity"
+            return out
+        g = df.group_by("player_id").agg(pl.col("opp").sum().alias("opp"))
+        by_gsis = _by_gsis()
+        for row in g.iter_rows(named=True):
+            sid = by_gsis.get(row["player_id"])
+            if sid:
+                out["share"][sid] = float(row["opp"]) / tot
+        out["weeks_used"] = len(weeks)
+        out["why"] = f"{len(weeks)} completed week(s) of {team} {pos} usage"
+    except Exception as e:
+        out["why"] = f"unreadable ({type(e).__name__})"
+    return out
+
+
+def takeover_prior(sleeper_id: str, pos: str, season_yr, team: str | None = None,
+                   week: int | None = None, news: bool = True) -> dict:
+    """P(this man simply takes the job this season), and what went into it.
+
+    The runtime face of takeover_rate(), which until now had no caller at all.
+    A backup's whole thesis is usually this event and not an injury: the
+    absorption curve answers "the job came open, how much does he pick up",
+    which is temporary by construction, while this is the rookie who is a
+    starter by week 8 because he outplayed the man in front of him.
+
+    Three terms, kept visible and separately switchable because they are
+    different kinds of claim:
+
+      cohort   the fitted rate for his draft capital and experience. Undrafted
+               and unmatched men fall to the position's pooled cell and say so,
+               rather than being silently treated as veterans.
+      usage    what he has actually been doing, shrunk by how little of it there
+               is. A rookie already taking a full share is a better bet than his
+               cohort; one who is not playing is a worse one.
+      news     boost/avoid, confidence-weighted. It moves the PROBABILITY HE
+               WINS THE JOB and nothing else -- scout splits role_signal from
+               trust_multiplier precisely because collapsing the two is what put
+               a hamstring discount on a week-14 projection.
+
+    Every term is clamped and the result cannot leave [0, 1].
+    """
+    yr, rnd = _draft_capital().get(str(sleeper_id)) or (None, None)
+    exp = (int(season_yr) - int(yr)) if yr else None
+    base, why = takeover_rate(pos, exp, rnd)
+    p = float(base)
+    out = {"cohort": round(p, 4), "why": why, "exp": exp, "round": rnd,
+           "usage_share": None, "weeks_used": 0, "news": None}
+
+    if team and week and TAKEOVER_USAGE_WEIGHT > 0:
+        room = current_room(team, pos, int(week) - 1, season_yr)
+        share = (room.get("share") or {}).get(str(sleeper_id))
+        if share is not None and room["weeks_used"]:
+            # Shrunk by how much season there is, not by how good the news is.
+            w = min(1.0, room["weeks_used"] / WINDOW) * TAKEOVER_USAGE_WEIGHT
+            p = (1.0 - w) * p + w * min(1.0, float(share) / MIN_ESTABLISHED_SHARE) * base
+            out.update({"usage_share": round(float(share), 4),
+                        "weeks_used": room["weeks_used"]})
+
+    if news and TAKEOVER_NEWS_SPAN > 0:
+        try:
+            from robo.scout import trust_multiplier
+            tm = float(trust_multiplier(str(sleeper_id)))
+        except Exception:
+            tm = 1.0
+        if tm != 1.0:
+            # trust_multiplier is already confidence-weighted and clamped by
+            # scout; this only decides how much of that lands on a probability,
+            # and the span keeps a single verdict from swinging the thesis.
+            adj = max(-TAKEOVER_NEWS_SPAN,
+                      min(TAKEOVER_NEWS_SPAN, (tm - 1.0)))
+            p = p * (1.0 + adj)
+            out["news"] = round(adj, 4)
+
+    out["p"] = round(max(0.0, min(1.0, p)), 4)
+    return out
+
+
+@lru_cache(maxsize=1)
 def _by_espn() -> dict:
     """espn_id -> sleeper_id, for robo/injuries.py.
 
@@ -415,9 +577,36 @@ def freshness(season_yr) -> dict:
     p = PARQUET / f"player_stats_{int(season_yr)}.parquet"
     if not p.exists():
         return {"ok": False, "why": f"no player_stats_{int(season_yr)}.parquet yet",
-                "age_h": None}
+                "age_h": None, "have_week": None}
     age = (time.time() - p.stat().st_mtime) / 3600.0
-    return {"ok": True, "why": "", "age_h": round(age, 1)}
+    # AGE IS NOT LIVENESS. A file rewritten every morning with last week's
+    # contents passes a timestamp check forever, which is the shape of failure
+    # that hid the frozen season-projection spine for two weeks: it existed, it
+    # parsed, it validated, and it was stale. The only honest question is
+    # whether the latest COMPLETED week is in it.
+    have = last_week = None
+    try:
+        import polars as pl
+        have = int(pl.read_parquet(p, columns=["week"])["week"].max())
+        last_week = _last_completed_week(season_yr)
+    except Exception as e:
+        return {"ok": False, "why": f"unreadable ({type(e).__name__})",
+                "age_h": round(age, 1), "have_week": None}
+    if last_week and have is not None and have < last_week:
+        return {"ok": False, "age_h": round(age, 1), "have_week": have,
+                "why": (f"usage panel stops at week {have}; week {last_week} "
+                        "has completed")}
+    return {"ok": True, "why": "", "age_h": round(age, 1), "have_week": have}
+
+
+def _last_completed_week(season_yr) -> int | None:
+    """The most recent week whose games are all done, or None if unknowable."""
+    try:
+        from robo import season as _season
+        wk = int(_season.current_week())
+        return wk - 1 if wk > 1 else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------- the runtime
@@ -595,11 +784,21 @@ def _projected_rooms() -> dict:
     him a factor of thirty-four for a reason that was never about Arizona.
 
     Projected opportunity has none of those faults. It is CONTINUOUS, so there
-    is no cliff to fall off; it is made by people reading beat reporters, so it
-    moves on competition news; it exists in August for rookies and men who
-    changed teams, which is precisely the cold start; and it is CURRENT BY
-    CONSTRUCTION, which the nflverse rooms are not -- theirs are last season's
-    rosters, so Arizona's still contains Kyler Murray, who plays for Minnesota.
+    is no cliff to fall off; it is made by people reading beat reporters; and it
+    exists in August for rookies and men who changed teams, which is precisely
+    the cold start -- where the nflverse rooms are last season's rosters, so
+    Arizona's still contains Kyler Murray, who plays for Minnesota.
+
+    IT IS A PRESEASON PRIOR AND IT DOES NOT MOVE IN SEASON. This docstring used
+    to claim it was "current by construction", and that is measurably false once
+    games are played: across data/raw/proj_archive, 4-16 Sep 2026 spanning all
+    of week 1, the SEASON opportunity file changed for 15 of 886 players -- 1.7%
+    -- while the weekly projection moved for 493 of 870. So the room this builds
+    is where the market expected a man to stand in August, and nothing about
+    week 1 reaches it. That is acceptable as a cold-start prior and is the
+    reason roles.current_room() exists to be blended against it; it is not
+    acceptable as a belief that the file tracks competition news, and leaving
+    the old claim here would re-justify that to the next reader.
 
     WHERE THAT ARGUMENT RUNS OUT: `opp <= 0` DROPS A MAN ENTIRELY, and absence
     is worse than a formality. Seattle's season file carries Drew Lock as

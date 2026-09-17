@@ -116,6 +116,18 @@ NOISE_MULTIPLE = 2.0
 # in the current optimal lineup is droppable.
 DROP_FLOOR = 120.0
 
+# A BENCH MAN WHOSE LOSS TAIL REACHES THIS IS NOT CASUALLY CUT. The exact mirror
+# of the bar clears() applies when ACQUIRING one -- `ceiling >= HIT_POINTS`, the
+# median realised contribution of an add in this league -- so the same man is no
+# longer bought on his tail and sold on his mean. Defaulting to the same 7.0
+# keeps the two halves one decision; raising it protects fewer tickets and 0.0
+# disables the gate entirely, which is the A/B baseline.
+#
+# It gates membership and never the ORDER. The pool stays sorted on the mean,
+# because ranking one man's tail against another's mean put a rookie back above
+# a WR1 as the more expensive cut.
+TICKET_PROTECT_POINTS = 7.0
+
 # How many roster spots we are willing to turn over in one waiver run. This caps
 # SLOTS, never claims -- capping claims would throw away the free optionality
 # that makes a priority list worth submitting in the first place.
@@ -312,8 +324,38 @@ def _droppables(ctx: dict) -> list[dict]:
         # yield -- but only far enough to reach the cheapest bodies we hold.
         if ctx["mode"] != "patch" and v > DROP_FLOOR:
             continue
+        if _protected_ticket(row, ctx):
+            continue
         out.append({"row": row, "value": v})
     return sorted(out, key=lambda d: d["value"])
+
+
+def _protected_ticket(row: dict, ctx: dict) -> bool:
+    """Is this a bench man whose loss tail says he is a real lottery ticket?
+
+    THE MIRROR OF clears(), AND A GATE FOR THE SAME REASON. Acquiring a bench
+    player is judged on `ceiling >= HIT_POINTS` because down there the mean "is
+    ranking noise and would always prefer a safe body to a man who might become
+    something" -- and then best_free still RANKS the survivors on the mean.
+    Cutting one was judged on the mean alone, so the same man was bought on his
+    tail and sold on his middle.
+
+    This restores the bar without disturbing the ordering. Ranking a bench man's
+    tail against a starter's mean in one sorted pool is not a fix: it put Kaelon
+    Black above Nico Collins as the more expensive cut, which would refuse real
+    moves to protect a maybe.
+
+    A STARTER IS NEVER PROTECTED HERE. He plays in the median world, so his mean
+    is the right question and DROP_FLOOR already answers it. `patch` keeps its
+    precedence: an unfillable starting slot is a certain loss this week and
+    outranks protecting a contingency.
+    """
+    if TICKET_PROTECT_POINTS <= 0 or ctx["mode"] == "patch":
+        return False
+    sh = value.hold_shape(row, ctx["week"])
+    if not sh or sh.get("starter"):
+        return False
+    return float(sh.get("tail") or 0.0) >= TICKET_PROTECT_POINTS
 
 
 def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[dict]:
