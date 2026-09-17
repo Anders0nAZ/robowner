@@ -29,6 +29,25 @@ def live_portfolio():
     return waiver_manager.status()
 
 
+@st.cache_data(ttl=300, show_spinner="Reading the wire…")
+def wire_split() -> dict:
+    """How much of the wire can be ADDED versus has to be CLAIMED.
+
+    Two very different pools and the slate treats them differently, so the
+    counts belong beside it. A free agent is an outright add for nothing; a man
+    on waivers costs FAAB and does not resolve until the league's waiver run,
+    which is why the bot builds a ladder for one and a plain add for the other.
+    """
+    from robo import expected, season
+    ids = list((expected.load().get("players") or {}))
+    held = set(season.rostered_ids())
+    states = season.transaction_states([p for p in ids if p not in held])
+    free = sum(1 for v in states.values() if v.get("acquisition") == "free_now")
+    wv = sum(1 for v in states.values()
+             if v.get("acquisition") in {"weekly_waiver", "drop_waiver"})
+    return {"free": free, "waivers": wv, "rostered": len(held)}
+
+
 @st.cache_data(ttl=600, show_spinner="Pricing this week's defences…")
 def defence_stream() -> dict:
     """This week's streaming decision, priced the way the bot prices it.
@@ -101,6 +120,17 @@ else:
     for row in slate:
         if row["channel"] == "waiver claim":
             st.caption(ui.money(narrate.claim_story(row["raw"])))
+
+try:
+    w = wire_split()
+    st.caption(
+        f"The wire behind that slate: **{w['free']} free now** — addable outright, "
+        f"today, for nothing — and **{w['waivers']} on waivers**, who have to be "
+        f"bid for and do not resolve until the league's waiver run. A claim in the "
+        f"slate above is one of the second kind; a free-agent row is one of the "
+        f"first. {w['rostered']} are on somebody's roster.")
+except Exception as e:
+    st.caption(f"Wire split unavailable: {type(e).__name__}")
 
 st.markdown(f"[Open this decision front to back →](Decisions?run={run['fingerprint']})")
 

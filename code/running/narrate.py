@@ -211,6 +211,29 @@ def run_story(run: dict) -> list[str]:
     return out
 
 
+def slate_line(run: dict) -> str:
+    """One scannable line of what a run actually proposed.
+
+    A timeline whose only verdict column reads "Proposal only" says a run
+    happened and nothing about what it wanted to do, so comparing two runs means
+    opening both. This is the same slate the Now page renders, compressed to fit
+    a row: who comes in, what it costs, and who goes out.
+    """
+    from robo import decision_audit
+    bits = []
+    for row in decision_audit.slate(run):
+        add = row.get("add") or "?"
+        bid = row.get("bid")
+        drop = row.get("drop") or ""
+        piece = f"{add}" + (f" ${bid}" if bid is not None else "")
+        if drop and drop != "(open roster spot)":
+            piece += f" ← {drop}"
+        else:
+            piece += " ← open spot"
+        bits.append(piece)
+    return "; ".join(bits)
+
+
 def slate_absence(run: dict) -> str:
     """Why the slate is empty, when it is. An empty table explains nothing."""
     if run.get("blackout"):

@@ -73,6 +73,40 @@ m[1].metric("Last decision", ui.fmt_age(docs[0].get("at")))
 m[2].metric("Runs recorded", len(docs))
 m[3].metric("Latest result", docs[0]["outcome"])
 
+# WHAT IT WANTS TO DO, BEFORE THE HISTORY OF WANTING TO DO IT. The timeline
+# below is the log; this is the answer. Reading a verdict column that says
+# "Proposal only" tells you a run happened and nothing about what it proposed.
+latest = docs[0]
+top = decision_audit.slate(latest)
+if top:
+    st.success(f"**Latest run proposes {len(top)} move(s)** — "
+               + news_audit.local_time(latest.get("at")))
+    st.dataframe(pd.DataFrame([{k: v for k, v in row.items()
+                                if k not in {"raw", "add_id", "drop_id"}}
+                               for row in top]),
+                 use_container_width=True, hide_index=True,
+                 column_config={
+                     "bid": st.column_config.NumberColumn(format="$%d"),
+                     "gain": st.column_config.NumberColumn(format="%+.2f"),
+                     "ceiling": st.column_config.NumberColumn(format="%.2f"),
+                     "channel": st.column_config.TextColumn(
+                         help="free now = an outright add for nothing. waiver "
+                              "claim = bid FAAB and wait for the weekly run."),
+                 })
+else:
+    st.info(f"**Latest run proposes nothing.** {narrate.slate_absence(latest)}")
+    # "Nothing, because the blackout" is the honest answer to what it proposes
+    # NOW and a useless answer to what it has been proposing. The last run that
+    # wanted something is the other half of the question.
+    prior = next((d for d in docs if decision_audit.slate(d)), None)
+    if prior:
+        # ui.money: two dollar amounts in one markdown string make Streamlit
+        # render everything between them as a maths span, which silently eats
+        # the numbers a reader is trying to check.
+        st.caption(ui.money(f"Last run that wanted something — "
+                            f"{news_audit.local_time(prior.get('at'))}, "
+                            f"{narrate.slate_line(prior)}"))
+
 if state.get("paused"):
     st.info("Watcher intentionally paused: "
             + str(state["paused"].get("reason") or "scheduled pause"))
@@ -108,16 +142,25 @@ if not view:
     st.info("No run of that kind has been recorded.")
     st.stop()
 
+st.caption("**What it proposed** is the actual slate, not a count — a column that "
+           "only ever said 'Proposal only' meant comparing two runs required "
+           "opening both. `←` is the man going out.")
 st.dataframe(pd.DataFrame([{
     "when": news_audit.local_time(d.get("at")),
     "started by": "news" if d["kind"] == decision_audit.NEWS else f"clock · {d['mode']}",
     "week": d.get("week"),
+    "what it proposed": narrate.slate_line(d) or f"— {narrate.slate_absence(d)}",
     "considered": len(d["candidates"]),
-    "moves": len(decision_audit.slate(d)),
     "result": d["outcome"],
     "fingerprint": d["fingerprint"],
 } for d in view]), use_container_width=True, hide_index=True,
-    height=min(280, 38 + 35 * len(view)))
+    height=min(360, 38 + 35 * len(view)),
+    column_config={
+        "what it proposed": st.column_config.TextColumn(width="large"),
+        "considered": st.column_config.NumberColumn(
+            help="Players that reached a screen in this run, across both the "
+                 "causal and simulator phases."),
+    })
 
 # A run picked from the Now page arrives as ?run=<fingerprint>.
 wanted = st.query_params.get("run")
@@ -132,6 +175,21 @@ action = raw.get("action") or {}
 idx = news_audit.player_index(raw, name_fallback())
 
 st.divider()
+chosen_slate = decision_audit.slate(doc)
+st.subheader("What this run proposed")
+if chosen_slate:
+    st.dataframe(pd.DataFrame([{k: v for k, v in row.items()
+                                if k not in {"raw", "add_id", "drop_id"}}
+                               for row in chosen_slate]),
+                 use_container_width=True, hide_index=True,
+                 column_config={
+                     "bid": st.column_config.NumberColumn(format="$%d"),
+                     "gain": st.column_config.NumberColumn(format="%+.2f"),
+                     "ceiling": st.column_config.NumberColumn(format="%.2f"),
+                 })
+else:
+    st.info(narrate.slate_absence(doc))
+
 st.subheader("What happened")
 for paragraph in narrate.run_story(doc):
     st.write(paragraph)

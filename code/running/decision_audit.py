@@ -109,7 +109,12 @@ def _candidate_row(row: dict, channel: str, phase: str) -> dict:
         "pos": row.get("pos") or add.get("pos"),
         "team": row.get("team") or add.get("team"),
         "drop_name": drop.get("name"),
-        "channel": ("waivers" if row.get("on_waivers") else "free agent"
+        # ONE VOCABULARY ACROSS EVERY PAGE. "free now" is an outright add for
+        # nothing; "on waivers" costs FAAB and waits for the weekly run. The
+        # recorded `on_waivers` flag is preferred over the audit bucket the row
+        # arrived in, because the flag is what the classifier actually said
+        # about that player at decision time.
+        "channel": ("on waivers" if row.get("on_waivers") else "free now"
                     if "on_waivers" in row else channel),
         "phase": phase,
         "status": bucket,
@@ -135,7 +140,7 @@ def _news(doc: dict) -> dict:
     claims = _slate_claims(action.get("claim_proposals"))
     free = list(action.get("free_proposals") or [])
     submitted = news_audit.submitted(doc)
-    candidates = [_candidate_row(r, "free agent", "causal screen") for r in
+    candidates = [_candidate_row(r, "free now", "causal screen") for r in
                   (action.get("candidate_checks") or action.get("rejections") or [])]
     return {
         "kind": NEWS,
@@ -180,9 +185,9 @@ def _clock(doc: dict) -> dict:
     claims_audit = doc.get("claims_audit") or {}
     claims = _slate_claims(doc.get("plans"))
     free = list(doc.get("free_plans") or [])
-    candidates = ([_candidate_row(r, "free agent", "simulator") for r in
+    candidates = ([_candidate_row(r, "free now", "simulator") for r in
                    free_audit.get("options") or []]
-                  + [_candidate_row(r, "waivers", "simulator") for r in
+                  + [_candidate_row(r, "on waivers", "simulator") for r in
                      claims_audit.get("options") or []])
     gated = bool(doc.get("gated"))
     roster = list(doc.get("roster") or [])
@@ -350,7 +355,10 @@ def slate(run: dict) -> list[dict]:
     rows = []
     for p in run.get("free_moves") or []:
         add, drop = p.get("add") or {}, p.get("drop") or {}
-        rows.append({"channel": "free agent" if not drop.get("player_id") else "add / drop",
+        # The channel is WHERE he comes from, not whether a drop is paired
+        # with him -- the drop column already says that, and "add / drop"
+        # answered a different question in the same cell.
+        rows.append({"channel": "free now",
                      "add": add.get("name"), "add_id": add.get("player_id"),
                      "drop": drop.get("name") or "(open roster spot)",
                      "drop_id": drop.get("player_id"),

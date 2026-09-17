@@ -36,20 +36,49 @@ def board() -> tuple[list, dict]:
     return rows, {k: v for k, v in d.items() if k != "players"}
 
 
-@st.cache_data(ttl=600, show_spinner="Reading rosters from Sleeper…")
-def ownership() -> dict:
-    """player_id -> 'mine' | 'rostered'. Never fatal.
+@st.cache_data(ttl=600, show_spinner="Reading rosters and waiver states from Sleeper…")
+def availability(ids: tuple) -> dict:
+    """player_id -> {status, why}. Never fatal.
+
+    FREE AND ON WAIVERS ARE NOT THE SAME THING, and calling both "free" was the
+    one mislabel on this page that could change a decision. A free agent can be
+    added outright for nothing, today. A man on waivers has to be bid for and
+    settles on the league's waiver run, so he costs FAAB and he costs time --
+    and season.on_waivers()'s own docstring says getting this partition right
+    "is the whole reason the bot will not spend FAAB on somebody it could have
+    had for nothing". A board that renders them identically invites exactly that
+    mistake by hand.
+
+    The four acquisition states come from season.transaction_eligibility(), the
+    one classifier every decision module already reads, rather than being
+    re-derived here from a roster list.
 
     A dead Sleeper must not take the page down -- the valuation is on disk and
     is the thing being audited; who owns whom is a filter.
     """
+    labels = {"free_now": "free now", "weekly_waiver": "on waivers",
+              "drop_waiver": "on waivers", "unavailable": "unavailable"}
     try:
         from robo import season
         mine = set(season.mine().get("players") or [])
-        held = season.rostered_ids()
+        held = set(season.rostered_ids())
     except Exception:
         return {}
-    return {pid: ("mine" if pid in mine else "rostered") for pid in held}
+    out = {pid: {"status": "mine" if pid in mine else "rostered", "why": ""}
+           for pid in held}
+    try:
+        from robo import season
+        unrostered = [p for p in ids if p not in held]
+        for pid, st_ in season.transaction_states(unrostered).items():
+            acq = st_.get("acquisition")
+            out[pid] = {"status": labels.get(acq, str(acq)),
+                        "why": st_.get("reason") or st_.get("unlock_basis") or ""}
+    except Exception:
+        # Roster truth still stands; the wire partition is what we lost.
+        for pid in ids:
+            out.setdefault(pid, {"status": "unrostered", "why":
+                                 "waiver state unavailable"})
+    return out
 
 
 @st.cache_data(ttl=600, show_spinner="Walking the calculation…")
@@ -78,7 +107,8 @@ if not rows:
              "`python -m robo.expected --rebuild`.")
     st.stop()
 
-own = ownership()
+avail = availability(tuple(r["player_id"] for r in rows))
+own = {pid: v["status"] for pid, v in avail.items()}
 wk = meta.get("week")
 current = {**meta, "players": {r["player_id"]: r for r in rows}}
 
@@ -173,8 +203,14 @@ if preset != "Everyone":
 
 f1, f2, f3 = st.columns([2, 2, 3])
 with f1:
-    scope = st.radio("Roster", ["everyone", "mine", "rostered", "free agents"],
-                     horizontal=True, help="Who holds him right now, read live from Sleeper.")
+    scope = st.radio("Availability",
+                     ["everyone", "mine", "rostered", "free now", "on waivers"],
+                     horizontal=True,
+                     help="Read live from Sleeper. **Free now** can be added "
+                          "outright for nothing. **On waivers** has to be bid for "
+                          "and settles on the league's waiver run — the two are "
+                          "not interchangeable and this page used to call both "
+                          "'free'.")
 with f2:
     if preset == "Everyone":
         sort_by = st.selectbox("Sort by", ["ros", "raw"] + list(CHANGES),
@@ -191,9 +227,9 @@ view = rows
 if scope == "mine":
     view = [r for r in view if own.get(r["player_id"]) == "mine"]
 elif scope == "rostered":
-    view = [r for r in view if r["player_id"] in own]
-elif scope == "free agents":
-    view = [r for r in view if r["player_id"] not in own]
+    view = [r for r in view if own.get(r["player_id"]) in {"mine", "rostered"}]
+elif scope in {"free now", "on waivers"}:
+    view = [r for r in view if own.get(r["player_id"]) == scope]
 view = ui.pos_filter(st, view)
 if q.strip():
     view = [r for r in view if q.strip().lower() in r["name"].lower()]
@@ -233,7 +269,9 @@ record = []
 for r in view:
     pid = r["player_id"]
     row = {"player": r["name"], "pos": r["pos"], "team": r["team"] or "-",
-           "owner": own.get(pid, "free"), "ros": r["ros"], "raw": r["raw"],
+           "availability": own.get(pid, "unrostered"),
+           "how to get him": (avail.get(pid) or {}).get("why") or "",
+           "ros": r["ros"], "raw": r["raw"],
            "day Δ": _delta(day_change, pid)}
     if week_proj is not None:
         row[proj_col] = _delta(week_proj_change, pid)
@@ -249,6 +287,14 @@ st.caption(f"{len(df)} of {len(rows)} players")
 st.dataframe(
     df, use_container_width=True, hide_index=True, height=420,
     column_config={
+        "availability": st.column_config.TextColumn(
+            help="mine / rostered elsewhere / free now / on waivers. Free now is "
+                 "an outright add; on waivers costs FAAB and waits for the "
+                 "weekly run."),
+        "how to get him": st.column_config.TextColumn(
+            width="medium",
+            help="Why he is not simply free — the classifier's own words, e.g. "
+                 "'dropped within the last 1 day(s)'."),
         "ros": st.column_config.NumberColumn(
             "ros", format="%.1f",
             help="What he is worth from this week to the end, with the playoff weeks "
