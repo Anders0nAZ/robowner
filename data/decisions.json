@@ -774,5 +774,44 @@
     "13272"
    ]
   }
+ },
+ {
+  "id": 30,
+  "ts": "2026-09-18T22:43:25+00:00",
+  "kind": "lineup",
+  "title": "Week 2 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Terry McLaurin; WR: Emeka Egbuka; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots",
+  "rationale": "Projected 128.6 points under league scoring from Roboner's NFL model means for 16 of 17 players, -1.5 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Nico Collins (Out).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "12507",
+    "5927",
+    "12514",
+    "8131",
+    "11581",
+    "6804",
+    "11792",
+    "NE"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "5927",
+    "8131",
+    "11581",
+    "6804",
+    "11792",
+    "NE"
+   ],
+   "projected": 128.6,
+   "week": 2,
+   "source": "Roboner NFL model, 472 players, 0.0h old, anchored on proj_2026_wk02_20260918T000504Z.json (pre-game, 475 players with a game)",
+   "modelled": 16
+  }
  }
 ]
