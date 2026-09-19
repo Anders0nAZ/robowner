@@ -828,5 +828,21 @@
    ],
    "previous": []
   }
+ },
+ {
+  "id": 32,
+  "ts": "2026-09-19T22:44:04+00:00",
+  "kind": "free-agent",
+  "title": "Signed Fernando Mendoza, released (open roster spot)",
+  "decision": "Fernando Mendoza (QB) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 20.8 against 0.0 held, a gain of +20.8 in ros mode. starting slot; +/- 0.7, ceiling 35.0; season totals 145.7 vs 0.0 (+145.7); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "13269",
+   "drop": null,
+   "mode": "ros",
+   "week": 2,
+   "gain": 20.8
+  }
  }
 ]
