@@ -478,6 +478,16 @@ class VramBusyError(Exception):
         self.verdicts = verdicts
 
 
+class ModelUnavailableError(Exception):
+    """The model CALL failed -- a timeout, a dropped connection, a 5xx -- as
+    opposed to the model answering and leaving a player out. Carries the
+    verdicts earlier chunks produced, like VramBusyError, so they are kept."""
+
+    def __init__(self, verdicts: list[dict], why: str):
+        super().__init__(why)
+        self.verdicts = verdicts
+
+
 # Monotonic time scout last finished a model call. The gate refuses background
 # work while ComfyUI generates, but a model scout just used stays resident for
 # its 1m keep-alive -- 16.5GB beside the image for no reason. If scout is the
@@ -502,8 +512,16 @@ def _release_if_ours(model: str) -> None:
 
 def judge(bundles: list[dict], model: str = LOCAL_MODEL,
           verbose: bool = True, timeout: int = 900,
-          gate_priority: str = "foreground") -> list[dict]:
-    """Read the prose, return the dates. One batch failing costs that batch."""
+          gate_priority: str = "foreground",
+          raise_unavailable: bool = False) -> list[dict]:
+    """Read the prose, return the dates. One batch failing costs that batch.
+
+    `raise_unavailable` stops at the first chunk whose CALL fails and raises
+    ModelUnavailableError instead of returning a silent gap. The queue needs
+    that: it cannot otherwise tell a timeout from a model that skipped a player,
+    and on 22 Sep three timeouts while ComfyUI shared the card spent all three
+    retries on six players the model judged in 64s the next morning.
+    """
     global _last_call_at
     import requests
     out = []
@@ -552,6 +570,14 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
             raise
         except Exception as e:
             print(f"  batch {i // LOCAL_BATCH + 1} FAILED: {str(e)[:120]}", flush=True)
+            # Transient only. A 4xx means the request itself is wrong and will
+            # fail the same way every time, so it keeps spending attempts.
+            transient = (isinstance(e, (requests.exceptions.Timeout,
+                                        requests.exceptions.ConnectionError))
+                         or (isinstance(e, requests.exceptions.HTTPError)
+                             and getattr(e.response, "status_code", 0) >= 500))
+            if raise_unavailable and transient:
+                raise ModelUnavailableError(out, f"{type(e).__name__}: {str(e)[:120]}")
             continue
         out += enforce_floor(got, chunk, verbose=verbose)
         if verbose:

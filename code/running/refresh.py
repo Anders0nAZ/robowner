@@ -158,6 +158,20 @@ def build_playoff_odds() -> str:
     return f"{len(d.get('odds') or {})} teams, ours {ours:.1%}"
 
 
+@step("lines")
+def refresh_lines():
+    """ESPN's lines for the whole remaining season, before anything prices a
+    defence off them: playoff odds, expected and ros all read vegas. Same
+    helper as the cascade's pull, so the two report a failed ESPN read the
+    same way instead of calling a fallback "refreshed".
+    """
+    from robo import cascade
+    got = cascade._pull_lines()
+    if got.startswith(("ESPN FAILED", "MISSING")):
+        raise RuntimeError(got)
+    return got
+
+
 @step("playoff-odds")
 def refresh_playoff_odds():
     """Before the board, because ros.py reads these odds and the board does not
@@ -441,7 +455,7 @@ def main():
         # simply holds its last pre-draft values until then.
         ok = [refresh_players(), refresh_projections(), refresh_ecr(),
               refresh_buzz(), refresh_model(), rebuild_board(),
-              capture_projections(), refresh_playoff_odds(),
+              capture_projections(), refresh_lines(), refresh_playoff_odds(),
               refresh_injuries(), refresh_scout(), rebuild_expected(), rebuild_ros(),
               ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
               refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]

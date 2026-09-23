@@ -33,6 +33,11 @@ from functools import lru_cache
 from robo import MODEL_DATA
 
 PARQUET = MODEL_DATA / "parquet" / "schedules.parquet"
+# THE LINE SOURCE: ESPN's live board, nflverse only per game as a fallback --
+# see nflmodel/ingest/lines.py, which writes it. Read as JSON so nothing here
+# imports the model. The parquet above still supplies kickoff times, and lines
+# for any week the artifact has not been built for.
+LINES = MODEL_DATA / "lines" / "current.json"
 
 # Sleeper's dialect -> nflverse's. Sleeper writes LAR where nflverse writes LA.
 # Transcribed from nflmodel/teams.py ALIAS.
@@ -77,6 +82,60 @@ def _schedule(season_yr: int) -> tuple:
         return tuple(tuple(r) for r in df.select(cols).iter_rows())
     except Exception:
         return ()
+
+
+_artifact_cache = {"mtime": None, "doc": None}
+
+
+def _artifact() -> dict:
+    """The lines artifact, re-read only when the file has changed.
+
+    mtime-checked rather than lru_cached: implied_totals runs in tight loops
+    (the streaming board, ROS, playoff odds), and a long-lived process -- the
+    audit app, the responder -- must still see the pulse's refresh.
+    """
+    import json
+    try:
+        mtime = LINES.stat().st_mtime
+    except OSError:
+        return {}
+    if _artifact_cache["mtime"] != mtime:
+        try:
+            doc = json.loads(LINES.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return _artifact_cache["doc"] or {}
+        _artifact_cache.update(mtime=mtime, doc=doc)
+    return _artifact_cache["doc"] or {}
+
+
+def lines(season_yr: int) -> list[dict]:
+    """Every game's line for a season: the artifact's rows, and the parquet's
+    for any week the artifact has not been built for.
+
+    Each row: week, home, away, spread (nflverse convention: positive = home
+    favoured), total, plus source / status / provider / fetched_utc / details
+    so a caller can say where its number came from.
+    """
+    doc = _artifact()
+    rows, covered = [], set()
+    if doc.get("season") == int(season_yr):
+        for g in doc.get("games") or []:
+            covered.add(int(g["week"]))
+            rows.append({"week": int(g["week"]), "home": g["home_team"],
+                         "away": g["away_team"], "spread": g.get("spread_line"),
+                         "total": g.get("total_line"), "source": g.get("source"),
+                         "status": g.get("status"), "provider": g.get("provider"),
+                         "fetched_utc": g.get("fetched_utc"),
+                         "details": g.get("details"), "game_id": g.get("game_id")})
+    for wk, home, away, spread, total in _schedule(int(season_yr)):
+        if wk in covered:
+            continue
+        rows.append({"week": wk, "home": RELOCATED.get(home, home),
+                     "away": RELOCATED.get(away, away), "spread": spread,
+                     "total": total, "source": "nflverse" if spread is not None else None,
+                     "status": "no_artifact", "provider": None, "fetched_utc": None,
+                     "details": None, "game_id": None})
+    return rows
 
 
 @lru_cache(maxsize=4)
@@ -190,23 +249,27 @@ def implied_totals(season_yr, week: int, record: dict | None = None) -> dict:
     `record` keeps the POSTED LINE each implied total was derived from. An audit
     of a defence's number wants to see the spread and the total a book actually
     published, not just the halved figures -- those are two arithmetic steps
-    removed from anything anyone could look up.
+    removed from anything anyone could look up -- and which source and fetch
+    it came from, since ESPN and the nflverse fallback can disagree.
     """
     out = {}
-    for wk, home, away, spread, total in _schedule(int(season_yr)):
-        if wk != week or spread is None or total is None:
+    for r in lines(int(season_yr)):
+        spread, total = r["spread"], r["total"]
+        if r["week"] != week or spread is None or total is None:
             continue
         h = total / 2 + spread / 2
         a = total / 2 - spread / 2
-        home, away = RELOCATED.get(home, home), RELOCATED.get(away, away)
+        home, away = r["home"], r["away"]
         out[home] = {"own": round(h, 2), "opp": round(a, 2),
                      "opponent": away, "home": True}
         out[away] = {"own": round(a, 2), "opp": round(h, 2),
                      "opponent": home, "home": False}
         if record is not None:
             line = {"spread_line": spread, "total_line": total,
-                    "home": home, "away": away, "week": wk,
-                    "source": str(PARQUET)}
+                    "home": home, "away": away, "week": r["week"],
+                    "source": r["source"], "status": r["status"],
+                    "provider": r["provider"], "fetched_utc": r["fetched_utc"],
+                    "details": r["details"]}
             record.setdefault("lines", {})[home] = line
             record["lines"][away] = line
     return out
@@ -214,8 +277,8 @@ def implied_totals(season_yr, week: int, record: dict | None = None) -> dict:
 
 def coverage(season_yr, week: int) -> tuple[int, int]:
     """(games priced, games scheduled) for one week."""
-    games = [r for r in _schedule(int(season_yr)) if r[0] == week]
-    priced = [r for r in games if r[3] is not None and r[4] is not None]
+    games = [r for r in lines(int(season_yr)) if r["week"] == week]
+    priced = [r for r in games if r["spread"] is not None and r["total"] is not None]
     return len(priced), len(games)
 
 
@@ -241,16 +304,25 @@ def report(season_yr, week: int | None = None) -> str:
     yr = int(season_yr)
     now = _season.current_week()
     if week:
-        imp = implied_totals(yr, week)
+        rec: dict = {}
+        imp = implied_totals(yr, week, record=rec)
         priced, games = coverage(yr, week)
-        L = [f"IMPLIED TOTALS - {yr} week {week}  ({priced}/{games} games priced)", ""]
+        meta = ((_artifact().get("weeks") or {}).get(str(week)) or {})
+        src = (f"ESPN ({meta.get('provider')}) fetched {meta.get('fetched_utc')}, "
+               f"{meta.get('fallbacks', 0)} fallback(s)" if meta else
+               "nflverse schedules.parquet (no lines artifact for this week)")
+        L = [f"IMPLIED TOTALS - {yr} week {week}  ({priced}/{games} games priced)",
+             f"  lines: {src}", ""]
         if not imp:
             L.append("  no lines posted for this week yet")
             return "\n".join(L)
-        L.append(f"  {'team':<6}{'own':>7}{'opp':>7}   opponent")
+        L.append(f"  {'team':<6}{'own':>7}{'opp':>7}   {'opponent':<10}source")
         for t, d in sorted(imp.items(), key=lambda kv: kv[1]["opp"]):
+            ln = (rec.get("lines") or {}).get(t) or {}
             L.append(f"  {t:<6}{d['own']:>7.1f}{d['opp']:>7.1f}   "
-                     f"{'vs' if d['home'] else '@'} {d['opponent']}")
+                     f"{('vs ' if d['home'] else '@ ') + d['opponent']:<10}"
+                     f"{ln.get('source')}" + ("" if ln.get("status") in ("espn", None)
+                                              else f" ({ln.get('status')})"))
         L.append("")
         L.append("  sorted by OPPONENT implied total -- the top of this list is "
                  "the defence streaming board")

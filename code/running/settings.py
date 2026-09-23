@@ -572,6 +572,16 @@ REGISTRY: list[S] = [
       "but the disagreement is recorded and shows amber on the status page. "
       "Move it toward 0 to see more of them; past the veto it does nothing.",
       bounds=(-200.0, 0.0), unit="points"),
+    S(ROSTER, "robo.newswatch", "LINE_EVENT_POINTS", float,
+      "How far a current-week betting line must move to count as news.",
+      "Any line change reprices the defence decisions (the free-agent stream "
+      "and the waiver-claim ladder), which is cheap. A move of at least this "
+      "many points in the spread or the total -- or a game going off or back on "
+      "the board -- is a full news event: the model re-captures on the new line "
+      "and every valuation and slate is rebuilt. Lower reruns the model on book "
+      "noise; higher waits for a bigger move before the player projections "
+      "follow the market. data/lines_moves.jsonl records every move for tuning.",
+      bounds=(0.5, 7.0), unit="points"),
     S(ROSTER, "robo.moves", "DIRECT_ROS_VETO", float,
       "How far the season-total comparator may disagree before it refuses.",
       "In REST-OF-SEASON points and NEGATIVE, like DIRECT_ROS_FLAG. Sized "

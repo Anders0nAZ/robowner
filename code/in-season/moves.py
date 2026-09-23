@@ -2718,6 +2718,87 @@ def _after_free_context(ctx: dict, plan: dict) -> dict:
     }
 
 
+def stream_defence(week: int, apply: bool = False,
+                   league_id: str = LEAGUE_ID_2026) -> dict:
+    """Swap the defence when this week's lines say somebody free is better.
+
+    One implementation for every caller -- the cascade's stream step and the
+    news pulse's line-move repricing -- so the free-agent half of a defence
+    decision can never run twice with two answers. The waiver half is
+    _plan_defence_claims, inside the claims pass.
+
+    DEFENCES ONLY, AND THAT IS A MEASURED DECISION. streaming.py fits 2,174
+    defence weeks against the opponent's implied total and gets 11.39 points
+    down to 4.72, monotone across all eight buckets. The same fit on 1,478
+    kicker weeks runs flat and non-monotone, so a kicker is never streamed.
+
+    SELF-GUARDING. It refuses under the Monday guard itself rather than
+    trusting every caller to check, and it rechecks both teams' locks right
+    before the write: kickoff is a hard boundary. Exempt from the ROS kickoff
+    blackout: a stream is undone next Tuesday for nothing, and the lines it
+    reads are firmest late.
+
+    THE BOARD IS INTERSECTED WITH WHAT IS ACTUALLY FREE (streaming.swap ->
+    best_available); a waiver defence can only be claimed.
+
+    A construction session, like every roster writer: the new defence has to
+    reach the lineup even when the caller -- a line move during live games --
+    returns before its own construction check.
+    """
+    from robo import construction
+    with construction.session("stream defence", apply=apply, league_id=league_id):
+        return _stream_defence(week, apply, league_id)
+
+
+def _stream_defence(week: int, apply: bool, league_id: str) -> dict:
+    from robo import streaming
+    if season.monday_guard_active():
+        return {"status": "suppressed", "text": "suppressed: Monday guard"}
+    ctx = _context(league_id, mode="stream")
+    players = ctx["players"]
+    held = [p for p in (ctx["roster"].get("players") or [])
+            if (players.get(p) or {}).get("position") == "DEF"]
+    if not held:
+        return {"status": "none", "text": "we hold no defence; patch owns an empty slot"}
+    ours = (players.get(held[0]) or {}).get("team") or held[0]
+    d = streaming.swap(week, ours, league_id)
+    if not d.get("best"):
+        return {"status": "hold", "text": d["why"], "swap": d}
+    if d["gain"] < streaming.MIN_STREAM_GAIN:
+        return {"status": "hold", "swap": d,
+                "text": (f"hold {ours}: {d['why']}, {d['gain']:+.2f} under the "
+                         f"{streaming.MIN_STREAM_GAIN:g} bar")}
+    best = d["best"]["team"]
+    plan = [{"add": {"player_id": best, "name": api.player_name(players, best),
+                     "pos": "DEF"},
+             "drop": {"player_id": held[0],
+                      "name": api.player_name(players, held[0]), "pos": "DEF"},
+             "gain": d["gain"], "add_value": round(d["best"]["pts"], 2),
+             "drop_value": round(d["mine"]["pts"], 2), "real": True,
+             "why": d["why"]}]
+    if not value.may_submit():
+        return {"status": "gated", "swap": d,
+                "text": f"WOULD stream {ours} -> {best} ({d['gain']:+.2f}) -- gate shut"}
+    if not apply:
+        return {"status": "would_stream", "swap": d,
+                "text": f"would stream {ours} -> {best} ({d['gain']:+.2f})"}
+    season.invalidate_live()
+    live = season.week_points(week, season.SEASON, league_id)
+    if (live.get(held[0]) or {}).get("locked"):
+        return {"status": "hold", "swap": d,
+                "text": f"hold {ours}: its game locked before submission"}
+    if (live.get(best) or {}).get("locked"):
+        return {"status": "hold", "swap": d,
+                "text": f"hold {ours}: {best}'s game locked before submission"}
+    out = {"submitted": [], "applied": False}
+    submit_free(ctx, plan, out, league_id)
+    if not out.get("submitted"):
+        return {"status": "failed", "swap": d,
+                "text": f"FAILED to stream {ours} -> {best}: transaction was not accepted"}
+    return {"status": "streamed", "swap": d,
+            "text": f"streamed {ours} -> {best} ({d['gain']:+.2f})"}
+
+
 def run_ros_sequence(apply: bool = False, league_id: str = LEAGUE_ID_2026,
                      verbose: bool = True, source: str | None = None) -> dict:
     """Secure the best free improvement, then reprice the waiver board.

@@ -15,6 +15,8 @@ import html
 import json
 import os
 import re
+import subprocess
+import sys
 import time
 import uuid
 import xml.etree.ElementTree as ET
@@ -42,6 +44,21 @@ NEWS_BATCH = 40
 CASCADE_GUARD_MIN = 5
 FULL_CASCADE_CLOCKS = ((7, 0), (9, 0), (16, 0))
 KICKOFF_STATUS_GRACE_MIN = 20
+
+# BETTING LINES. The market moves on breaking news within minutes, so every
+# pulse re-reads ESPN's board (nflmodel/ingest/lines.py) for this week and the
+# next three. Any current-week change reprices the defence decisions; a move of
+# LINE_EVENT_POINTS or more, or a game going off/on the board, is a full event.
+LINE_EVENT_POINTS = 1.0
+LINE_LOOKAHEAD_WEEKS = 3
+LINES_REFRESH_TIMEOUT_S = 25
+# Its own state file, not news_watch.json: the live-game pause returns before
+# poll() writes that one, and the line baseline must advance on those pulses too.
+LINES_STATE = DATA / "lines_watch.json"
+LINES_MOVES = DATA / "lines_moves.jsonl"
+
+from robo import settings as _settings  # noqa: E402
+_settings.apply(__name__, globals())
 
 
 def _read(path: Path, default):
@@ -848,8 +865,14 @@ def _series_complete(table: dict, pid: str) -> bool:
 
 def event_deltas(pre: dict, post: dict, affected: set[str],
                  events: list[dict]) -> dict:
-    """Measured pre/post value changes and the causal edge that admits them."""
-    primary = {str(e["player_id"]) for e in events}
+    """Measured pre/post value changes and the causal edge that admits them.
+
+    A line_move event names no player; everyone it `affects` gets the edge
+    "line_move:<game_id>", or mode="news" would reject them at the door.
+    """
+    primary = {str(e["player_id"]) for e in events if e.get("player_id")}
+    by_line = {str(pid): f"line_move:{e['game_id']}" for e in events
+               if e.get("kind") == "line_move" for pid in e.get("affects") or []}
     compatible = pre.get("schema") == post.get("schema")
     before, after = pre.get("players") or {}, post.get("players") or {}
     out = {}
@@ -862,7 +885,8 @@ def event_deltas(pre: dict, post: dict, affected: set[str],
                    for w in weeks}
         lead = b.get("lead_id")
         edge = (f"self:{pid}" if pid in primary else
-                (f"successor-of:{lead}" if lead and str(lead) in primary else None))
+                (f"successor-of:{lead}" if lead and str(lead) in primary else
+                 by_line.get(pid)))
         pre_ros, post_ros = float(a.get("ros") or 0), float(b.get("ros") or 0)
         identity = b or a
         out[pid] = {"name": identity.get("name") or pid,
@@ -1000,6 +1024,11 @@ def rebuild_and_move(affected: set[str], apply: bool,
     # proposed a tight end worth a third of the man we would have cut.
     # run_ros_sequence is the entry point that already prices the free channel
     # first and reprices waivers from the roster that move creates.
+    #
+    # The defence stream goes first: a line move (or news that moves one) can
+    # make a free defence the better start, and a stream is banked now. The
+    # claims sequence then prices from the roster the stream leaves.
+    defence_stream = moves.stream_defence(week, apply=apply, league_id=LEAGUE_ID_2026)
     seq = moves.run_ros_sequence(apply=apply, league_id=LEAGUE_ID_2026,
                                  verbose=True, source="newswatch")
     ros_free, claims = seq["free"], seq["claims"]
@@ -1022,6 +1051,8 @@ def rebuild_and_move(affected: set[str], apply: bool,
             # a judgement neither made.
             # What the roster looked like BEFORE anything was priced against it.
             "roster_first": roster_first,
+            "defence_stream": {"status": defence_stream.get("status"),
+                               "text": defence_stream.get("text")},
             "news_free_channel": {"plans": free.get("plans") or [],
                                   "gated": free.get("gated"),
                                   "submitted": free.get("submitted") or []},
@@ -1046,7 +1077,182 @@ def rebuild_and_move(affected: set[str], apply: bool,
             "duration_seconds": round(time.monotonic() - started, 3)}
 
 
-def poll(apply: bool = True, _debounced: bool = False) -> dict:
+# ---------------------------------------------------------------- betting lines
+
+def refresh_lines(week: int) -> str:
+    """Re-read ESPN's board for this week and the next few. "" or why not.
+
+    A SUBPROCESS, NOT AN IMPORT: nflmodel imports robo, and the artifact is the
+    interface -- the same rule cascade._model_cmd keeps. A failure leaves the
+    last artifact in place, so the worst case is the lines we already had.
+    """
+    last = min(int(week) + LINE_LOOKAHEAD_WEEKS, season.SEASON_WEEKS)
+    weeks = ",".join(str(w) for w in range(int(week), last + 1))
+    try:
+        r = subprocess.run([sys.executable, "-m", "nflmodel.ingest.lines",
+                            "--weeks", weeks], cwd=str(ROOT), capture_output=True,
+                           text=True, timeout=LINES_REFRESH_TIMEOUT_S)
+    except subprocess.TimeoutExpired:
+        return f"lines refresh exceeded {LINES_REFRESH_TIMEOUT_S}s"
+    except Exception as e:
+        return f"lines refresh could not start: {str(e)[:100]}"
+    if r.returncode != 0:
+        return f"lines refresh exited {r.returncode}: {(r.stderr or '')[-160:]}"
+    return ""
+
+
+def line_snapshot(week: int, now: float | None = None) -> dict:
+    """{game_id: line} for games in the refreshed window not yet kicked off.
+
+    A game whose week's ESPN fetch FAILED is left out rather than recorded on
+    its nflverse fallback: an ESPN outage is not news, and diffing it would read
+    as sixteen games going off the board at once. line_pulse carries the last
+    good value forward for those instead.
+    """
+    now = time.time() if now is None else now
+    out = {}
+    for g in (vegas._artifact().get("games") or []):
+        wk = int(g["week"])
+        if wk < week or wk > week + LINE_LOOKAHEAD_WEEKS or g.get("status") == "espn_failed":
+            continue
+        kick = g.get("kickoff_utc")
+        if kick and datetime.fromisoformat(kick).timestamp() <= now:
+            continue
+        out[g["game_id"]] = {"week": wk, "home": g["home_team"], "away": g["away_team"],
+                             "spread": g.get("spread_line"), "total": g.get("total_line"),
+                             "status": g.get("status"), "source": g.get("source")}
+    return out
+
+
+def diff_lines(before: dict, after: dict, week: int) -> list[dict]:
+    """Every change between two snapshots, with the tier it earns.
+
+    tier 2: a CURRENT-week game moved LINE_EVENT_POINTS or more in spread or
+            total, or went off / came back on the board -- a full news event.
+    tier 1: any other current-week change -- reprice the defence decisions.
+    tier 0: a later week -- logged only. Nothing acts on a future week's line
+            within the week (the stream and the claim ladder price the current
+            one); it reaches rest-of-season values at the daily refresh.
+    A game new to the window is a baseline, not a move.
+    """
+    moves = []
+    for gid, a in after.items():
+        b = before.get(gid)
+        if b is None:
+            continue
+        changes = {f: (b.get(f), a.get(f)) for f in ("spread", "total")
+                   if b.get(f) != a.get(f)}
+        on_b, on_a = b.get("status") == "espn", a.get("status") == "espn"
+        board = "off" if on_b and not on_a else ("on" if on_a and not on_b else None)
+        if not changes and not board:
+            continue
+        big = any(x is not None and y is not None and abs(float(y) - float(x)) >= LINE_EVENT_POINTS
+                  for x, y in changes.values())
+        current = int(a["week"]) == int(week)
+        tier = (2 if current and (big or board) else 1) if current else 0
+        moves.append({"game_id": gid, "week": a["week"], "home": a["home"],
+                      "away": a["away"], "changes": changes, "board": board,
+                      "status": a.get("status"), "source": a.get("source"), "tier": tier})
+    return moves
+
+
+def _log_line_moves(moves: list[dict]) -> None:
+    try:
+        now = time.time()
+        with LINES_MOVES.open("a", encoding="utf-8") as fh:
+            for m in moves:
+                fields = [(f, x, y) for f, (x, y) in m["changes"].items()]
+                if m["board"]:
+                    fields.append(("board", "on" if m["board"] == "off" else "off", m["board"]))
+                for f, x, y in fields:
+                    delta = (round(float(y) - float(x), 2)
+                             if isinstance(x, (int, float)) and isinstance(y, (int, float)) else None)
+                    fh.write(json.dumps({"at": now, "game_id": m["game_id"], "week": m["week"],
+                                         "home": m["home"], "away": m["away"], "field": f,
+                                         "before": x, "after": y, "delta": delta,
+                                         "source": m["source"], "status": m["status"],
+                                         "tier": m["tier"]}) + "\n")
+    except Exception:
+        pass
+
+
+def line_pulse(week: int) -> dict:
+    """Refresh, diff against the last pulse, persist. Runs on EVERY pulse.
+
+    Including while games are live: the pause that stops the full cascade must
+    not stop the market read, or a Sunday's late-game lines never move.
+    """
+    error = refresh_lines(week)
+    prior = _read(LINES_STATE, {})
+    snap = line_snapshot(week)
+    # Carry forward any game the refresh could not read (see line_snapshot), so
+    # its return next pulse is compared with the last good line, not a gap.
+    kept = {gid: row for gid, row in (prior.get("games") or {}).items()
+            if gid not in snap and int(row.get("week") or 0) >= week}
+    baseline = "games" not in prior
+    moves = [] if baseline else diff_lines(prior.get("games") or {}, snap, week)
+    if moves:
+        _log_line_moves(moves)
+    _write(LINES_STATE, {"at": time.time(), "week": week, "games": {**kept, **snap}})
+    return {"error": error, "baseline": baseline, "moves": moves,
+            "tier": max((m["tier"] for m in moves), default=None)}
+
+
+def _defence_ids(teams: set[str]) -> list[str]:
+    """Sleeper's player ids for these teams' defences (nflverse codes in)."""
+    from robo import sleeper_read as api
+    try:
+        dump = api.players()
+    except Exception:
+        dump = {}
+    out = []
+    for code in teams:
+        for cand in {code} | {k for k, v in vegas.ALIAS.items() if v == code}:
+            if (dump.get(cand) or {}).get("position") == "DEF":
+                out.append(cand)
+    return sorted(set(out))
+
+
+def line_events(moves: list[dict], rows: dict) -> list[dict]:
+    """Tier-2 moves as events -- KEPT APART from player news.
+
+    They carry no player_id: a line is market data, and it must never reach the
+    scout queue or player timing. `affects` names both teams' QB/RB/WR/TE and
+    both defences explicitly, since affected_room() is skill-only.
+    """
+    out = []
+    for m in moves:
+        if m["tier"] != 2:
+            continue
+        teams = {m["home"], m["away"]}
+        skill = sorted(pid for pid, r in rows.items()
+                       if r.get("pos") in SKILL and vegas.team_code(r.get("team") or "") in teams)
+        out.append({"kind": "line_move", "game_id": m["game_id"], "week": m["week"],
+                    "home": m["home"], "away": m["away"], "board": m["board"],
+                    "changes": {f: list(v) for f, v in m["changes"].items()},
+                    "affects": skill + _defence_ids(teams)})
+    return out
+
+
+def defence_run(week: int, apply: bool) -> dict:
+    """A current-week line change with no fuller event: reprice the defence.
+
+    The free-agent stream first -- it can be banked now -- then the same ROS
+    sequence the event path runs, which prices the free channel and rebuilds the
+    canonical claim slate (and with it _plan_defence_claims). One ordered run,
+    so the stream and the claims are never priced twice.
+    """
+    from robo import moves
+    stream = moves.stream_defence(week, apply=apply, league_id=LEAGUE_ID_2026)
+    seq = moves.run_ros_sequence(apply=apply, league_id=LEAGUE_ID_2026,
+                                 verbose=False, source="line move")
+    return {"stream": stream.get("text"), "stream_status": stream.get("status"),
+            "claims_submitted": (seq.get("claims") or {}).get("submitted") or [],
+            "free_submitted": (seq.get("free") or {}).get("submitted") or []}
+
+
+def poll(apply: bool = True, _debounced: bool = False,
+         lines: dict | None = None) -> dict:
     from robo import expected
     prior = _read(STATE, {})
     week = season.current_week()
@@ -1110,11 +1316,18 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
         _log(f"inactive release burst ({len(events)} events); consolidating for "
              f"{INACTIVE_DEBOUNCE_S}s; {event_mix(events)}")
         time.sleep(INACTIVE_DEBOUNCE_S)
-        return poll(apply=apply, _debounced=True)
+        return poll(apply=apply, _debounced=True, lines=lines)
     affected = affected_room(events, weekly)
+    # Line moves join the valuation, never the prose: player timing and the
+    # scout see only the player events and the rooms THEY opened.
+    lines = lines or {}
+    line_evs = line_events(lines.get("moves") or [], weekly)
+    player_affected = set(affected)
+    for e in line_evs:
+        affected |= set(e["affects"])
     categories = (monday_categories(events, weekly)
                   if season.monday_guard_active() else {})
-    fp = _fingerprint(events, affected) if events else ""
+    fp = _fingerprint(events + line_evs, affected) if (events or line_evs) else ""
     handled = list(prior.get("handled") or [])[-199:]
     # Anything this watcher had queued under its own old scheme moves into the
     # shared queue on the first poll after the change and is then forgotten
@@ -1123,12 +1336,13 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
     action = None
     timing = {}
     audit_path = None
-    if events and fp not in handled:
+    if (events or line_evs) and fp not in handled:
         # This is the actual pre-event decision table, retained before timing
         # or provider refresh can alter it. Deltas against a reconstructed
         # baseline are not evidence that this event caused anything.
         pre_expected = _read(expected.CACHE, {})
-        timing = update_timing(events, affected, weekly, week, espn=espn)
+        timing = (update_timing(events, player_affected, weekly, week, espn=espn)
+                  if events else {})
         deferred += timing.pop("_pending_events", [])
         monday_actionable = bool(categories.get("remaining_starters") or
                                  categories.get("our_unlocked_roster"))
@@ -1149,8 +1363,8 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
             # settlement.
             with roster_construction.deferred("news pulse", apply=apply):
                 action = rebuild_and_move(affected, apply=apply and not errors,
-                                          pre_expected=pre_expected, events=events,
-                                          fingerprint=fp)
+                                          pre_expected=pre_expected,
+                                          events=events + line_evs, fingerprint=fp)
             action["categories"] = categories
         handled.append(fp)
         old_weekly = prior.get("weekly") or {}
@@ -1171,7 +1385,7 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
                 "news_updated_at_trigger": now_row.get("news_updated"),
             }
         audit = {"schema": 2, "at": time.time(), "week": week,
-                 "fingerprint": fp, "events": events,
+                 "fingerprint": fp, "events": events, "line_events": line_evs,
                  "affected": sorted(affected), "source_errors": errors,
                  "categories": categories,
                  "market_snapshot": {
@@ -1182,6 +1396,16 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
                  "timing": timing, "action": action,
                  "submission_authorized": bool(apply and not errors),
                  "dry_run": not bool(apply and not errors)}
+
+    # A current-week line moved but nothing fuller ran: reprice the defence.
+    # A full event already ran the same stream + sequence inside rebuild_and_move.
+    defence = None
+    if action is None and (lines.get("tier") or 0) >= 1:
+        try:
+            defence = defence_run(week, apply=apply and not errors)
+        except Exception as e:
+            defence = {"error": f"{type(e).__name__}: {e}"}
+            errors.append(f"line-move defence run: {str(e)[:120]}")
 
     # Hand the deferred prose to the shared queue, then drain pending batches
     # continuously (up to 10 batches / 10 min budget) paced by MIN_BATCH_INTERVAL.
@@ -1269,7 +1493,12 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
              "waiver_maintenance": maintenance,
              "construction_repair": construction,
              "source_errors": errors,
+             "lines": {"error": lines.get("error"), "baseline": lines.get("baseline"),
+                       "moves": len(lines.get("moves") or []), "tier": lines.get("tier"),
+                       "line_events": [e["game_id"] for e in line_evs]},
+             "defence_run": defence,
              "last_event": ({"at": now, "fingerprint": fp, "events": events,
+                             "line_events": line_evs,
                              "affected": sorted(affected), "timing": timing,
                              "action": action, "audit_path": audit_path}
                             if action else prior.get("last_event"))}
@@ -1278,8 +1507,15 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
         state.pop("sleeper_news_fingerprints", None)
     _write(STATE, state)
     ignored = sum(filter_stats.values())
+    line_note = ""
+    if lines.get("moves"):
+        line_note = (f", {len(lines['moves'])} line move(s)"
+                     + (f" ({len(line_evs)} event)" if line_evs else "")
+                     + (f", defence {defence.get('stream_status') or defence.get('error')}"
+                        if defence else ""))
     _log(f"{len(events)} event(s), {len(affected)} affected, "
          f"{'acted' if action else 'quiet'}, {ignored} metadata-only ignored"
+         + line_note
          + (f", {pending} advisory queued" if pending else "")
          + (f"; errors: {errors}" if errors else ""))
     return state
@@ -1290,17 +1526,42 @@ def main():
     ap.add_argument("--dry-run", action="store_true")
     a = ap.parse_args()
     with SingleInstance():
-        reason = game_pause_reason() or scheduled_cascade_pause_reason()
+        from robo.runlock import DecisionRun, RunBusy
+        week = season.current_week()
+        # THE MARKET READ RUNS BEFORE EVERY PAUSE. The live-game pause stops the
+        # full cascade, but a Sunday's late games still have lines that move on
+        # the early games' news; stopping here left them hours stale.
+        try:
+            lines = line_pulse(week)
+        except Exception as e:
+            lines = {"error": f"{type(e).__name__}: {e}", "moves": []}
+        live = game_pause_reason()
+        reason = live or scheduled_cascade_pause_reason()
         if reason:
             record_pause(reason)
+            # During live games the defence stream alone may act, for defences
+            # whose games have not locked (it rechecks both locks itself).
+            # Claims settle Wednesday and wait for the pause to lift. Not
+            # before a scheduled cascade: that run streams on its own.
+            if live and (lines.get("tier") or 0) >= 1 and not a.dry_run:
+                from robo import moves
+                try:
+                    with DecisionRun("line-move stream"):
+                        got = moves.stream_defence(week, apply=True,
+                                                   league_id=LEAGUE_ID_2026)
+                    _log(f"live window: {len(lines['moves'])} line move(s); "
+                         f"defence {got.get('text')}")
+                except RunBusy:
+                    pass
+                except Exception as e:
+                    _log(f"live window: defence stream failed: {type(e).__name__}: {e}")
             return
-        from robo.runlock import DecisionRun, RunBusy
         try:
             # Never wait behind a scheduled cascade. The pulse is retried on
             # its own interval; the lineup run has a kickoff deadline.
             with DecisionRun("news pulse"):
                 try:
-                    poll(apply=not a.dry_run)
+                    poll(apply=not a.dry_run, lines=lines)
                 except Exception as e:
                     record_failure(e)
                     raise

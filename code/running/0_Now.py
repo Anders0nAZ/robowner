@@ -10,7 +10,7 @@ staleness is stated at the top instead of being hidden by a recomputation.
 import pandas as pd
 import streamlit as st
 
-from robo import decision_audit, narrate, ui, ui_player_card
+from robo import decision_audit, narrate, news_audit, ui, ui_player_card
 
 st.title("🔍 What Roboner would do now")
 ui.gate_banner(st)
@@ -81,9 +81,52 @@ def defence_stream() -> dict:
     held = {str(p) for p in season.rostered_ids()}
     ours = [p for p in mine if (players.get(p) or {}).get("position") == "DEF"]
     swaps = [{**streaming.swap(week, d), "ours": d} for d in sorted(ours)]
+    # Unrostered is two different things. A free-now defence can be added
+    # outright, and it is what streaming.swap() compares; one on waivers can
+    # only be CLAIMED, and moves._plan_defence_claims prices it, on the same
+    # lines and the same bar, in the claims pass. Showing both as "free" made a
+    # dropped defence look addable while the headline ignored it.
+    unrostered = [r["team"] for r in board if r["team"] not in held]
+    states = season.transaction_states(unrostered, week=week) if unrostered else {}
+    from robo import vegas
+    lines_meta = ((vegas._artifact().get("weeks") or {}).get(str(week))) or {}
     return {"week": week, "board": board, "ours": ours, "swaps": swaps,
             "held": held, "mine": mine, "bar": streaming.MIN_STREAM_GAIN,
-            "unpriced": False}
+            "states": states, "lines": lines_meta, "unpriced": False}
+
+
+def _lines_caption(meta: dict) -> str:
+    """Where these prices' lines came from, and how old they are."""
+    if not meta:
+        return "Lines: nflverse schedule file (no ESPN read for this week yet)."
+    from datetime import datetime
+    try:
+        age = ui.fmt_age(datetime.fromisoformat(meta["fetched_utc"]).timestamp())
+    except (KeyError, TypeError, ValueError):
+        age = "at an unknown time"
+    if meta.get("status") != "ok":
+        return (f"Lines: **ESPN read failed** {age}; every game is on the nflverse "
+                f"line ({meta.get('error') or 'no detail'}).")
+    fb = meta.get("fallbacks") or 0
+    return (f"Lines: ESPN ({meta.get('provider')}), fetched {age}"
+            + (f"; **{fb} game(s) on the nflverse fallback** — "
+               + "; ".join(meta.get("fallback_reasons") or []) if fb else
+               "; every game on the live line") + ".")
+
+
+def _wire_label(state: dict) -> str:
+    """How an unrostered defence can be acquired, in the table's words."""
+    acq = (state or {}).get("acquisition")
+    if acq == "free_now":
+        return "free now"
+    if acq in ("weekly_waiver", "drop_waiver"):
+        at = state.get("unlock_at")
+        if not at:
+            return "waivers · next run"
+        from datetime import datetime
+        when = datetime.fromtimestamp(float(at)).strftime("%a %I:%M %p").replace(" 0", " ")
+        return "waivers · clears " + when
+    return "unavailable"
 
 
 run = latest_run()
@@ -210,12 +253,12 @@ try:
                         delta_color="off",
                         help="Expected points off the opponent's implied total, on this "
                              "league's own scoring.")
-            c[1].metric("Best free", best.get("team", "—"),
+            c[1].metric("Best free now", best.get("team", "—"),
                         f"{best.get('pts', 0):.2f} pts" if best else None,
                         delta_color="off",
-                        help="Best defence actually acquirable — not the best on the "
-                             "board. Ranking all thirty-two would propose a move Sleeper "
-                             "cannot execute.")
+                        help="Best defence addable outright today — not the best on the "
+                             "board, and not one on waivers, which can only be claimed "
+                             "(see the line below).")
             c[2].metric("Gain", f"{gain:+.2f}")
             c[3].metric("Verdict", "stream" if streams else "hold")
             if s.get("locked"):
@@ -227,6 +270,23 @@ try:
                     + ("**streams**." if streams else "**holds**.")
                     + " A defence refills from the wire every week, which is why the bar "
                       "is a fixed gain rather than a comparison of season totals.")
+            st.caption(_lines_caption(d.get("lines") or {}))
+            # The claim half of the same decision: moves._plan_defence_claims
+            # prices waiver defences on these lines against this same bar.
+            mine_pts = float(mine_row.get("pts") or 0.0) if mine_row else None
+            on_waivers = [r for r in d["board"]
+                          if (d["states"].get(r["team"]) or {}).get("acquisition")
+                          in ("weekly_waiver", "drop_waiver")]
+            if on_waivers and mine_pts is not None and not s.get("locked"):
+                w = on_waivers[0]
+                wgain = round(float(w["pts"]) - mine_pts, 2)
+                st.caption(
+                    f"Best on waivers: **{w['team']}** {w['pts']:.2f} "
+                    f"({_wire_label(d['states'].get(w['team']))}), {wgain:+.2f} against "
+                    f"{s['ours']}. It can only be claimed, not added; the claims pass "
+                    f"submits one when it clears **{bar:+.2f}**"
+                    + (", and this one does." if wgain >= bar else
+                       f", so {w['team']} is not claimed."))
 
     board = d.get("board") or []
     if board:
@@ -240,7 +300,8 @@ try:
             st.dataframe(pd.DataFrame([{
                 "defence": r["team"],
                 "owner": ("ours" if r["team"] in d["mine"] else
-                          "rostered" if r["team"] in d["held"] else "free"),
+                          "rostered" if r["team"] in d["held"] else
+                          _wire_label(d["states"].get(r["team"]))),
                 "opponent": ("vs " if r["home"] else "@ ") + r["opponent"],
                 "opponent implied total": r["implied"],
                 "expected points": r["pts"],

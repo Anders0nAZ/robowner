@@ -453,6 +453,10 @@ SOURCES = [
     # repeat interval does. At 25 minutes against a 20-minute pulse -- it was
     # sized for the old 10 -- a single late run reported the watcher stale.
     ("news-watch",  "Injury watcher", 50 * 60, "RobonerNewsWatch"),
+    # Refreshed by every pulse for this week and the next three, so the same
+    # two-missed-pulses budget as the watcher that fetches them. Amber also when
+    # any current-week game is on the nflverse fallback, with the reason named.
+    ("lines",       "Betting lines (ESPN)", 50 * 60, "RobonerNewsWatch"),
     # THE VALUATION THE BOT DECIDES ON. Six hours, matching
     # moves.ROS_VALUE_MAX_AGE, because that is the age at which the ordinary
     # channel stops accepting a candidate priced off this file -- the same rule
@@ -542,7 +546,7 @@ def _refresh_log() -> dict:
 # log. The two omitted steps (chat-memory, media-pool) write into databases whose
 # freshness is only recorded in the log, so there the log is all there is.
 MARKED_STEPS = {"players", "projections", "buzz", "board", "model",
-                "model-horizon", "news-watch",
+                "model-horizon", "news-watch", "lines",
                 "ros", "playoff-odds", "usage", "injuries", "scout"}
 
 # Sources whose ABSENCE is a normal state at some point in the year, and so must
@@ -564,6 +568,17 @@ def _absence_is_expected(step: str) -> bool:
         return _vegas.next_kickoff(_season.SEASON, 1) is not None
     except Exception:
         return False
+
+
+def _lines_week() -> dict:
+    """The lines artifact's entry for the current week, with its week number."""
+    from robo import season, vegas
+    try:
+        wk = season.current_week()
+    except Exception:
+        return {}
+    m = ((vegas._artifact().get("weeks") or {}).get(str(wk))) or {}
+    return {**m, "week": wk} if m else {}
 
 
 def _source_marker(step: str):
@@ -592,6 +607,19 @@ def _source_marker(step: str):
         d = _read_json(DATA / "buzz.json", {}) or {}
         return d.get("ts"), "%d players over %sh" % (
             len(d.get("net", {})), d.get("hours", "?"))
+    if step == "lines":
+        m = _lines_week()
+        if not m:
+            return None, "no lines artifact for this week"
+        ts = None
+        try:
+            ts = datetime.fromisoformat(m["fetched_utc"]).timestamp()
+        except (KeyError, TypeError, ValueError):
+            pass
+        return ts, "%s, %d of %d week-%s games on fallback" % (
+            "ESPN (%s)" % m.get("provider") if m.get("status") == "ok"
+            else "ESPN FAILED, nflverse fallback",
+            m.get("fallbacks", 0), m.get("scheduled", 0), m.get("week"))
     if step == "model":
         d = _read_json(DATA / "model_week.json", {}) or {}
         ts = None
@@ -750,6 +778,15 @@ def ingests() -> list:
                 status = WARN
                 why = "%d watcher source(s) failed on the last poll" % len(watch_errors)
                 why_detail = "; ".join(str(x) for x in watch_errors)
+        if step == "lines" and status == OK:
+            m = _lines_week()
+            if m.get("status") != "ok" or m.get("fallbacks"):
+                status = WARN
+                why = ("ESPN read failed; every week-%s game on the nflverse line"
+                       % m.get("week") if m.get("status") != "ok" else
+                       "%d week-%s game(s) on the nflverse fallback"
+                       % (m["fallbacks"], m.get("week")))
+                why_detail = "; ".join(m.get("fallback_reasons") or []) or (m.get("error") or "")
         if failed_since and status == OK:
             status = WARN
         if failed_since:

@@ -136,6 +136,8 @@ def pull(record: dict | None = None) -> dict:
     out = {"players": 0, "projections": 0, "injuries": 0}
 
     out["schedules"] = _pull_schedules()
+    # After the schedules: they supply the fixture list the lines attach to.
+    out["lines"] = _pull_lines()
     out["players"] = len(api.players(refresh=True))
     try:
         out["projections"] = refresh.pull_projections()
@@ -200,6 +202,31 @@ def _pull_schedules() -> str:
         return "refreshed"
     why = how if not ok else "upstream unreachable, kept the snapshot we had"
     return f"KEPT OLD {after:.1f}h ({why})"
+
+
+LINES_TIMEOUT_S = 90
+
+
+def _pull_lines() -> str:
+    """Refresh ESPN's lines for the whole remaining season -- the look-ahead the
+    twenty-minute pulse (four weeks) does not reach.
+
+    Judged by the artifact, not the exit code, for the same reason as the
+    schedules: a fetch that fails per week still exits 0 with the nflverse
+    fallback written, and "refreshed" over a failed ESPN read is the one
+    reading that must not happen.
+    """
+    from robo import season, vegas
+    ok, how = _model_cmd(["nflmodel.ingest.lines", "--season-rest"], LINES_TIMEOUT_S)
+    meta = ((vegas._artifact().get("weeks") or {})
+            .get(str(season.current_week())) or {})
+    if not meta:
+        return f"MISSING ({how})"
+    if meta.get("status") != "ok":
+        return f"ESPN FAILED, nflverse fallback ({meta.get('error') or how})"
+    if meta.get("fallbacks"):
+        return f"refreshed, {meta['fallbacks']} game(s) on fallback"
+    return "refreshed"
 
 
 def _model_cmd(args: list[str], timeout: int) -> tuple[bool, str]:
@@ -504,6 +531,8 @@ def _fmt_pull(p: dict) -> str:
             f"{p['injuries']} injury rows"]
     if p.get("schedules") and p["schedules"] != "refreshed":
         bits.append(f"schedules {p['schedules']}")
+    if p.get("lines") and p["lines"] != "refreshed":
+        bits.append(f"lines {p['lines']}")
     if p.get("projections_error"):
         bits.append(f"projections KEPT OLD ({p['projections_error']})")
     if p.get("injuries_error"):
@@ -598,66 +627,12 @@ def _moves(moves, mode: str, apply: bool) -> str:
 def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
     """Swap the defence when this week's lines say somebody free is better.
 
-    DEFENCES ONLY, AND THAT IS A MEASURED DECISION rather than an omission.
-    streaming.py fits 2,174 defence weeks against the opponent's implied total
-    and gets 11.39 points down to 4.72, monotone across all eight buckets -- a
-    6.7-point spread on a slot averaging eight. The same fit on 1,478 kicker
-    weeks runs 6.95 to 8.16 with a correlation of +0.051 and no ordering at all,
-    and the Roboner NFL model separately found the top ten kickers in a week span about
-    a third of a point. So a kicker is held, replaced when he is hurt or on bye,
-    and never streamed; churning a roster spot weekly to chase noise is a cost
-    with no matching benefit.
-
-    EXEMPT FROM THE KICKOFF BLACKOUT, like patch and for a stated reason. That
-    blackout exists so a season-long swap is not made on Sunday-morning panic --
-    it protects decisions you cannot take back. A defence stream is undone next
-    Tuesday for nothing, and the lines it reads are firmest late, so the rule
-    does not reach it.
-
-    THE BOARD IS INTERSECTED WITH WHAT IS ACTUALLY FREE. rank_week() ranks all
-    thirty-two; in week 1 the top two were both rostered and the best gettable
-    was fourth. A streamer on the raw board proposes moves Sleeper refuses.
+    The decision lives in moves.stream_defence(), shared with the news pulse's
+    line-move repricing, so the cascade and the pulse cannot answer the same
+    question two ways. See there for why defences only, why it is exempt from
+    the kickoff blackout, and why the board is intersected with what is free.
     """
-    from robo import streaming, value
-    from robo import sleeper_read as api
-    ctx = moves._context(league_id, mode="stream")
-    players = ctx["players"]
-    held = [p for p in (ctx["roster"].get("players") or [])
-            if (players.get(p) or {}).get("position") == "DEF"]
-    if not held:
-        return "we hold no defence; patch owns an empty slot"
-    ours = (players.get(held[0]) or {}).get("team") or held[0]
-    d = streaming.swap(wk, ours, league_id)
-    if not d.get("best"):
-        return d["why"]
-    if d["gain"] < streaming.MIN_STREAM_GAIN:
-        return (f"hold {ours}: {d['why']}, {d['gain']:+.2f} under the "
-                f"{streaming.MIN_STREAM_GAIN:g} bar")
-    best = d["best"]["team"]
-    plan = [{"add": {"player_id": best, "name": api.player_name(players, best),
-                     "pos": "DEF"},
-             "drop": {"player_id": held[0],
-                      "name": api.player_name(players, held[0]), "pos": "DEF"},
-             "gain": d["gain"], "add_value": round(d["best"]["pts"], 2),
-             "drop_value": round(d["mine"]["pts"], 2), "real": True,
-             "why": d["why"]}]
-    if not value.may_submit():
-        return f"WOULD stream {ours} -> {best} ({d['gain']:+.2f}) -- gate shut"
-    if not apply:
-        return f"would stream {ours} -> {best} ({d['gain']:+.2f})"
-    # The line-to-write interval is short, but kickoff is a hard boundary.
-    # Refresh both held and target locks immediately before submission.
-    season.invalidate_live()
-    live = season.week_points(wk, season.SEASON, league_id)
-    if (live.get(held[0]) or {}).get("locked"):
-        return f"hold {ours}: its game locked before submission"
-    if (live.get(best) or {}).get("locked"):
-        return f"hold {ours}: {best}'s game locked before submission"
-    out = {"submitted": [], "applied": False}
-    moves.submit_free(ctx, plan, out, league_id)
-    if not out.get("submitted"):
-        return f"FAILED to stream {ours} -> {best}: transaction was not accepted"
-    return f"streamed {ours} -> {best} ({d['gain']:+.2f})"
+    return moves.stream_defence(wk, apply=apply, league_id=league_id)["text"]
 
 
 def _waiver_watch(league_id: str) -> str:

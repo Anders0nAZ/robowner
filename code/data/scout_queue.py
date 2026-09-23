@@ -180,7 +180,7 @@ def _place(doc: dict, pid: str, name: str, cat: str, fingerprint: str | None,
         # him back in front of the model, with nobody ever having seen the
         # failure. It is the same trap the pending branch is written to avoid, and
         # the men who trip it are the ones failing BECAUSE their corpus is large,
-        # so their reporting moves constantly. `--reset` is the way back, and it
+        # so their reporting moves constantly. `--retry` is the way back, and it
         # is meant to be the only one.
         ledger = {key: old[key] for key
                   in ("attempts", "last_error", "next_attempt_at",
@@ -323,7 +323,7 @@ def _retire(doc: dict, item: dict, outcome: str, now: float) -> None:
     doc["items"].pop(pid, None)
 
 
-def drain(now: float | None = None, timeout: int = 120,
+def drain(now: float | None = None, timeout: int = 180,
           verbose: bool = False) -> dict:
     """Gather, judge and checkpoint at most one batch.
 
@@ -332,6 +332,13 @@ def drain(now: float | None = None, timeout: int = 120,
     decision pool, or nobody's reporting has moved since his last verdict -- has
     not spent the resource the limit protects, and making it wait out the
     interval would stall a queue for work that costs nothing.
+
+    `timeout` is per model call, and 180s is the ceiling the pulse allows, not
+    a guess. A batch is two calls, and a timed-out call now ends it, so the
+    worst batch is 2 x 180s. The pulse spends ~60s before draining, drain_all
+    may start a batch anywhere in its 600s budget, and RobonerNewsWatch is
+    killed at 18 minutes: 60 + 600 + 360 = 1020s against 1080. An idle-GPU
+    batch of four took 64s; 120s was too tight beside a ComfyUI generation.
     """
     from robo import scout
     now = time.time() if now is None else float(now)
@@ -391,19 +398,26 @@ def drain(now: float | None = None, timeout: int = 120,
     verdicts = []
     vram_busy = False
     busy_started = False
+    unavailable = ""
     if todo:
         gate_priority = ("foreground" if any(
             int(item.get("priority", 99)) <= PRIORITY["emergency"]
             for item in selected) else "background")
         try:
             verdicts = scout.judge(todo, verbose=verbose, timeout=timeout,
-                                   gate_priority=gate_priority)
+                                   gate_priority=gate_priority,
+                                   raise_unavailable=True)
         except scout.VramBusyError as e:
             verdicts = e.verdicts
             vram_busy = True
             busy_started = not doc.get("vram_busy_since")
             doc["vram_busy_since"] = doc.get("vram_busy_since") or now
             doc["last_vram_busy_at"] = now
+        except scout.ModelUnavailableError as e:
+            # The call failed, not the player: keep what earlier chunks
+            # judged and hold the rest without spending an attempt.
+            verdicts = e.verdicts
+            unavailable = str(e)
         except Exception as e:
             # A dead model is the common case here -- Ollama restarting, or a
             # batch past its timeout. Back the whole batch off on the retry
@@ -461,6 +475,14 @@ def drain(now: float | None = None, timeout: int = 120,
             continue
         if vram_busy:
             continue
+        if unavailable:
+            # Backed off one step, so the same pulse does not keep hammering
+            # a GPU that just timed out, but no retry is spent: a player only
+            # reaches the attention list on the model's answers, never on the
+            # machine's hiccups.
+            item["next_attempt_at"] = now + RETRY_DELAYS[0]
+            item["last_error"] = "model unavailable (no attempt spent): " + unavailable
+            continue
         if _defer(item, "model returned no verdict for this player", now):
             attention.append(pid)
 
@@ -469,7 +491,10 @@ def drain(now: float | None = None, timeout: int = 120,
         doc["last_batch_at"] = now
     doc["last_batch_size"] = len(selected)
     _write(doc)
-    return {"status": "vram_busy" if vram_busy else "processed",
+    # model_unavailable ends drain_all's loop for this pulse (it only retries
+    # vram_busy in place); the players come back after the back-off above.
+    return {"status": "vram_busy" if vram_busy else
+                      ("model_unavailable" if unavailable else "processed"),
             "busy_started": busy_started,
             "vram_busy_since": doc.get("vram_busy_since"),
             "attempted": len(selected),
