@@ -41,13 +41,23 @@ MAX_ROUNDS = 3
 RETRIES = 1
 RETRY_WAIT_S = 5.0
 
-_state = {"depth": 0, "dirty": False, "repairing": False}
+_state = {"depth": 0, "dirty": False, "repairing": False, "stack": []}
 
 
 def mark_dirty() -> None:
     """A roster write just landed (or may have). Called by the writers."""
     if not _state["repairing"]:
         _state["dirty"] = True
+
+
+def path() -> list[str]:
+    """Which sessions are open right now, outermost first.
+
+    Every roster-writing entry point opens one, so at the moment a writer fires
+    this is the route that instructed it -- "news pulse > construction > ir
+    unblock" -- which the transaction journal records against the write.
+    """
+    return list(_state["stack"])
 
 
 @contextlib.contextmanager
@@ -66,6 +76,7 @@ def session(trigger: str, *, apply: bool = True, force: bool = False,
     if outer:
         _state["dirty"] = False
     _state["depth"] += 1
+    _state["stack"].append(trigger)
     result: dict = {}
     failed = False
     try:
@@ -75,13 +86,18 @@ def session(trigger: str, *, apply: bool = True, force: bool = False,
         raise
     finally:
         _state["depth"] -= 1
-        if outer:
-            dirty, _state["dirty"] = _state["dirty"], False
-            # A caller that meant to run ensure() itself and died first still
-            # gets it: a half-finished write sequence is exactly the roster
-            # most likely to need repair.
-            if apply and (dirty or force) and (run or failed):
-                result.update(_guarded(trigger, week, league_id, statuses))
+        try:
+            if outer:
+                dirty, _state["dirty"] = _state["dirty"], False
+                # A caller that meant to run ensure() itself and died first
+                # still gets it: a half-finished write sequence is exactly the
+                # roster most likely to need repair.
+                if apply and (dirty or force) and (run or failed):
+                    result.update(_guarded(trigger, week, league_id, statuses))
+        finally:
+            # Popped after the repair, so its writes are attributed to the
+            # session that caused them.
+            _state["stack"].pop()
 
 
 def deferred(trigger: str, *, apply: bool = True):
@@ -117,13 +133,24 @@ def ensure(week: int | None = None, league_id: str = LEAGUE_ID_2026,
     """
     import time
     import requests
-    for attempt in range(RETRIES + 1):
-        try:
-            return _ensure(week, league_id, apply, trigger, statuses)
-        except requests.exceptions.RequestException:
-            if attempt == RETRIES:
-                raise
-            time.sleep(RETRY_WAIT_S)
+    # A caller with no session of its own (the pulse, the cascade's step) still
+    # names itself in the path its repairs are journalled under.
+    named = trigger and not _state["stack"]
+    if named:
+        _state["stack"].append(trigger)
+    _state["stack"].append("construction")
+    try:
+        for attempt in range(RETRIES + 1):
+            try:
+                return _ensure(week, league_id, apply, trigger, statuses)
+            except requests.exceptions.RequestException:
+                if attempt == RETRIES:
+                    raise
+                time.sleep(RETRY_WAIT_S)
+    finally:
+        _state["stack"].pop()
+        if named:
+            _state["stack"].pop()
 
 
 def _ensure(week, league_id, apply, trigger, statuses) -> dict:

@@ -288,6 +288,8 @@ try:
     elif not live.get("pending"):
         st.caption("Nothing is pending. Claims appear here once the transaction gate "
                    "opens and a slate is submitted.")
+    st.markdown("[Every claim, settled or pending, and what instructed it → "
+                "Transactions](Transactions)")
     # 1. Live Active Pending Claims Table
     owned_claims = live.get("owned") or []
     if owned_claims:
@@ -448,13 +450,16 @@ with c3:
     st.page_link("pages/3_Projections.py", icon="📊", label="**Projections Hub** — weekly & ROS")
     st.caption("Quantile bands, edge vs Sleeper, and rest of season board.")
 
-p1, p2 = st.columns(2)
+p1, p2, p3 = st.columns(3)
 with p1:
     st.page_link("pages/4_AI_Scout.py", icon="🤖", label="**AI & Scout Center**")
     st.caption("Dead-heat LLM arbitrations, news prose verdicts, and queue.")
 with p2:
     st.page_link("pages/5_Calibration.py", icon="🔧", label="**Calibration** — fitted baselines")
     st.caption("Role absorption, defence streaming fit, and return curves.")
+with p3:
+    st.page_link("pages/6_Transactions.py", icon="📜", label="**Transactions** — every roster change")
+    st.caption("Adds, drops, claims and IR moves, and the path that instructed each.")
 
 
 st.divider()

@@ -64,6 +64,7 @@ CATEGORIES = [
      "projections, ten seasons of usage, and the betting market.",
      ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
       "newswatch", "waiver_manager", "waiver_audit", "construction", "quality",
+      "transactions",
       "ros", "expected", "value_history", "returns", "marginal", "roles",
       "playoffs", "streaming", "faab", "faab_field"]),
     ("chat", "Talking",
@@ -83,7 +84,7 @@ CATEGORIES = [
      ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
       "audit_gui", "ui", "ui_player_card", "decision_audit", "narrate",
       "evidence", "value_backfill", "0_Now", "1_Lineups", "2_Moves",
-      "3_Projections", "4_AI_Scout", "5_Calibration"]),
+      "3_Projections", "4_AI_Scout", "5_Calibration", "6_Transactions"]),
 ]
 
 

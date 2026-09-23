@@ -533,6 +533,8 @@ with tabs[7]:
     ec[2].metric("Source Failures", len(doc.get("source_errors") or []))
     ec[3].metric("FAAB Remaining", f"${doc.get('faab_left', 0)}")
     st.write(narrate.gate_sentence(doc))
+    st.markdown("[What actually reached the roster, and who instructed it → "
+                "Transactions](Transactions)")
 
 # STAGE 9: RAW EVIDENCE
 with tabs[8]:

@@ -1291,7 +1291,9 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
             sw.free_agent_transaction(
                 {add["player_id"]: rid} if add.get("player_id") else None,
                 {drop["player_id"]: rid} if drop.get("player_id") else None,
-                league_id)
+                league_id,
+                reason=f"moves {mode}: {p.get('why') or 'free-agent move'}"
+                       f" (gain {p.get('gain', 0):+.1f})")
         except Exception as e:
             print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
             continue

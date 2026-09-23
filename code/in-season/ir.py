@@ -278,11 +278,13 @@ def _simulate(roster: dict, step: dict) -> dict:
 def _write(step: dict, roster_id: int, league_id: str) -> str:
     """Send one step. Returns an error string, "" on a clean send."""
     from robo import sleeper_write as sw
+    reason = "unblock: " + (step.get("text") or step["action"])
     try:
         if step["action"] in ("swap", "activate"):
-            sw.set_reserve(roster_id, step["reserve"], league_id)
+            sw.set_reserve(roster_id, step["reserve"], league_id, reason=reason)
         elif step["action"] == "drop":
-            sw.free_agent_transaction(None, {step["drop"]: roster_id}, league_id)
+            sw.free_agent_transaction(None, {step["drop"]: roster_id}, league_id,
+                                      reason=reason)
     except Exception as e:
         return f"{type(e).__name__}: {e}"
     return ""
@@ -571,7 +573,9 @@ def _run(apply: bool, league_id: str, verbose: bool) -> dict:
     from robo.decisions import record
     from robo.sleeper_write import set_reserve
     r = season.mine(league_id)
-    set_reserve(r["roster_id"], p["target"], league_id)
+    set_reserve(r["roster_id"], p["target"], league_id,
+                reason="IR sweep: " + "; ".join(m["why"] for m in
+                                                p["reserve"] + p["activate"]))
     p["applied"] = True
 
     moved = [f"{m['name']} to injured reserve" for m in p["reserve"]]

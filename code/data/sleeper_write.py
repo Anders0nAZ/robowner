@@ -86,21 +86,48 @@ def set_starters(roster_id: int, week: int, starters: list[str],
     gql("update_matchup_leg", q)
 
 
+def _journalled(kind: str, send, reason: str | None, league_id: str, **fields):
+    """Send one roster write and record it, whether it lands or raises.
+
+    Every roster write goes through here so `transactions.ledger()` can say
+    which path instructed it; `reason` is the caller's one-line why.
+    """
+    from robo import construction, transactions
+    # Before the call, not after: a write that raised may still have landed.
+    construction.mark_dirty()
+    try:
+        out = send()
+    except Exception as e:
+        transactions.journal(kind, league_id=league_id, ok=False, error=str(e),
+                             reason=reason, **fields)
+        raise
+    txn = (out or {}).get("transaction_id") if isinstance(out, dict) else None
+    transactions.journal(kind, league_id=league_id, transaction_id=txn,
+                         reason=reason, **fields)
+    return out
+
+
 def set_reserve(roster_id: int, reserve: list[str],
-                league_id: str = LEAGUE_ID_2026) -> None:
+                league_id: str = LEAGUE_ID_2026, reason: str | None = None) -> None:
     q = f"""
     mutation roster_update_reserve {{
         roster_update_reserve(league_id: "{league_id}", roster_id: {roster_id},
             reserve: {json.dumps(reserve)}) {{ league_id }}
     }}"""
-    from robo import construction
-    # Before the call, not after: a write that raised may still have landed.
-    construction.mark_dirty()
-    gql("roster_update_reserve", q)
+    # IR moves are not Sleeper transactions, so the journal is their only
+    # record; what changed is the difference from the reserve as it stood.
+    try:
+        before = [r.get("reserve") or [] for r in live_rosters(league_id)
+                  if r.get("roster_id") == roster_id][0]
+    except Exception:
+        before = None
+    _journalled("reserve", lambda: gql("roster_update_reserve", q), reason,
+                league_id, reserve=list(reserve), reserve_before=before)
 
 
 def free_agent_transaction(adds: dict[str, int] | None, drops: dict[str, int] | None,
-                           league_id: str = LEAGUE_ID_2026) -> dict:
+                           league_id: str = LEAGUE_ID_2026,
+                           reason: str | None = None) -> dict:
     """adds/drops: {player_id: roster_id}. Free-agent (post-clear) moves."""
     q = f"""
     mutation league_create_transaction($k_adds: [String], $v_adds: [Int],
@@ -114,9 +141,13 @@ def free_agent_transaction(adds: dict[str, int] | None, drops: dict[str, int] | 
         "k_adds": list((adds or {}).keys()), "v_adds": list((adds or {}).values()),
         "k_drops": list((drops or {}).keys()), "v_drops": list((drops or {}).values()),
     }
-    from robo import construction
-    construction.mark_dirty()
-    return gql("league_create_transaction", q, v)
+    out = {}
+
+    def send():
+        out.update(gql("league_create_transaction", q, v) or {})
+        return out.get("league_create_transaction") or {}
+    _journalled("free_agent", send, reason, league_id, adds=adds, drops=drops)
+    return out
 
 
 def create_league_mock(pick_timer: int = 30, league_id: str = LEAGUE_ID_2026) -> dict:
@@ -181,7 +212,8 @@ def set_draft_queue(draft_id: str, player_ids: list[str]) -> list[str]:
 
 
 def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
-                        league_id: str = LEAGUE_ID_2026) -> dict:
+                        league_id: str = LEAGUE_ID_2026,
+                        reason: str | None = None) -> dict:
     """Submit one FAAB claim and return its transaction object.
 
     A no-drop claim sends EMPTY drop arrays, the same as league_create_transaction
@@ -205,7 +237,19 @@ def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
         "k_drops": list(drops.keys()), "v_drops": list(drops.values()),
         "k_settings": ["waiver_bid"], "v_settings": [bid],
     }
-    return gql("submit_waiver_claim", q, v)["submit_waiver_claim"]
+    # A claim changes nothing until it settles, so it does not mark the roster
+    # dirty; the settlement does (waiver_manager.inspect).
+    from robo import transactions
+    try:
+        out = gql("submit_waiver_claim", q, v)["submit_waiver_claim"]
+    except Exception as e:
+        transactions.journal("claim", league_id=league_id, adds=adds, drops=drops,
+                             bid=bid, ok=False, error=str(e), reason=reason)
+        raise
+    transactions.journal("claim", league_id=league_id, adds=adds, drops=drops,
+                         bid=bid, transaction_id=(out or {}).get("transaction_id"),
+                         reason=reason)
+    return out
 
 
 def _mine(rows, roster_id: int) -> list[dict]:
@@ -293,7 +337,8 @@ def waiver_claim_history(roster_id: int,
 
 
 def cancel_waiver_claim(transaction_id: str, leg: int,
-                        league_id: str = LEAGUE_ID_2026) -> dict:
+                        league_id: str = LEAGUE_ID_2026,
+                        reason: str | None = None) -> dict:
     """Cancel one pending waiver claim. Signature verified by introspection."""
     q = f"""
     mutation cancel_waiver_claim {{
@@ -302,7 +347,17 @@ def cancel_waiver_claim(transaction_id: str, leg: int,
             transaction_id leg status type adds drops settings created status_updated
         }}
     }}"""
-    return gql("cancel_waiver_claim", q)["cancel_waiver_claim"]
+    from robo import transactions
+    try:
+        out = gql("cancel_waiver_claim", q)["cancel_waiver_claim"]
+    except Exception as e:
+        transactions.journal("cancel", league_id=league_id,
+                             transaction_id=transaction_id, ok=False,
+                             error=str(e), reason=reason)
+        raise
+    transactions.journal("cancel", league_id=league_id,
+                         transaction_id=transaction_id, reason=reason)
+    return out
 
 
 if __name__ == "__main__":

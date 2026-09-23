@@ -9,15 +9,17 @@ statement about what it will and will not let a human change. This one changes
 nothing at all: it reads what the bot computed and explains how. Keeping them
 apart keeps both descriptions true.
 
-WHY FOUR PAGES AND NOT SIX. The app used to have one page per MODULE, which
-meant the sidebar listed the stages of a single pipeline as though they were
-alternatives, and one waiver claim was split across two of them -- the claim
-and its drop on one page, the bid that priced it on another, reading the same
-record through the same dropdown. The pages now follow the question instead:
-what would it do NOW, why did it DECIDE that, what is a PLAYER worth, and how
-was the machinery CALIBRATED. The trigger that started a run -- the clock or
-the news -- is a badge on the timeline, not a page of its own, because it does
-not change what the run did.
+PAGES FOLLOW THE QUESTION, NOT THE MODULE. The app once had one page per
+module, which listed the stages of a single pipeline as though they were
+alternatives and split one waiver claim across two pages. Now: what would it
+do NOW, how was this week's LINEUP chosen, why did a run DECIDE a move, what
+are the PROJECTIONS, what did the model and SCOUT read, how was the machinery
+CALIBRATED -- and what actually happened to the roster, TRANSACTION by
+transaction, and who instructed each one. That last question is not a run's:
+an IR unblock's cut or a construction repair belongs to no decision run, so a
+page organised around runs cannot show it. The trigger that started a run --
+the clock or the news -- is a badge on the timeline, not a page of its own,
+because it does not change what the run did.
 
 THIS FILE IS THE ROUTER. It owns the page registry so the sidebar reads in
 plain words; the pages themselves live in pages/.
@@ -44,5 +46,6 @@ st.navigation([
     st.Page("pages/3_Projections.py", title="Projections Hub", icon="📊", url_path="Projections"),
     st.Page("pages/4_AI_Scout.py", title="AI & Scout", icon="🤖", url_path="AIScout"),
     st.Page("pages/5_Calibration.py", title="Calibration", icon="🔧", url_path="Calibration"),
+    st.Page("pages/6_Transactions.py", title="Transactions", icon="📜", url_path="Transactions"),
 ]).run()
 

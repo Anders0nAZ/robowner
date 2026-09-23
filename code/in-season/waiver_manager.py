@@ -381,7 +381,8 @@ def _alert(message: str, key: str) -> None:
 def _cancel(txid: str, saved: dict, doc: dict, league_id: str,
             roster_id: int, reason: str) -> dict:
     from robo import sleeper_write as sw
-    row = sw.cancel_waiver_claim(txid, int(saved.get("leg") or 0), league_id)
+    row = sw.cancel_waiver_claim(txid, int(saved.get("leg") or 0), league_id,
+                                 reason=f"reconcile: {reason}")
     remaining = {str(x["transaction_id"])
                  for x in sw.pending_waiver_claims(roster_id, league_id)}
     if str(txid) in remaining:
@@ -406,7 +407,11 @@ def _submit(spec: dict, roster_id: int, league_id: str, source: str,
     drop = spec.get("drop_id")
     row = sw.submit_waiver_claim(
         {spec["add_id"]: roster_id}, {drop: roster_id} if drop else {},
-        int(spec["bid"]), league_id)
+        int(spec["bid"]), league_id,
+        reason=f"{source} slate: ${spec['bid']} for {spec.get('add_name') or spec['add_id']}"
+               + (f", simulated gain {spec['gain']:+.1f}"
+                  if spec.get("gain") is not None else "")
+               + f" [run {fingerprint}]")
     txid = str(row.get("transaction_id") or "")
     if not txid:
         raise RuntimeError("Sleeper returned no transaction_id for submitted claim")
