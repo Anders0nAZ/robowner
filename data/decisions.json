@@ -973,5 +973,44 @@
    "week": 3,
    "gain": 9.8
   }
+ },
+ {
+  "id": 37,
+  "ts": "2026-09-23T13:33:24+00:00",
+  "kind": "lineup",
+  "title": "Week 3 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Brenton Strange; FLEX: Tony Pollard; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Green Bay Packers",
+  "rationale": "Projected 128.9 points under league scoring from Roboner's NFL model means for 16 of 17 players, +12.6 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had empty slot.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "5927",
+    "9480",
+    "5967",
+    "6804",
+    "11792",
+    "GB"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "12507",
+    "5927",
+    "12514",
+    "8131",
+    "11581",
+    "6804",
+    "11792",
+    "0"
+   ],
+   "projected": 128.9,
+   "week": 3,
+   "source": "Roboner NFL model, 473 players, 0.2h old, anchored on proj_2026_wk03_20260923T132303Z.json (pre-game, 476 players with a game)",
+   "modelled": 16
+  }
  }
 ]
