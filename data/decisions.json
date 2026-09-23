@@ -860,5 +860,74 @@
    "week": 2,
    "gain": 1.3
   }
+ },
+ {
+  "id": 34,
+  "ts": "2026-09-23T07:25:17+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "Claimed New York Giants for $2, dropping New England Patriots. Unsuccessful: Jameis Winston ($11, failed), Green Bay Packers ($2, failed), Carolina Panthers ($2, failed), New Orleans Saints ($2, failed), Cincinnati Bengals ($0, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:3:1790106241012162800",
+   "week": 3,
+   "claims": [
+    {
+     "transaction_id": "1408211289880240128",
+     "status": "failed",
+     "add": "Jameis Winston",
+     "drop": "J.K. Dobbins",
+     "bid": 11,
+     "gain": 11.6,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1408211291922853888",
+     "status": "completed",
+     "add": "New York Giants",
+     "drop": "New England Patriots",
+     "bid": 2,
+     "gain": 4.11,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1408211293952905216",
+     "status": "failed",
+     "add": "Green Bay Packers",
+     "drop": "New England Patriots",
+     "bid": 2,
+     "gain": 3.96,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1408211296083615744",
+     "status": "failed",
+     "add": "Carolina Panthers",
+     "drop": "New England Patriots",
+     "bid": 2,
+     "gain": 3.08,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1408211298096852992",
+     "status": "failed",
+     "add": "New Orleans Saints",
+     "drop": "New England Patriots",
+     "bid": 2,
+     "gain": 2.94,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1408211300059791360",
+     "status": "failed",
+     "add": "Cincinnati Bengals",
+     "drop": "New England Patriots",
+     "bid": 0,
+     "gain": 3.44,
+     "source": "newswatch"
+    }
+   ]
+  }
  }
 ]
