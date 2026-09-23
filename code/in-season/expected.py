@@ -86,9 +86,11 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
     # happens to correlate with it, and disagreed for most of the men on injured
     # reserve. Sleeper answers only where ESPN has nothing.
     frec: dict = {}
-    espn_elig = injuries.floor_week(pid, record=frec)
-    feed_elig = espn_elig or _feed_eligible_week(pid, mine, status)
-    floor_src = "espn" if espn_elig else ("feed" if feed_elig else None)
+    stat_floor = injuries.statutory_floor(pid)
+    ed_week = injuries.editorial_return_week(pid)
+    feed_step = _feed_eligible_week(pid, mine, status)
+    feed_elig = ed_week or stat_floor or feed_step
+    floor_src = "espn" if ed_week else ("statutory" if stat_floor else ("feed" if feed_step else None))
     # Out for the season is a floor no week can clear. Saying so explicitly
     # beats an eligible week past the last one, which arithmetic would treat as
     # "always too early" but which nothing on the row would explain.
@@ -100,24 +102,18 @@ def availability(pid: str, player: dict, mine: dict, now: int) -> tuple:
     # injury the return curves have never seen.
     body = injuries.body_part(pid) or player.get("injury_body_part")
 
-    # A DATED ESTIMATE FROM REPORTING OUTRANKS THE FLOOR, and only a dated one.
-    # The floor is the earliest a man is ALLOWED back, not a forecast that he
-    # will be: Tyson is eligible in week 5, while the reporting at the time of
-    # injury targeted week 6 and the two-month estimate landed near week 7.
-    # Neither feed can hold that spread because both carry a date and not a
-    # distribution. Where the scout has no date this is None and the floor
-    # stands -- an absent estimate must never be read as "week 1".
+    # A DATED ESTIMATE FROM REPORTING OUTRANKS AN EDITORIAL DATE, bounded only by
+    # the true NFL statutory eligibility floor (e.g. 4 games for IR/PUP/NFI).
+    # Where the scout has no dated report, the feed's projection stands.
     sig = scout.role_signal(pid)
     scout_wk = sig.get("return_week")
     scout_lo = sig.get("return_week_min")
     scout_hi = sig.get("return_week_max")
     elig = feed_elig
     if scout_lo is not None:
-        # Sleeper's zero-to-positive step is a forecast fallback, not a legal
-        # floor. Explicit reporting may legitimately put a 50% return chance in
-        # a week Sleeper still has at zero. ESPN's eligible week is the only
-        # bound the report may not precede.
-        elig = max(int(scout_lo), int(espn_elig)) if espn_elig else int(scout_lo)
+        # Clamped strictly by statutory floor, not editorial dates
+        elig = max(int(scout_lo), int(stat_floor)) if stat_floor else int(scout_lo)
+        floor_src = "scout"
 
     # Weeks already served, as of NOW and not as of the week being priced.
     # back_by() takes `missed` and `ahead` and reads the curve at missed+ahead,
@@ -350,8 +346,13 @@ def load(refresh: bool = False) -> dict:
     if not refresh and CACHE.exists():
         try:
             d = json.loads(CACHE.read_text(encoding="utf-8"))
-            if d.get("schema") == SCHEMA and d.get("week") == season.current_week():
-                return d
+            if d.get("schema") == SCHEMA:
+                try:
+                    cur_wk = season.current_week()
+                    if d.get("week") == cur_wk:
+                        return d
+                except Exception:
+                    return d
         except Exception:
             pass
     d = build()
@@ -426,9 +427,18 @@ def trace(name: str = "", player_id: str | None = None) -> str:
                  f"work if that job opens")
     L.append("")
     L.append(f"[2] AVAILABILITY  (status {r['injury_status'] or 'healthy'})")
+    src = r.get("floor_source")
     if r.get("feed_eligible"):
-        L.append(f"    Sleeper projects nothing before week {r['feed_eligible']} "
-                 f"-- his earliest ELIGIBLE date, which is a rule, not a forecast")
+        if src == "espn":
+            L.append(f"    ESPN projects return in week {r['feed_eligible']} "
+                     f"-- editorial feed projection")
+        elif src == "statutory":
+            L.append(f"    NFL statutory rules forbid playing before week {r['feed_eligible']}")
+        elif src == "scout":
+            L.append(f"    Availability governed by beat reporting (statutory floor week {r.get('eligible_week')})")
+        else:
+            L.append(f"    Sleeper projects nothing before week {r['feed_eligible']} "
+                     f"-- fallback zero-to-positive step")
     # NARRATE THE NUMBER THAT WAS BUILT. A verdict often carries no single
     # `return_week` and a WINDOW instead -- return_week_min/max -- and that
     # window is what availability() ramps across. Branching on the point
@@ -460,7 +470,8 @@ def trace(name: str = "", player_id: str | None = None) -> str:
         L.append(f"    reporting says week {lo}: "
                  f"{r.get('scout_basis') or 'no basis given'}")
     elif r.get("feed_eligible"):
-        L.append(f"    no dated estimate from reporting, so the feed's date stands")
+        src_lbl = "ESPN" if src == "espn" else ("statutory rules" if src == "statutory" else "the projection feed")
+        L.append(f"    no dated estimate from reporting, so {src_lbl}'s date stands")
     if r.get("role_change") and r["role_change"] != "none":
         L.append(f"    reporting has his role {r['role_change']}")
     L.append(f"    lowest A(w) over the weeks left: {r['min_avail']:.3f}")

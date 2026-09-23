@@ -242,27 +242,61 @@ def out_for_season(pid: str) -> bool:
     return bool(r.get("return_date")) and absent(pid) and week_of(r["return_date"]) is None
 
 
+def editorial_return_week(pid: str) -> int | None:
+    """The week ESPN's analysts/feed project him to play again, if any."""
+    r = row(pid)
+    if not r or not r.get("return_date") or not absent(pid):
+        return None
+    return week_of(r.get("return_date"))
+
+
+def statutory_floor(pid: str) -> int | None:
+    """The genuine NFL procedural minimum week a player can legally return.
+
+    For IR, PUP, and NFI, NFL rules mandate missing at least 4 regular-season games.
+    Any return earlier than this is legally impossible under league rules.
+    """
+    r = row(pid)
+    if not r or not absent(pid):
+        return None
+    d = (r.get("designation") or "").upper()
+    if any(ir in d for ir in ("IR", "PUP", "NFI")):
+        as_of = r.get("as_of")
+        w0 = week_of(as_of) if as_of else None
+        if w0 is not None:
+            return int(w0) + 4
+        try:
+            return season.current_week() + 4
+        except Exception:
+            return 5
+    if "SUS" in d:
+        return week_of(r.get("return_date"))
+    return None
+
+
 def floor_week(pid: str, record: dict | None = None) -> int | None:
     """The first week the rules allow him to play, or None if unknown.
 
-    Only ever answered for a man who is actually barred from playing. ESPN gives
-    a `returnDate` for Questionable players too, and it is just the date of
-    their next game -- Mahomes reads 2026-09-14 -- so honouring it there would
-    invent an absence out of a routine practice report.
+    Prioritizes genuine NFL statutory floors (e.g. 4 games for IR/PUP/NFI).
+    If no statutory floor applies, falls back to ESPN's published return date.
+    Only ever answered for a man who is actually barred from playing.
     """
     r = row(pid)
-    if not r or not r.get("return_date") or not absent(pid):
+    if not r or not absent(pid):
         if record is not None:
             record.update({"floor": None, "why": "no absence on file at ESPN"
                            if not absent(pid) else "no return date published"})
         return None
-    wk = week_of(r["return_date"])
+    stat = statutory_floor(pid)
+    ed = editorial_return_week(pid)
+    fl = stat if stat is not None else ed
     if record is not None:
-        record.update({"floor": wk, "return_date": r["return_date"],
+        record.update({"floor": fl, "statutory_floor": stat, "editorial_week": ed,
+                       "return_date": r.get("return_date"),
                        "designation": r.get("designation"), "as_of": r.get("as_of"),
-                       "why": ("out for the season" if wk is None else
-                               f"{r.get('designation')}, eligible {r['return_date']}")})
-    return wk
+                       "why": ("out for the season" if (ed is None and r.get("return_date")) else
+                               f"{r.get('designation')}, statutory floor {stat or 'none'}, ESPN return {ed}")})
+    return fl
 
 
 def body_part(pid: str) -> str | None:

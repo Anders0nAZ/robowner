@@ -1,4 +1,4 @@
-"""Ten-minute injury and opportunity watcher.
+"""Twenty-minute injury and opportunity watcher.
 
 This is deliberately a small poller, not the daily refresh. It reads the
 current weekly projection (with ETag), ESPN injuries, Sleeper trending and PFT.
@@ -26,6 +26,7 @@ import requests
 
 from robo import (DATA, LEAGUE_ID_2026, ROOT, injuries, rankings, scout_queue,
                   season, vegas)
+from robo import construction as roster_construction
 
 STATE = DATA / "news_watch.json"
 LOCK = DATA / "news_watch.lock"
@@ -876,6 +877,49 @@ def event_deltas(pre: dict, post: dict, affected: set[str],
     return out
 
 
+def _ir_before_moves(apply: bool, week: int) -> dict:
+    """Park whoever is reservable, before anything is priced against the roster.
+
+    THE LINEUP RUN IS CONDITIONAL, AND THAT IS THE WHOLE DESIGN. ir.plan refuses
+    to reserve a man Sleeper still has in a starting slot -- it says so in its
+    own `blocked` reason, "lineup runs first and will bench him" -- which is why
+    the cascade orders lineup before ir. Doing that unconditionally every twenty
+    minutes would put up to seventy-two lineup writes a day behind a guard sized
+    for two: MIN_GAIN_TO_CHANGE's comment says a lineup that churns "reads as
+    indecision and buries the changes that mattered", and every write is a
+    public decision-log entry.
+
+    So the sweep always runs, and the lineup runs only when a man we could
+    otherwise reserve is standing in a starting slot -- exactly the case the
+    ordering exists to clear, and nothing at all on a quiet pulse.
+    """
+    from robo import ir, lineup
+    # A frozen roster first: until it is legal Sleeper refuses the sweep, the
+    # lineup and every move this pulse is about to price.
+    out = {"unblock": ir.unblock(apply=apply, league_id=LEAGUE_ID_2026,
+                                 verbose=False)}
+    season.invalidate_live()
+    out["ir"] = ir.run(apply=apply, league_id=LEAGUE_ID_2026, verbose=False)
+    season.invalidate_live()
+    stuck = [b for b in (ir.plan(LEAGUE_ID_2026).get("blocked") or [])
+             if "starting lineup" in str(b.get("why") or "")]
+    out["blocked_by_lineup"] = stuck
+    if stuck:
+        out["lineup"] = lineup.run(week=week, league_id=LEAGUE_ID_2026,
+                                   apply=apply, verbose=False)
+        season.invalidate_live()
+        out["ir_after_lineup"] = ir.run(apply=apply, league_id=LEAGUE_ID_2026,
+                                        verbose=False)
+        season.invalidate_live()
+    out["slots"] = season.slots(LEAGUE_ID_2026)
+    return out
+
+
+def _statuses(weekly: dict) -> dict:
+    """{player_id: designation} from the weekly feed this pulse just read."""
+    return {str(pid): row.get("status") for pid, row in (weekly or {}).items()}
+
+
 def rebuild_and_move(affected: set[str], apply: bool,
                      pre_expected: dict | None = None,
                      events: list[dict] | None = None,
@@ -917,8 +961,19 @@ def rebuild_and_move(affected: set[str], apply: bool,
                 "monday_suppressed": ["ordinary_ros", "streaming",
                                       "speculative_adds", "waiver_submissions"],
                 "duration_seconds": round(time.monotonic() - started, 3)}
+    # INJURY STATUS AND IR ELIGIBILITY COME BEFORE ANY PROPOSAL, on every
+    # channel. Reserve is three slots ON TOP of the 17-man roster, so an unswept
+    # IR is a roster cap: the planner is handed a full roster and forced to
+    # propose a DROP for a slot it already had. Every other caller already does
+    # this -- the cascade runs lineup -> ir -> moves, RobonerRoster and
+    # RobonerMoves both sweep first, RobonerWaivers sweeps before submitting --
+    # and the twenty-minute pulse, which holds the freshest read of the injury
+    # feed in the whole system, was the one that went straight to pricing.
+    roster_first = _ir_before_moves(apply=apply, week=week)
+
     # One context means one paired simulation board for both channels. The
     # first call prices free agents and waivers together; the second reuses it.
+    # Built AFTER the sweep so it sees the slots the sweep opened.
     ctx = moves._context(LEAGUE_ID_2026, "news", affected=affected,
                          event_deltas=deltas, event_fingerprint=fingerprint)
     available = {str(r.get("player_id")) for r in ctx.get("available") or []}
@@ -932,13 +987,22 @@ def rebuild_and_move(affected: set[str], apply: bool,
     free = moves.run("free", apply=apply, mode="news", affected=affected,
                      league_id=LEAGUE_ID_2026, verbose=True, _ctx=ctx)
     # A news event may revise waivers, but it may never APPEND one isolated
-    # event claim to an older Tuesday slate. Rebuild the complete canonical ROS
-    # portfolio from the live roster after the free-agent channel had its turn;
-    # waiver_manager then replaces only bot-owned pending transactions.
-    claims_ctx = moves._context(LEAGUE_ID_2026, mode="ros")
-    claims = moves.run("claims", apply=apply, mode="ros",
-                       league_id=LEAGUE_ID_2026, verbose=True, _ctx=claims_ctx,
-                       source="newswatch")
+    # event claim to an older Tuesday slate, so the complete canonical portfolio
+    # is rebuilt from the live roster; waiver_manager then replaces only
+    # bot-owned pending transactions.
+    #
+    # BOTH CHANNELS, NOT JUST CLAIMS. Rebuilding waivers canonically while the
+    # free channel stayed causally restricted let a pulse propose a FAAB claim
+    # while the better free move it was measured against was unreachable until
+    # the next scheduled pass. Measured 18 Sep 2026: the best free agent in the
+    # league by fifty points sat unowned for a day while the claims channel --
+    # whose pool that day was the two teams who had played on Thursday --
+    # proposed a tight end worth a third of the man we would have cut.
+    # run_ros_sequence is the entry point that already prices the free channel
+    # first and reprices waivers from the roster that move creates.
+    seq = moves.run_ros_sequence(apply=apply, league_id=LEAGUE_ID_2026,
+                                 verbose=True, source="newswatch")
+    ros_free, claims = seq["free"], seq["claims"]
     return {"capture": capture, "capture_ok": capture_ok,
             "export": export, "export_ok": export_ok, "model": model,
             "expected_players": len(ex.get("players") or {}),
@@ -951,14 +1015,34 @@ def rebuild_and_move(affected: set[str], apply: bool,
                              "open": ctx.get("slots", {}).get("open"),
                              "faab": ctx.get("faab"),
                              "hours_to_kickoff": ctx.get("hours_to_kickoff")},
-            "free_plans": len(free.get("plans") or []),
-            "free_proposals": free.get("plans") or [],
-            "free_gated": free.get("gated"),
-            "free_submitted": free.get("submitted") or [],
+            # TWO SCREENS, KEPT APART. The causal pass asks whether the event
+            # gives us standing to act at all; the canonical ROS pass asks
+            # whether a move is worth making. The same player can legitimately
+            # appear in both with different verdicts, and merging them invents
+            # a judgement neither made.
+            # What the roster looked like BEFORE anything was priced against it.
+            "roster_first": roster_first,
+            "news_free_channel": {"plans": free.get("plans") or [],
+                                  "gated": free.get("gated"),
+                                  "submitted": free.get("submitted") or []},
+            "ros_free_channel": {"plans": ros_free.get("plans") or [],
+                                 "gated": ros_free.get("gated"),
+                                 "submitted": ros_free.get("submitted") or [],
+                                 "basis": seq.get("basis")},
+            "free_plans": len(free.get("plans") or []) + len(ros_free.get("plans") or []),
+            "free_proposals": list(free.get("plans") or [])
+                              + list(ros_free.get("plans") or []),
+            "free_gated": bool(free.get("gated") or ros_free.get("gated")),
+            "free_submitted": list(free.get("submitted") or [])
+                              + list(ros_free.get("submitted") or []),
             "claim_plans": len(claims.get("plans") or []),
             "claim_proposals": claims.get("plans") or [],
             "claims_gated": claims.get("gated"),
             "claims_submitted": claims.get("submitted") or [],
+            "claims_reconciliation": {
+                "changed": (claims.get("reconciliation") or {}).get("changed"),
+                "applied": bool((claims.get("reconciliation") or {}).get("applied")),
+            } if claims.get("reconciliation") else {},
             "duration_seconds": round(time.monotonic() - started, 3)}
 
 
@@ -1056,9 +1140,17 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
                       "free_submitted": [], "claims_submitted": [],
                       "duration_seconds": 0.0}
         else:
-            action = rebuild_and_move(affected, apply=apply and not errors,
-                                      pre_expected=pre_expected, events=events,
-                                      fingerprint=fp)
+            # Before the unblock inside, so it judges the designation this
+            # pulse just saw rather than a dump cached up to half an hour ago.
+            if apply:
+                roster_construction.refresh_statuses(_statuses(weekly))
+            # Collected, not run: the pulse checks construction once, after
+            # the pending-claim read below has had its chance to notice a
+            # settlement.
+            with roster_construction.deferred("news pulse", apply=apply):
+                action = rebuild_and_move(affected, apply=apply and not errors,
+                                          pre_expected=pre_expected, events=events,
+                                          fingerprint=fp)
             action["categories"] = categories
         handled.append(fp)
         old_weekly = prior.get("weekly") or {}
@@ -1091,17 +1183,22 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
                  "submission_authorized": bool(apply and not errors),
                  "dry_run": not bool(apply and not errors)}
 
-    # Hand the deferred prose to the shared queue, then ask it for ONE batch --
-    # and only after every actionable consequence of this source snapshot has
-    # completed. The queue owns the rate, the retry budget and the record of
-    # what still needs a human; this loop owns none of it.
+    # Hand the deferred prose to the shared queue, then drain pending batches
+    # continuously (up to 10 batches / 10 min budget) paced by MIN_BATCH_INTERVAL.
+    # Clearing backlogs quickly avoids lingering hours of GPU contention.
+    # Ten minutes, not five: a batch of eight runs ~2-3 min, so five minutes
+    # capped a pulse at ~3 batches while busy pulses queue 20-40 players. The
+    # RobonerNewsWatch task kills at 18 min; pulse work (~1 min) plus this
+    # budget plus one overrunning batch (~3 min) stays well under that.
     queued = _queue_reviews(deferred, weekly, categories)
     try:
-        drained = scout_queue.drain(verbose=False)
+        drained = scout_queue.drain_all(max_batches=10, max_seconds=600.0, verbose=False)
     except Exception as e:
         # Advisory work is never allowed to roll back or replay an action.
         errors.append(f"advisory review: {str(e)[:120]}")
         drained = {"status": "failed", "queued": queued.get("queued", 0)}
+    if drained.get("busy_started"):
+        _log("advisory review deferred: GPU VRAM busy")
     timing["advisory"] = sorted(
         str(v.get("player_id")) for v in (drained.get("verdicts") or [])
         if v.get("advisory_return_week") is not None)
@@ -1118,7 +1215,8 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
     timing["summary"] = "; ".join(x for x in (
         timing.get("summary"),
         f"queue {drained.get('status')}: {len(drained.get('judged') or [])} judged, "
-        f"{pending} pending") if x)
+        f"{pending} pending"
+        + (f" ({drained.get('batches')} batches)" if drained.get("batches") else "")) if x)
     if action:
         audit["timing"] = timing
         audit["advisory_pending"] = pending
@@ -1138,6 +1236,24 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
         maintenance = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
         errors.append(f"waiver maintenance: {str(e)[:120]}")
 
+    # EVERY PULSE, quiet ones included. A waiver settling or a designation
+    # expiring reshapes the roster without being a news event or a write of
+    # ours, so nothing else would notice. Judged on the weekly feed's
+    # designations, which this pulse has just read and the cached dump may not.
+    if apply:
+        try:
+            construction = roster_construction.ensure(
+                week=week, league_id=LEAGUE_ID_2026, apply=True,
+                trigger="news pulse", statuses=_statuses(weekly))
+        except Exception as e:
+            construction = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
+            errors.append(f"roster construction: {str(e)[:120]}")
+    else:
+        construction = {"status": "skipped in dry run"}
+    if construction["status"] not in ("clear", "skipped in dry run"):
+        _log(f"roster construction: {construction['status']} "
+             f"{construction.get('issues') or construction.get('error')}")
+
     now = time.time()
     state = {"schema": 4, "last_poll": now, "last_attempt": now,
              "paused": None, "week": week,
@@ -1151,6 +1267,7 @@ def poll(apply: bool = True, _debounced: bool = False) -> dict:
              "monday_categories": categories,
              "filtered": filter_stats,
              "waiver_maintenance": maintenance,
+             "construction_repair": construction,
              "source_errors": errors,
              "last_event": ({"at": now, "fingerprint": fp, "events": events,
                              "affected": sorted(affected), "timing": timing,

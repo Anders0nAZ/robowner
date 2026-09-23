@@ -20,6 +20,7 @@ writes to decision-log/ or calls decisions.publish().
 """
 
 import time
+from datetime import datetime
 
 # Position colours, matched to the Roboner NFL model viewer
 # family when they are open side by side.
@@ -52,6 +53,23 @@ def fmt_age(ts) -> str:
     if s < 172800:
         return f"{s / 3600:.1f}h ago"
     return f"{int(s / 86400)}d ago"
+
+
+def fmt_eta(ts) -> str:
+    """'in 40m (09:20)' / 'any moment', from an epoch. The mirror of fmt_age.
+
+    Carries the clock time as well as the wait, because a wait read on a phone
+    an hour later is wrong and a clock time is not.
+    """
+    if not ts:
+        return "unknown"
+    at = datetime.fromtimestamp(float(ts))
+    s = float(ts) - time.time()
+    if s <= 60:
+        return f"any moment ({at:%H:%M})"
+    if s < 5400:
+        return f"in {int(s / 60)}m ({at:%H:%M})"
+    return f"in {s / 3600:.1f}h ({at:%H:%M})"
 
 
 def gate_banner(st) -> None:

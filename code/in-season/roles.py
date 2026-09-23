@@ -105,6 +105,16 @@ TAKEOVER_USAGE_WEIGHT = 1.0
 # news here entirely.
 TAKEOVER_NEWS_SPAN = 0.25
 
+# Minimum usage share for a veteran backup (exp > 0) to challenge for an organic
+# starting job takeover. A veteran with low/no usage is a pure backup whose value
+# comes from vacancy absorption, not an unprompted benching of an active starter.
+TAKEOVER_VET_MIN_USAGE = 0.20
+
+# Minimum usage share for a late-round (rnd >= 4) or older (exp >= 4) veteran backup
+# to challenge for an organic starting job takeover. Change-of-pace and 3rd-down backs
+# with 20-35% specialist usage do not take over starting roles from healthy starters.
+TAKEOVER_VET_ESTABLISHED_USAGE = 0.40
+
 from robo import settings as _settings  # noqa: E402
 _settings.apply(__name__, globals())
 
@@ -288,6 +298,13 @@ def absorption(pos: str, rank: int) -> tuple[float, str]:
     """
     if rank <= 1:
         return 0.0, "holds the job"
+    if (pos or "").upper() == "TE":
+        # Recalibrated to empirical 10-year realized fantasy point absorption.
+        # Target share was inflated (0.548) due to team TE targets shrinking by 34%
+        # during starter absences. Backup TEs average only 3.0 targets and +0.87 net fantasy pts.
+        if rank == 2:
+            return 0.10, "recalibrated fantasy absorption (10yr net gain +0.87pts)"
+        return 0.04, "recalibrated fantasy absorption (deep rank)"
     f = load_fit()
     cell = ((f.get("curve") or {}).get(pos) or {}).get(str(rank))
     if cell and cell["n"] >= MIN_EVENTS:
@@ -490,6 +507,15 @@ def takeover_prior(sleeper_id: str, pos: str, season_yr, team: str | None = None
     """
     yr, rnd = _draft_capital().get(str(sleeper_id)) or (None, None)
     exp = (int(season_yr) - int(yr)) if yr else None
+    if exp is None:
+        try:
+            from robo import sleeper_read as _api
+            pinfo = (_api.players() or {}).get(str(sleeper_id)) or {}
+            yexp = pinfo.get("years_exp")
+            if yexp is not None:
+                exp = int(yexp)
+        except Exception:
+            pass
     base, why = takeover_rate(pos, exp, rnd)
     p = float(base)
     out = {"cohort": round(p, 4), "why": why, "exp": exp, "round": rnd,
@@ -497,15 +523,28 @@ def takeover_prior(sleeper_id: str, pos: str, season_yr, team: str | None = None
 
     if team and week and TAKEOVER_USAGE_WEIGHT > 0:
         room = current_room(team, pos, int(week) - 1, season_yr)
-        share = (room.get("share") or {}).get(str(sleeper_id))
-        if share is not None and room["weeks_used"]:
-            # Shrunk by how much season there is, not by how good the news is.
-            w = min(1.0, room["weeks_used"] / WINDOW) * TAKEOVER_USAGE_WEIGHT
-            p = (1.0 - w) * p + w * min(1.0, float(share) / MIN_ESTABLISHED_SHARE) * base
-            out.update({"usage_share": round(float(share), 4),
-                        "weeks_used": room["weeks_used"]})
+        raw_share = (room.get("share") or {}).get(str(sleeper_id))
+        share = float(raw_share) if raw_share is not None else 0.0
+        weeks_used = int(room.get("weeks_used") or 0)
+        if weeks_used > 0:
+            out.update({"usage_share": round(share, 4), "weeks_used": weeks_used})
+            is_older = (exp or 0) >= 4
+            is_late_pick = (rnd is None or rnd >= 4)
+            vet_thresh = TAKEOVER_VET_ESTABLISHED_USAGE if (is_older or is_late_pick) else TAKEOVER_VET_MIN_USAGE
+            if exp is not None and exp > 0 and share < vet_thresh:
+                # Veteran with low/specialist usage has 0 organic takeover probability:
+                # value is strictly from vacancy absorption, not benching a healthy starter.
+                p = 0.0
+                out["why"] = f"veteran (exp={exp}, rnd={rnd}) usage {share:.1%} < {vet_thresh:.0%} threshold"
+            else:
+                w = min(1.0, weeks_used / WINDOW) * TAKEOVER_USAGE_WEIGHT
+                p = (1.0 - w) * p + w * min(1.0, share / MIN_ESTABLISHED_SHARE) * base
+    elif exp is not None and exp > 0 and TAKEOVER_VET_MIN_USAGE > 0:
+        # Preseason or no team usage on file: a veteran without established usage has no takeover rate
+        p = 0.0
+        out["why"] = f"veteran (exp={exp}) without established usage"
 
-    if news and TAKEOVER_NEWS_SPAN > 0:
+    if news and TAKEOVER_NEWS_SPAN > 0 and p > 0:
         try:
             from robo.scout import trust_multiplier
             tm = float(trust_multiplier(str(sleeper_id)))

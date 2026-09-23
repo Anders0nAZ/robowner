@@ -974,6 +974,30 @@ def _next_waiver_run() -> float | None:
         return None
 
 
+def _flagged_claims() -> list[dict]:
+    """Claims in the latest slate whose two engines disagree by a lot.
+
+    A DASHBOARD SIGNAL, NEVER A VETO -- the veto lives in moves.py, where the
+    decision is made. This reports the ones that cleared it and still disagree,
+    because a wide gap means one of the two numbers is wrong and the page is
+    where a human finds that out.
+
+    Read from the record the bot wrote, not recomputed: a status page that
+    reprices a claim reports a number nobody acted on.
+    """
+    from robo import decision_audit
+    run = decision_audit.latest()
+    out = []
+    for row in (decision_audit.slate(run) if run else []):
+        direct = ((row.get("raw") or {}).get("direct_ros")) or {}
+        if decision_audit.direct_ros_tier(direct) == "flagged":
+            out.append({"add": row.get("add"), "drop": row.get("drop"),
+                        "gain": direct.get("gain"),
+                        "add_ros": direct.get("add_ros"),
+                        "drop_ros": direct.get("drop_ros")})
+    return out
+
+
 def inseason() -> dict:
     """Roster, lineup and move-engine state for the current week.
 
@@ -991,8 +1015,16 @@ def inseason() -> dict:
     out["slots"] = sl
     out["faab_left"] = season.faab_left()
     out["next_waiver"] = _next_waiver_run()
+    out["claim_divergence"] = _safe(_flagged_claims, []) or []
     out["drift"] = season.audit()
     out["ir_warnings"] = _safe(ir.warnings, []) or []
+    # The last construction check: whether the roster ended Sleeper-legal with
+    # every starting slot filled. Only a failure to get there is shown.
+    from robo import construction
+    c = _safe(construction.last, {}) or {}
+    out["construction"] = ({k: c.get(k) for k in ("status", "issues", "trigger",
+                                                   "at", "error")}
+                           if c.get("status") in ("unresolved", "failed") else {})
     # The prose queue. Work that has failed the model three times stops
     # retrying and waits for a human, and a queue that quietly gives up on a
     # player is indistinguishable from one that has nothing to do.
@@ -1019,8 +1051,19 @@ def inseason() -> dict:
     if res["holes"] or res["illegal"]:
         out["status"] = BAD
     elif (out["drift"] or out["ir_warnings"] or res["changed"]
+            or out["construction"] or out["claim_divergence"]
             or out["scout_queue"].get("attention")):
         out["status"] = WARN
+        if out["claim_divergence"] and not out.get("why"):
+            worst = min(out["claim_divergence"],
+                        key=lambda r: float(r.get("gain") or 0))
+            out["why"] = (f"a live claim's season totals disagree by "
+                          f"{float(worst.get('gain') or 0):+.0f}")
+            out["why_detail"] = (
+                f"{worst.get('add')} in at {worst.get('add_ros')} against "
+                f"{worst.get('drop')} out at {worst.get('drop_ros')}. The paired "
+                "simulator still decided this one; a gap this wide means one of "
+                "the two numbers is wrong and is worth a look.")
     else:
         out["status"] = OK
     return out
@@ -1508,17 +1551,39 @@ def _inseason_html(ins) -> str:
     if q:
         roster_body.append(_row("prose queue", "%s waiting, last batch %s"
                                 % (q.get("queued", 0), _ago(q.get("last_batch_at")))))
+    if q.get("queued") and q.get("vram_busy_hours", 0) >= 1:
+        roster_body.append(_row("prose review deferred",
+                                "GPU busy for %.1f hours" % q["vram_busy_hours"]))
     for name in q.get("attention_players") or []:
         roster_body.append(_row("prose queue stalled", _scrub(str(name))))
     for w in ins.get("ir_warnings") or []:
         roster_body.append(_row("attention", w))
+    con = ins.get("construction") or {}
+    con_why = ""
+    if con:
+        issues = con.get("issues") or {}
+        parts = (["Sleeper refusing roster changes"] if issues.get("frozen") else [])
+        if issues.get("holes"):
+            parts.append("nobody can fill " + ", ".join(issues["holes"]))
+        con_why = ("; ".join(parts) or _scrub(str(con.get("error") or ""))
+                   or con.get("status"))
+        roster_body.append(_row("lineup incomplete",
+                                "%s, checked %s after %s"
+                                % (con_why, _ago(con.get("at")),
+                                   con.get("trigger") or "a roster change")))
     for d in ins.get("drift") or []:
         roster_body.append(_row("league shape drift", d))
     roster_status = (WARN if (ins.get("ir_warnings") or ins.get("drift")
-                              or q.get("attention")) else OK)
+                              or q.get("attention") or con
+                              or (q.get("queued") and q.get("vram_busy_hours", 0) >= 1)) else OK)
     rbits = []
+    if con:
+        rbits.append("lineup incomplete: " + con_why)
     if ins.get("ir_warnings"):
         rbits.append("%d reserve warning(s)" % len(ins["ir_warnings"]))
+    if q.get("queued") and q.get("vram_busy_hours", 0) >= 1:
+        rbits.append("prose review deferred by GPU use for %.1f hours"
+                     % q["vram_busy_hours"])
     if q.get("attention"):
         from robo import scout_queue
         rbits.append("%d player(s) the prose queue stopped retrying after "

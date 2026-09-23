@@ -58,6 +58,8 @@ BATCH_SIZE = 8
 # normal running. What governs the rate is how often something CALLS drain().
 MIN_BATCH_INTERVAL = 30
 RETRY_DELAYS = (10 * 60, 30 * 60, 60 * 60)
+# Re-ask the VRAM gate this often within one pulse's drain budget.
+VRAM_RETRY_SECONDS = 60
 MAX_ATTEMPTS = 3
 PRIORITY = {"monday_starter": 0, "emergency": 1,
             "waiver_candidate": 2, "background": 3}
@@ -256,6 +258,63 @@ def pending_count(doc: dict | None = None) -> int:
                if item.get("disposition") == "pending")
 
 
+def positions(player_ids, now: float | None = None) -> dict[str, dict]:
+    """Where each of these players sits in the line, and how many batches ahead.
+
+    THE SAME SORT drain() USES, and deliberately the same expression rather than
+    a second one that agrees today: `(priority, enqueued_at, player_id)`. A page
+    that tells somebody his player is eleventh has made a promise about the next
+    half hour, and a re-derived ordering that drifts turns that into a lie.
+
+    `rank` is 1-based among PENDING work only. An item whose retry has not come
+    due yet is still counted -- it is genuinely in front of nobody, but it is
+    also not skipped, and reporting a shorter line than the one that exists is
+    the error that matters here.
+    """
+    now = time.time() if now is None else float(now)
+    doc = _read()
+    due = [item for item in (doc.get("items") or {}).values()
+           if item.get("disposition") == "pending"]
+    due.sort(key=lambda item: (int(item.get("priority", 99)),
+                               float(item.get("enqueued_at") or 0),
+                               item["player_id"]))
+    order = {item["player_id"]: i for i, item in enumerate(due)}
+    out = {}
+    for pid in {str(p) for p in player_ids}:
+        if pid not in order:
+            continue
+        i = order[pid]
+        item = doc["items"][pid]
+        out[pid] = {"player_id": pid, "name": item.get("name"),
+                    "rank": i + 1, "pending_total": len(due),
+                    "priority": int(item.get("priority", 99)),
+                    "category": item.get("category"),
+                    "attempts": int(item.get("attempts") or 0),
+                    # One batch per drain, one drain per pulse, so this is how
+                    # many pulses he waits -- not how many players are ahead.
+                    "batches_ahead": i // BATCH_SIZE,
+                    "not_due_for_s": max(0.0, float(item.get("next_attempt_at") or 0) - now)}
+    return out
+
+
+def outcomes(player_ids) -> dict[str, dict]:
+    """How the queue finished with these players, for work no longer in line.
+
+    A player who left the queue without a verdict is not the same as one still
+    waiting, and "not queued" says neither. `_retire` already records the reason
+    -- a pure box-score recap, a give-up after the retry budget -- so the page
+    can say which rather than reporting an absence.
+    """
+    doc = _read()
+    want = {str(p) for p in player_ids}
+    out = {}
+    for row in (doc.get("completed") or []):
+        pid = str(row.get("player_id"))
+        if pid in want:
+            out[pid] = dict(row)          # last write wins: the latest outcome
+    return out
+
+
 def _retire(doc: dict, item: dict, outcome: str, now: float) -> None:
     pid = item["player_id"]
     doc.setdefault("completed", []).append({
@@ -330,9 +389,21 @@ def drain(now: float | None = None, timeout: int = 120,
     unchanged = [str(b["player_id"]) for b in bundles
                  if str(b["player_id"]) not in {str(x["player_id"]) for x in todo}]
     verdicts = []
+    vram_busy = False
+    busy_started = False
     if todo:
+        gate_priority = ("foreground" if any(
+            int(item.get("priority", 99)) <= PRIORITY["emergency"]
+            for item in selected) else "background")
         try:
-            verdicts = scout.judge(todo, verbose=verbose, timeout=timeout)
+            verdicts = scout.judge(todo, verbose=verbose, timeout=timeout,
+                                   gate_priority=gate_priority)
+        except scout.VramBusyError as e:
+            verdicts = e.verdicts
+            vram_busy = True
+            busy_started = not doc.get("vram_busy_since")
+            doc["vram_busy_since"] = doc.get("vram_busy_since") or now
+            doc["last_vram_busy_at"] = now
         except Exception as e:
             # A dead model is the common case here -- Ollama restarting, or a
             # batch past its timeout. Back the whole batch off on the retry
@@ -348,13 +419,23 @@ def drain(now: float | None = None, timeout: int = 120,
             _write(doc)
             return {"status": "judge_failed", "error": why, "completed": [],
                     "attention": stalled, "queued": pending_count(doc)}
+        if not vram_busy:
+            doc.pop("vram_busy_since", None)
+        bundle_map = {str(b.get("player_id")): b for b in todo}
         for verdict in verdicts:
-            # Advisory, always. A model reading prose may summarise a date for a
-            # human, but only scout.merge_timing() -- which reads structured
-            # facts -- may make one executable.
+            pid = str(verdict.get("player_id") or "")
+            b = bundle_map.get(pid)
             if verdict.get("return_week") is not None:
                 verdict["advisory_return_week"] = verdict.get("return_week")
-            verdict["timing_actionable"] = False
+                ok, why = scout.verify_llm_timing(verdict, b)
+                if ok:
+                    verdict["timing_actionable"] = True
+                    verdict["return_week_min"] = verdict.get("return_week_min", verdict["return_week"])
+                    verdict["return_week_max"] = verdict.get("return_week_max", verdict["return_week"])
+                else:
+                    verdict["timing_actionable"] = False
+            else:
+                verdict["timing_actionable"] = False
         scout.write_verdicts(verdicts, scout.LOCAL_MODEL, bundles=todo)
     judged = {str(v.get("player_id")) for v in verdicts if v.get("player_id")}
 
@@ -378,19 +459,107 @@ def drain(now: float | None = None, timeout: int = 120,
             _retire(doc, item, "judged", now)
             completed.append(pid)
             continue
+        if vram_busy:
+            continue
         if _defer(item, "model returned no verdict for this player", now):
             attention.append(pid)
 
     doc["completed"] = (doc.get("completed") or [])[-100:]
-    if todo:
+    if todo and (not vram_busy or verdicts):
         doc["last_batch_at"] = now
     doc["last_batch_size"] = len(selected)
     _write(doc)
-    return {"status": "processed", "attempted": len(selected),
+    return {"status": "vram_busy" if vram_busy else "processed",
+            "busy_started": busy_started,
+            "vram_busy_since": doc.get("vram_busy_since"),
+            "attempted": len(selected),
             "judged": sorted(judged), "completed": completed,
             "unchanged": unchanged, "dropped": dropped, "recaps": recaps,
             "attention": attention, "verdicts": verdicts,
             "queued": pending_count(doc)}
+
+
+def drain_all(max_batches: int = 10, max_seconds: float = 300.0,
+              verbose: bool = False) -> dict:
+    """Drain batches until the queue is empty or limits are reached.
+
+    Paced by MIN_BATCH_INTERVAL. Combines results across batches so that
+    backlogs clear in minutes rather than lingering for hours across pulses.
+    """
+    t_start = time.time()
+    batches = 0
+    judged = []
+    completed = []
+    unchanged = []
+    dropped = []
+    recaps = []
+    attention = []
+    verdicts = []
+    last_stat = "idle"
+    busy_started = False
+    vram_busy_since = None
+
+    while batches < max_batches:
+        got = drain(verbose=verbose)
+        last_stat = got.get("status")
+        busy_started = busy_started or bool(got.get("busy_started"))
+        vram_busy_since = got.get("vram_busy_since") or vram_busy_since
+        if last_stat == "idle":
+            break
+        if last_stat == "rate_limited":
+            wait_s = max(1.0, float(got.get("retry_in") or 1))
+            if time.time() - t_start + wait_s > max_seconds:
+                break
+            time.sleep(wait_s)
+            continue
+        if last_stat not in ("processed", "ok"):
+            judged.extend(got.get("judged") or [])
+            completed.extend(got.get("completed") or [])
+            unchanged.extend(got.get("unchanged") or [])
+            dropped.extend(got.get("dropped") or [])
+            recaps.extend(got.get("recaps") or [])
+            verdicts.extend(got.get("verdicts") or [])
+            # A busy GPU is usually minutes from free, not a pulse away:
+            # ComfyUI auto-unloads five idle minutes after its last image,
+            # and a rejection costs the gate five seconds. Giving up here
+            # left the card empty for the rest of the twenty-minute pulse.
+            if (last_stat == "vram_busy"
+                    and time.time() - t_start + VRAM_RETRY_SECONDS < max_seconds):
+                time.sleep(VRAM_RETRY_SECONDS)
+                continue
+            break
+
+        batches += 1
+        judged.extend(got.get("judged") or [])
+        completed.extend(got.get("completed") or [])
+        unchanged.extend(got.get("unchanged") or [])
+        dropped.extend(got.get("dropped") or [])
+        recaps.extend(got.get("recaps") or [])
+        attention.extend(got.get("attention") or [])
+        verdicts.extend(got.get("verdicts") or [])
+
+        if not got.get("queued"):
+            break
+        if time.time() - t_start >= max_seconds:
+            break
+
+    doc = _read()
+    return {
+        "status": "vram_busy" if last_stat == "vram_busy" else
+                  ("processed" if batches > 0 else last_stat),
+        "busy_started": busy_started,
+        "vram_busy_since": vram_busy_since,
+        "batches": batches,
+        "attempted": sum(len(x) for x in (judged, unchanged, dropped, recaps, attention)),
+        "judged": sorted(set(judged)),
+        "completed": completed,
+        "unchanged": unchanged,
+        "dropped": dropped,
+        "recaps": recaps,
+        "attention": list(set(attention)),
+        "verdicts": verdicts,
+        "queued": pending_count(doc),
+    }
 
 
 def _defer(item: dict, error: str, now: float) -> bool:
@@ -418,7 +587,10 @@ def status() -> dict:
                                  for x in attention],
             "last_batch_at": float(doc.get("last_batch_at") or 0),
             "last_batch_size": int(doc.get("last_batch_size") or 0),
-            "filtered_recaps": int(doc.get("filtered_recaps") or 0)}
+            "filtered_recaps": int(doc.get("filtered_recaps") or 0),
+            "vram_busy_since": doc.get("vram_busy_since"),
+            "vram_busy_hours": (round((time.time() - float(doc["vram_busy_since"])) / 3600, 1)
+                                if doc.get("vram_busy_since") else 0)}
 
 
 def main():
@@ -444,29 +616,8 @@ def main():
     if args.drain:
         print(drain(verbose=True))
     if args.until_empty:
-        # THE PIECE THAT MAKES THE INTERVAL MEAN ANYTHING. Every producer calls
-        # drain() exactly once and returns, so the queue has never had a way to
-        # work a backlog down -- lowering MIN_BATCH_INTERVAL on its own changes
-        # nothing when nobody asks twice. This is the manual catch-up: it is
-        # deliberately not scheduled, because a backlog that needs an hour of
-        # GPU is a thing to run knowingly, not a thing to discover.
-        batches = 0
-        while True:
-            got = drain(verbose=True)
-            state = got.get("status")
-            if state == "idle":
-                print(f"queue empty after {batches} batch(es)")
-                break
-            if state == "rate_limited":
-                time.sleep(max(1.0, float(got.get("retry_in") or 1)))
-                continue
-            if state not in ("processed", "ok"):
-                print(f"stopping: {state} -- {got.get('error') or 'see above'}")
-                break
-            batches += 1
-            if not got.get("queued"):
-                print(f"queue empty after {batches} batch(es)")
-                break
+        got = drain_all(max_batches=999, max_seconds=3600.0, verbose=True)
+        print(f"drain complete after {got['batches']} batch(es): {len(got.get('judged', []))} judged, {got.get('queued', 0)} queued")
     s = status()
     print(f"{s['queued']} pending, {s['attention']} needing attention, "
           f"{s['filtered_recaps']} recap(s) excluded to date")

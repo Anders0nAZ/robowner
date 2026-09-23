@@ -46,6 +46,7 @@ audited and cannot be quietly hand-authored.
   python -m robo.scout --dates     # every date on file, and its basis
 """
 
+import hashlib
 import json
 import re
 import time
@@ -232,20 +233,21 @@ says who said so and when. "ESPN, 6-8 weeks, reported 21 Aug" is a usable basis.
 it: an eight-week absence reported in mid-August is not "week 8" -- reason from
 the date of the report to the date of the week.
 
-RETURN NULL UNLESS THE REPORTING GIVES YOU A DATE. A guessed date is worse than
+RETURN NULL UNLESS THE REPORTING GIVES YOU A DATE OR DURATION. A guessed date is worse than
 no date, because a date here is trusted over the projection feed and a guess
 would silently overwrite a real number. Null is the correct and common answer.
 
-NEVER RETURN A WEEK EARLIER THAN `eligible_week`. That is a rule, not a
-forecast; he cannot come back sooner, so an earlier week is not a disagreement,
-it is an impossibility. If the reporting is more optimistic than the rule, the
-rule wins and the answer is null.
+EXTRACT REPORTED RECOVERY TIMELINES FAITHFULLY. If reporting provides a genuine
+recovery timeline (e.g. "out 4-6 weeks", "targeting return in Week 6", "expected back in mid-October"),
+record `return_week` or `return_week_min` / `return_week_max` based on what the reporters state.
+Do NOT suppress or null out reported recovery estimates if they are more optimistic than
+editorial projections; genuine beat reporting takes precedence, and statutory floors will be
+enforced downstream.
 
-AND DO NOT RETURN `eligible_week` ITSELF. Reporting that he "must miss four
-games", or is "eligible to return in Week 5", or "should be back for Week 5", is
-restating the rule you were already given. That is not an answer, it is the
-question. Only a week strictly LATER than `eligible_week` tells us anything we do
-not already know; anything else is null.
+DO NOT ECHO MERELY STATUTORY MINIMUMS AS RETURN DATES. Reporting that merely recites
+procedural rules ("must miss four games on IR", "eligible to return Week 5") without any medical
+update is simply restating the eligibility floor and should be null. But where reporting provides
+an actual medical or team recovery target, record it.
 
 `role_week` is retained for compatibility and should be null.
 
@@ -391,46 +393,111 @@ LOCAL_BATCH = 4
 
 def enforce_floor(verdicts: list[dict], bundles: list[dict],
                   verbose: bool = True) -> list[dict]:
-    """Drop any return week earlier than the rules allow, and say so.
+    """Clamp or drop return weeks that violate statutory eligibility rules.
 
-    Two things are dropped, and they fail differently.
-
-    EARLIER THAN THE FLOOR is impossible rather than merely optimistic, and it is
-    the only hallucination detector available here -- there is no ground truth
-    for a date that is merely too LATE.
-
-    EQUAL TO THE FLOOR is the model restating the rule it was handed. Not wrong,
-    but empty: raw_series overrides only on a strictly later week, so such a date
-    changes nothing while sitting in the file looking like reporting that
-    confirmed something. Four of the first seven dates this ever produced were
-    exactly that -- "must now miss at least four games before becoming eligible"
-    read back as week 5.
-
-    Both are recorded on the row rather than quietly discarded, because the rate
-    of each is how we find out the model has stopped reading the reporting and
-    started paraphrasing the prompt.
+    Strictly earlier than statutory floor is impossible under NFL rules and is dropped.
+    Ranges spanning across the floor are clamped at the floor rather than discarded.
     """
     floors = {b["player_id"]: b.get("eligible_week") for b in bundles}
     names = {b["player_id"]: b.get("name") for b in bundles}
     out = []
     for v in verdicts:
         v = dict(v)
-        rw, fl = v.get("return_week"), floors.get(v.get("player_id"))
-        if rw is not None and fl is not None and int(rw) <= int(fl):
-            impossible = int(rw) < int(fl)
-            if verbose and impossible:
-                print(f"    REJECTED week {rw} for {names.get(v.get('player_id'))}"
-                      f" -- eligible week is {fl}", flush=True)
-            v["return_week"] = None
-            v["return_basis"] = None
-            v["floor_violation" if impossible else "floor_restated"] = int(rw)
+        pid = v.get("player_id")
+        fl = floors.get(pid)
+        if fl is not None:
+            rw = v.get("return_week")
+            lo = v.get("return_week_min")
+            hi = v.get("return_week_max")
+
+            if rw is not None and int(rw) < int(fl):
+                if verbose:
+                    print(f"    REJECTED week {rw} for {names.get(pid)}"
+                          f" -- eligible week is {fl}", flush=True)
+                v["return_week"] = None
+                v["return_basis"] = None
+                v["floor_violation"] = int(rw)
+
+            if lo is not None or hi is not None:
+                if hi is not None and int(hi) < int(fl):
+                    v["return_week_min"] = None
+                    v["return_week_max"] = None
+                    v["floor_violation"] = int(hi)
+                elif lo is not None and int(lo) < int(fl):
+                    v["return_week_min"] = int(fl)
         out.append(v)
     return out
 
 
+CREDENTIALED_SOURCES = re.compile(
+    r"\b(espn|athletic|nfl network|rotowire|rotoballer|nbc|cbs|fox|pft|"
+    r"rapoport|garafolo|schefter|fowler|pelissero|maiocco|inman|"
+    r"coach|hc|gm|general manager|head coach|kubiak|shanahan)\b",
+    re.IGNORECASE
+)
+
+
+def verify_llm_timing(v: dict, bundle: dict | None = None) -> tuple[bool, str]:
+    """Validate that an LLM-extracted return date is genuine, actionable reporting.
+
+    A date becomes executable only if:
+      1. It does not describe a healthy scratch or non-injury coach's decision.
+      2. It cites a credentialed source (reporter, insider, or team official).
+      3. The return week satisfies the statutory eligibility floor.
+    """
+    rw = v.get("return_week")
+    if rw is None:
+        return False, "no return week"
+    basis = str(v.get("return_basis") or "")
+    reason = str(v.get("reason") or "")
+    text = f"{basis} {reason}".lower()
+
+    if any(k in text for k in ["coach's decision", "healthy scratch", "not an injury", "not a medical injury"]):
+        return False, "healthy scratch / coach's decision"
+
+    if not CREDENTIALED_SOURCES.search(text):
+        return False, "no credentialed source in basis/reason"
+
+    if bundle and bundle.get("eligible_week") is not None:
+        if int(rw) < int(bundle["eligible_week"]):
+            return False, f"return week {rw} is earlier than eligible floor {bundle['eligible_week']}"
+
+    return True, "verified actionable timing"
+
+
+class VramBusyError(Exception):
+    def __init__(self, verdicts: list[dict]):
+        super().__init__("VRAM admission gate is busy")
+        self.verdicts = verdicts
+
+
+# Monotonic time scout last finished a model call. The gate refuses background
+# work while ComfyUI generates, but a model scout just used stays resident for
+# its 1m keep-alive -- 16.5GB beside the image for no reason. If scout is the
+# likely holder, release it at once. The responder shares the tag; unloading
+# under it costs one reload, which is the right trade against an image run.
+_last_call_at = 0.0
+_HOLD_WINDOW = 90
+
+
+def _release_if_ours(model: str) -> None:
+    import requests
+    if time.monotonic() - _last_call_at > _HOLD_WINDOW:
+        return
+    try:
+        # keep_alive 0 is ungated at VRAMMonitor: it frees VRAM, never takes it.
+        requests.post(OLLAMA.replace("/api/chat", "/api/generate"),
+                      json={"model": model, "keep_alive": 0}, timeout=10)
+        print(f"  released {model} for ComfyUI", flush=True)
+    except Exception as e:
+        print(f"  release of {model} failed: {str(e)[:80]}", flush=True)
+
+
 def judge(bundles: list[dict], model: str = LOCAL_MODEL,
-          verbose: bool = True, timeout: int = 900) -> list[dict]:
+          verbose: bool = True, timeout: int = 900,
+          gate_priority: str = "foreground") -> list[dict]:
     """Read the prose, return the dates. One batch failing costs that batch."""
+    global _last_call_at
     import requests
     out = []
     for i in range(0, len(bundles), LOCAL_BATCH):
@@ -460,9 +527,18 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 "format": SCHEMA,
                 "messages": [{"role": "system", "content": SYSTEM},
                              {"role": "user", "content": _prompt(chunk)}],
-            }, timeout=timeout)
+            }, headers={"X-Gate-Priority": gate_priority,
+                         "X-Gate-Wait": "5" if gate_priority == "background" else "120"},
+               timeout=(5, timeout + (5 if gate_priority == "background" else 120)))
+            if (r.status_code == 503
+                    and r.headers.get("X-Gate-Reject") == "vram-busy"):
+                _release_if_ours(model)
+                raise VramBusyError(out)
+            _last_call_at = time.monotonic()
             r.raise_for_status()
             got = json.loads(r.json()["message"]["content"]).get("verdicts", [])
+        except VramBusyError:
+            raise
         except Exception as e:
             print(f"  batch {i // LOCAL_BATCH + 1} FAILED: {str(e)[:120]}", flush=True)
             continue
@@ -743,6 +819,30 @@ def trust_multiplier(player_id: str) -> float:
     return 1.0 + (lift - 1.0) * conf
 
 
+def scout_sentiment(player_id: str) -> float:
+    """Return directional qualitative sentiment [-1.0, 1.0] from the local LLM scout.
+
+    +confidence for 'boost' (trending up / closer to volume than projected),
+    -confidence for 'avoid' (trending down / losing role or setback),
+    0.0 for 'neutral' or unjudged players.
+    """
+    v = (load_verdicts().get("verdicts") or {}).get(str(player_id))
+    if not v:
+        return 0.0
+    verdict = v.get("verdict")
+    conf = max(0.0, min(1.0, float(v.get("confidence") or 0.0)))
+    if verdict == "boost":
+        return conf
+    elif verdict == "avoid":
+        return -conf
+    return 0.0
+
+
+def scout_verdict(player_id: str) -> dict | None:
+    """Return the raw scout verdict dict for a player if available."""
+    return (load_verdicts().get("verdicts") or {}).get(str(player_id))
+
+
 def dates_report() -> str:
     """Every date on file and what it rests on -- the auditable half."""
     d = load_verdicts()
@@ -766,6 +866,239 @@ def dates_report() -> str:
         L += [f"    {(x.get('name') or '')[:22]:<22} said week {x['floor_restated']}"
               for x in echo]
     return "\n".join(L)
+
+
+_ARBITRATIONS_PATH = DATA / "dead_heat_arbitrations.json"
+_ARBITRATION_MEMO: dict[str, dict] = {}
+ARBITRATION_MAX_AGE_DAYS = 3.0
+ARBITRATION_ERROR_BACKOFF_SECONDS = 30.0
+
+
+def _news_content_fingerprint(items: list[dict]) -> str:
+    """Hash substantive news facts (source, title, description, analysis)."""
+    facts = []
+    for item in items:
+        fact = {k: re.sub(r"\s+", " ", str(item.get(k) or "")).strip()
+                for k in ("source", "title", "description", "analysis")}
+        if any(fact.values()):
+            facts.append(fact)
+    body = json.dumps(sorted(facts, key=lambda x: json.dumps(x, sort_keys=True)),
+                      sort_keys=True)
+    return hashlib.sha1(body.encode("utf-8")).hexdigest()[:12]
+
+
+def _arbitration_fingerprint(add_id: str, drop_id: str,
+                             add_news: list[dict], drop_news: list[dict],
+                             metrics: dict) -> str:
+    """Composite fingerprint of qualitative reporting and rounded quantitative inputs."""
+    add_fp = _news_content_fingerprint(add_news)
+    drop_fp = _news_content_fingerprint(drop_news)
+    week = metrics.get("week", 2)
+    gain = round(float(metrics.get("gain") or 0.0), 1)
+    ros_diff = round(float(metrics.get("ros_diff") or 0.0), 1)
+    add_proj = round(float(metrics.get("add_proj") or 0.0), 1)
+    drop_proj = round(float(metrics.get("drop_proj") or 0.0), 1)
+    raw = f"{add_id}:{add_fp}|{drop_id}:{drop_fp}|w{week}|g{gain}|d{ros_diff}|ap{add_proj}|dp{drop_proj}"
+    return hashlib.sha1(raw.encode("utf-8")).hexdigest()[:16]
+
+
+def load_arbitrations() -> dict:
+    if not _ARBITRATIONS_PATH.exists():
+        return {}
+    try:
+        return json.loads(_ARBITRATIONS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {}
+
+
+def save_arbitration(key: str, data: dict) -> None:
+    current = load_arbitrations()
+    current[key] = data
+    try:
+        tmp = _ARBITRATIONS_PATH.with_suffix(".json.tmp")
+        tmp.write_text(json.dumps(current, indent=2), encoding="utf-8")
+        tmp.replace(_ARBITRATIONS_PATH)
+    except Exception:
+        pass
+
+
+def arbitrate_dead_heat(add_id: str, drop_id: str, metrics: dict,
+                        timeout: int = 45) -> dict:
+    """Qualitative LLM arbitration for near-tie / dead-heat move proposals.
+
+    When quantitative modeling shows an upgrade is inside the noise margin (< 1.5
+    lineup gain or < 5.0 season ROS points) and both players are in the same tier,
+    invokes local Ollama (qwen3.8:27b-mtp-96k) to determine if real-world reporting,
+    scheme changes, or role catalysts justify burning a transaction to cut the incumbent.
+
+    PROTECTED AGAINST REDUNDANT QUERIES:
+      1. Composite fingerprinting: if no news or metrics have changed, the prior
+         verdict stands for up to ARBITRATION_MAX_AGE_DAYS (3 days) with 0 queries.
+      2. Immediate reaction: whenever new reporting arrives or projections shift,
+         the fingerprint changes and triggers an immediate re-evaluation with no cooldown delay.
+      3. Service resilience: 30s backoff strictly for connection failures/timeouts.
+
+    Returns:
+      dict with:
+        verdict: 'KEEP_INCUMBENT' | 'SWAP_FOR_CANDIDATE'
+        confidence: float in [0.0, 1.0]
+        reason: plain-English rationale
+        source: 'llm' | 'cache' | 'fallback'
+    """
+    key = f"{add_id}_{drop_id}_{metrics.get('week', 2)}"
+    now = time.time()
+
+    # 1. Gather news and compute composite fingerprint
+    add_news = player_news(str(add_id))[:3]
+    drop_news = player_news(str(drop_id))[:3]
+    fp = _arbitration_fingerprint(str(add_id), str(drop_id), add_news, drop_news, metrics)
+
+    # 2. In-process memo check: if identical in this run, reuse immediately
+    if key in _ARBITRATION_MEMO:
+        memo = _ARBITRATION_MEMO[key]
+        if memo.get("fingerprint") == fp:
+            if memo.get("source") != "fallback" or (now - float(memo.get("time", 0))) < ARBITRATION_ERROR_BACKOFF_SECONDS:
+                return memo
+
+    # 3. Persistent cache check: if information has NOT changed and within TTL, reuse prior verdict
+    saved = load_arbitrations().get(key)
+    if saved:
+        saved_time = float(saved.get("time", 0))
+        age_s = now - saved_time
+        same_fp = (saved.get("fingerprint") == fp)
+        within_ttl = (age_s < ARBITRATION_MAX_AGE_DAYS * 86400)
+        is_error_fallback = (saved.get("source") == "fallback")
+
+        if same_fp and within_ttl:
+            # Information has NOT changed -> prior verdict stands without querying Ollama
+            out = dict(saved)
+            out["source"] = "cache"
+            out["reused"] = True
+            _ARBITRATION_MEMO[key] = out
+            return out
+
+        if is_error_fallback and (age_s < ARBITRATION_ERROR_BACKOFF_SECONDS):
+            # Brief backoff strictly on connection errors to avoid freezing
+            out = dict(saved)
+            out["reused"] = True
+            _ARBITRATION_MEMO[key] = out
+            return out
+
+    add_name = metrics.get("add_name") or str(add_id)
+    drop_name = metrics.get("drop_name") or str(drop_id)
+    pos = metrics.get("pos") or ""
+    week = metrics.get("week", 2)
+    gain = float(metrics.get("gain") or 0.0)
+    se = float(metrics.get("se") or 0.1)
+    ros_diff = float(metrics.get("ros_diff") or 0.0)
+    add_ros = float(metrics.get("add_ros") or 0.0)
+    drop_ros = float(metrics.get("drop_ros") or 0.0)
+    add_proj = float(metrics.get("add_proj") or 0.0)
+    drop_proj = float(metrics.get("drop_proj") or 0.0)
+    add_q = metrics.get("add_q") or {}
+    drop_q = metrics.get("drop_q") or {}
+
+    def _fmt_news(items):
+        if not items:
+            return "No recent news items."
+        lines = []
+        for n in items:
+            t = n.get("title", "")
+            d = n.get("description", "")
+            a = n.get("analysis", "") or ""
+            snippet = f"- {t}: {d} {a}".strip()
+            lines.append(snippet[:250])
+        return "\n".join(lines)
+
+    prompt = f"""You are the head scout and general manager for an autonomous fantasy football franchise in a highly competitive 12-team 2QB/superflex keeper league.
+
+We are evaluating whether to execute a transaction on the waiver wire/free agency. Our quantitative model has identified a near-tie / dead-heat situation between an incumbent on our roster and an available free agent. We need your qualitative football judgment to arbitrate this decision.
+
+### THE SITUATION:
+- INCUMBENT (Currently on our roster): {drop_name} ({pos})
+- CANDIDATE (Available to add): {add_name} ({pos})
+
+### THE QUANTITATIVE DATA:
+- Simulated Lineup Gain: {gain:+.1f} points across simulated season (SE {se:.1f})
+- Rest-of-Season Total: {add_name} {add_ros:.1f} pts vs {drop_name} {drop_ros:.1f} pts (Delta: {ros_diff:+.1f} total pts over 15 weeks, {ros_diff/15:+.2f} pts/game)
+- Immediate Week {week} Projection: {drop_name} {drop_proj:.1f} pts vs {add_name} {add_proj:.1f} pts
+- Player Quality Engine (PQI):
+  * {drop_name} (Incumbent): Q = {drop_q.get('q', 0.5):.2f} ({drop_q.get('tier', 'T2')})
+  * {add_name} (Candidate): Q = {add_q.get('q', 0.5):.2f} ({add_q.get('tier', 'T2')})
+
+### RECENT BEAT REPORTING:
+**{drop_name} (Incumbent):**
+{_fmt_news(drop_news)}
+
+**{add_name} (Candidate):**
+{_fmt_news(add_news)}
+
+### QUESTION FOR ARBITRATION:
+Given that the quantitative margin is a dead heat ({ros_diff/15:+.2f} pts/game, within projection noise), does qualitative reporting and football context justify burning a transaction to cut incumbent {drop_name} for {add_name}?
+
+Options:
+1. KEEP_INCUMBENT: Keep {drop_name}. Avoid lateral churn for micro-fractions of a point; favor incumbent stability, current week points, or role certainty.
+2. SWAP_FOR_CANDIDATE: Cut {drop_name} for {add_name}. Qualitative role expansion, scheme change, or ascending talent justifies spending a move despite the tiny quantitative gap.
+
+Format your response strictly as:
+VERDICT: [KEEP_INCUMBENT | SWAP_FOR_CANDIDATE]
+CONFIDENCE: [0.0 - 1.0]
+REASONING: [1-3 sentences of crisp football rationale]
+"""
+
+    import requests
+    fallback_res = {
+        "verdict": "KEEP_INCUMBENT",
+        "confidence": 0.5,
+        "reason": "Arbitration unavailable or defaulted; incumbent protected against lateral churn.",
+        "source": "fallback",
+        "fingerprint": fp,
+        "week": week,
+        "time": now,
+    }
+
+    try:
+        resp = requests.post(OLLAMA, json={
+            "model": LOCAL_MODEL,
+            "stream": False,
+            "keep_alive": "1m",
+            "messages": [{"role": "user", "content": prompt}],
+            "options": {"temperature": 0.3},
+        }, timeout=timeout)
+        resp.raise_for_status()
+        content = resp.json().get("message", {}).get("content", "")
+
+        verdict_m = re.search(r"VERDICT:?\s*\*?\*?\s*(KEEP_INCUMBENT|SWAP_FOR_CANDIDATE)", content, re.I)
+        conf_m = re.search(r"CONFIDENCE:?\s*\*?\*?\s*([0-9\.]+)", content, re.I)
+        reason_m = re.search(r"REASONING:?\s*\*?\*?\s*(.*)", content, re.I | re.S)
+
+        if not verdict_m:
+            raise ValueError(f"unreadable LLM response: missing VERDICT format ({content[:80]!r})")
+
+        verdict = verdict_m.group(1).upper()
+        confidence = float(conf_m.group(1)) if conf_m else 0.65
+        reason = reason_m.group(1).strip() if reason_m else content.strip()[:200]
+        reason = re.sub(r"<think>.*?</think>", "", reason, flags=re.DOTALL).strip()
+        reason = " ".join(reason.split()[:50])
+
+        result = {
+            "verdict": verdict,
+            "confidence": round(confidence, 2),
+            "reason": reason,
+            "source": "llm",
+            "fingerprint": fp,
+            "week": week,
+            "time": now,
+        }
+        _ARBITRATION_MEMO[key] = result
+        save_arbitration(key, result)
+        return result
+    except Exception as e:
+        fallback_res["reason"] = f"LLM error ({type(e).__name__}: {e}); incumbent protected against churn."
+        _ARBITRATION_MEMO[key] = fallback_res
+        # On query timeout, error, or unreadable response: fallback rejects the move
+        # but does NOT create or save a log to disk.
+        return fallback_res
 
 
 def main():

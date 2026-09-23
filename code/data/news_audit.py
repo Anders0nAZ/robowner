@@ -113,6 +113,40 @@ def local_time(ts) -> str:
         return "unknown time"
 
 
+def _claims_already_pending(doc: dict) -> bool:
+    action = doc.get("action") or {}
+    if action.get("free_proposals"):
+        return False
+    claim_props = action.get("claim_proposals") or []
+    if not claim_props:
+        return False
+    if action.get("claims_submitted"):
+        return False
+    rec = action.get("claims_reconciliation") or {}
+    if rec and rec.get("changed") is False:
+        return True
+    try:
+        from robo import waiver_manager
+        snap = waiver_manager.load()
+        active = snap.get("active") or {}
+        if not active:
+            return False
+        active_keys = {
+            (s["spec"].get("add_id"), s["spec"].get("drop_id"), int(s["spec"].get("bid") or 0))
+            for s in active.values() if "spec" in s
+        }
+        props = {
+            (c.get("add", {}).get("player_id"),
+             c.get("drop", {}).get("player_id") or slate.get("drop", {}).get("player_id"),
+             int(c.get("bid") or 0))
+            for slate in claim_props
+            for c in slate.get("claims") or []
+        }
+        return bool(props and props == active_keys)
+    except Exception:
+        return False
+
+
 def outcome(doc: dict) -> str:
     action = doc.get("action") or {}
     if submitted(doc):
@@ -120,7 +154,11 @@ def outcome(doc: dict) -> str:
     if doc.get("source_errors"):
         return "Held on source failure"
     if proposals(doc):
-        return "Proposal only" if doc.get("dry_run") or action.get("free_gated") else "Not submitted"
+        if doc.get("dry_run") or action.get("free_gated") or action.get("claims_gated"):
+            return "Proposal only"
+        if _claims_already_pending(doc):
+            return "Already pending (unchanged)"
+        return "Not submitted"
     deltas = action.get("event_deltas") or {}
     if not any(float(d.get("delta_ros") or 0) > 0 and d.get("causal_edge")
                for d in deltas.values()):
@@ -169,3 +207,5 @@ def narrative(doc: dict) -> list[str]:
     if doc.get("source_errors"):
         out.append("Source failures suppressed live authority: " + "; ".join(doc["source_errors"]))
     return out
+
+

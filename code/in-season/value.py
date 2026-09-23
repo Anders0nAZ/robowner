@@ -30,12 +30,13 @@ from robo import ros
 # the one the bot would act on.
 VALUATION_READY = True
 
-# May the bot ACT on it? YES, since 15 Sep 2026, on Nate's explicit approval
-# after a full review of the waiver portfolio, the claim tiering and the bid
-# model. `python -m robo.value --preflight` was clean at the time it was
-# opened: fresh valuation and model artifacts, every source validated,
-# transaction states self-consistent, a buildable slate, every bid inside the
-# budget and no locked player in any payload.
+# May the bot ACT on it? YES, since 19 Sep 2026, on Nate's explicit approval
+# after a clean preflight and complete audit of transaction pathways, waiver
+# portfolio, claim tiering, 90-minute player-scoped blackout, and bug fixes.
+# `python -m robo.value --preflight` was clean at the time it was opened: fresh
+# valuation and model artifacts, every source validated, transaction states
+# self-consistent, a buildable slate, every bid inside the budget, and no locked
+# player in any payload.
 #
 # THESE ARE TWO DIFFERENT QUESTIONS AND WERE ONE FLAG FOR A DAY, WHICH WAS A
 # MISTAKE. Collapsing them means the only way to stop the bot submitting is to
@@ -47,11 +48,11 @@ VALUATION_READY = True
 # TO CLOSE IT AGAIN: set this False. That is the whole kill switch for roster
 # writes, and it beats disabling tasks because it leaves the bot reading,
 # planning and publishing while it stops it acting.
-SUBMIT_ENABLED = False
+SUBMIT_ENABLED = True
 
 GATE_MESSAGE = (
-    "the roster valuation is live but the transaction gate is closed pending "
-    "human review; --apply will not submit to Sleeper. See robo/value.py.")
+    "the transaction gate is OPEN; --apply will submit live transactions to Sleeper. "
+    "To close it: set SUBMIT_ENABLED = False in robo/value.py.")
 
 
 def ready() -> bool:
@@ -71,7 +72,8 @@ def may_submit() -> bool:
     return bool(VALUATION_READY and SUBMIT_ENABLED)
 
 
-def ros_value(player_id: str, week: int, field: str = "mean") -> float:
+def ros_value(player_id: str, week: int, field: str = "mean",
+              table: dict | None = None) -> float:
     """What this player is worth from `week` to the end of the season.
 
     EXPECTED IS THE VALUATION; ros.json PRICES WHAT IT DOES NOT MODEL. Pointing
@@ -94,7 +96,14 @@ def ros_value(player_id: str, week: int, field: str = "mean") -> float:
     """
     try:
         from robo import expected
-        row = (expected.load().get("players") or {}).get(str(player_id))
+        # `table` is expected.load() hoisted out of the caller's loop, the same
+        # parameter and the same reason as near_value: without it this re-reads
+        # and re-parses a 3MB file once per candidate. moves.candidates() ranks
+        # the whole wire through here, so a 446-man board spent ~13 seconds per
+        # run parsing one file 446 times -- twice over, since priced() builds
+        # both channels.
+        d = table if table is not None else expected.load()
+        row = (d.get("players") or {}).get(str(player_id))
         if row and row.get("ros") is not None:
             return float(row["ros"])
     except Exception:
@@ -154,10 +163,15 @@ def provisional(row: dict) -> float:
     return float(row.get("blend_pts") or row.get("proj_pts") or 0.0)
 
 
-def value_of(row: dict, week: int, field: str = "mean") -> tuple[float, bool]:
-    """(value, is_real). Callers must surface `is_real` to the reader."""
+def value_of(row: dict, week: int, field: str = "mean",
+             table: dict | None = None) -> tuple[float, bool]:
+    """(value, is_real). Callers must surface `is_real` to the reader.
+
+    `table` is the caller's already-loaded valuation, passed straight through
+    to ros_value -- see the note there on why a loop must hoist it.
+    """
     if ready():
-        return ros_value(row["player_id"], week, field), True
+        return ros_value(row["player_id"], week, field, table=table), True
     return provisional(row), False
 
 
@@ -390,6 +404,13 @@ def preflight(league_id: str | None = None) -> list[dict]:
                         (sweep.get("reserve") or []) + (sweep.get("activate") or [])]
     except Exception as e:
         out.append(_check("an IR sweep can be built", False,
+                          f"{type(e).__name__}: {e}"))
+    try:
+        stop = ir.frozen(league_id)
+        out.append(_check("Sleeper will accept roster writes", not stop,
+                          stop or "reserve eligible, roster within the limit"))
+    except Exception as e:
+        out.append(_check("Sleeper will accept roster writes", False,
                           f"{type(e).__name__}: {e}"))
     caught = sorted(set(payload_ids) & locked)
     out.append(_check("no locked player in any payload", not caught,

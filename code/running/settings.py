@@ -341,6 +341,27 @@ REGISTRY: list[S] = [
       "a league. This is bench.py's INSURANCE_WEIGHT expressed as an objective "
       "rather than a weight, and driven by the odds ros.week_weights already uses.",
       bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.marginal", "STREAMING_FLOOR_TOP_K", int,
+      "Depth of available players averaged to set the waiver wire streaming expectation.",
+      "Instead of assuming the single best unrostered player sits untouched in perpetuity, "
+      "this averages the top K available positive options to reflect the realistic streaming tier.",
+      bounds=(1, 10)),
+    S(ROSTER, "robo.marginal", "TE_RANK2_ABSORB_MEAN", float,
+      "Empirical fantasy absorption fraction for backup tight ends (rank 2).",
+      "Grounded in 10-year nflverse data showing TE2s average only 3.0 targets and +0.87 net fantasy points.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.marginal", "TE_RANK2_ABSORB_SD", float,
+      "Standard deviation for backup tight end fantasy absorption draws.",
+      "Controls simulated variance in TE2 role inheritance.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.marginal", "TE_DEEP_ABSORB_MEAN", float,
+      "Empirical fantasy absorption fraction for deep tight ends (rank 3+).",
+      "Deep tight ends almost never inherit fantasy-relevant volume.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.marginal", "TE_DEEP_ABSORB_SD", float,
+      "Standard deviation for deep tight end fantasy absorption draws.",
+      "Controls simulated variance in deep TE role inheritance.",
+      bounds=(0.0, 1.0)),
     S(ROSTER, "robo.injuries", "MAX_AGE_H", float,
       "How stale the ESPN injury feed may be before the valuation ignores it.",
       "Sized to the daily refresh with room for one missed run. Too low and one "
@@ -531,6 +552,48 @@ REGISTRY: list[S] = [
       "value of 15 meant every one of them. Ignored in `patch` mode, where an "
       "empty starting slot scores zero and anyone startable beats it.",
       bounds=(0.0, 200.0), unit="points"),
+    S(ROSTER, "robo.moves", "CLAIM_OVER_FREE_MIN", float,
+      "How much better than the best free agent a claim must be to cost FAAB.",
+      "In the same SIMULATED LINEUP POINTS as MIN_GAIN_TO_ADD, and measured "
+      "against the best free option for the SAME drop on the SAME drawn worlds "
+      "-- a paired difference rather than two estimates subtracted. The "
+      "comparison was computed and recorded long before it decided anything: a "
+      "run on 18 Sep 2026 noted it preferred a 35-point waiver tight end to a "
+      "94-point free one and claimed the waiver man anyway. At 0 the bot "
+      "refuses only a claim something free strictly beats; raise it and it "
+      "insists a claim be meaningfully better before spending a dollar, which "
+      "in a deep-wire week means no claims at all.",
+      bounds=(0.0, 20.0), unit="points"),
+    S(ROSTER, "robo.moves", "DIRECT_ROS_FLAG", float,
+      "How far the season-total comparator may disagree before it is flagged.",
+      "In REST-OF-SEASON points and NEGATIVE: the gap is add minus drop, so a "
+      "claim giving up more than it gains is a large negative number. A flagged "
+      "claim still stands -- the paired simulator decides inside the tiers -- "
+      "but the disagreement is recorded and shows amber on the status page. "
+      "Move it toward 0 to see more of them; past the veto it does nothing.",
+      bounds=(-200.0, 0.0), unit="points"),
+    S(ROSTER, "robo.moves", "DIRECT_ROS_VETO", float,
+      "How far the season-total comparator may disagree before it refuses.",
+      "In REST-OF-SEASON points and NEGATIVE, like DIRECT_ROS_FLAG. Sized "
+      "against this league's record rather than chosen: at -20 it refuses "
+      "moves that give up more than 20 season points to prevent bad bench swaps "
+      "while preserving genuine lottery tickets. At -200 it is off.",
+      bounds=(-200.0, 0.0), unit="points"),
+    S(ROSTER, "robo.moves", "CLAIM_DROP_MIN_QUALITY", float,
+      "Minimum quality score Q to justify dropping an active rostered player on waivers.",
+      "Below 0.25 is T4_REPLACEMENT: bottom-tier replacement players who cannot "
+      "displace an established roster asset. An open roster spot allows adding anyone "
+      "for depth, but dropping an asset for a T4 player is refused. Set to 0.0 to disable.",
+      bounds=(0.0, 1.0), unit="quality score"),
+    S(ROSTER, "robo.moves", "TIEBREAKER_DEAD_HEAT_BIN", float,
+      "Points bin width within which moves are considered a dead heat.",
+      "When two waiver wire options share the same FAAB bid and coverage priority, "
+      "their simulated gains may differ only by statistical noise (< standard error). "
+      "Gains are grouped into bins of this width (e.g. 0.5 points) so the local "
+      "LLM scout sentiment (-1.0 to +1.0) can break ties before falling back to raw "
+      "simulation gain and player ID. At 0.0, the tiebreaker is disabled and raw "
+      "simulation gain decides.",
+      bounds=(0.0, 5.0), unit="points"),
     S(ROSTER, "robo.moves", "DROP_FLOOR", float,
       "Never cut anyone whose drop price is above this.",
       "NOW A BACKSTOP AND LITTLE ELSE. It existed to stop a broken valuation "
@@ -551,6 +614,11 @@ REGISTRY: list[S] = [
       "claims would throw away free optionality for no benefit. What is worth "
       "limiting is how much of the roster actually turns over.",
       bounds=(0, 6), unit="roster spots"),
+    S(ROSTER, "robo.moves", "WAIVER_MAX_SKILL_SLOTS", int,
+      "Maximum number of skill-position claim slots (slates) to plan on weekly waivers.",
+      "Caps the number of independent skill-position incumbents we will offer to cut. "
+      "Allows up to 2 distinct skill slots (e.g. RB+WR, RB+RB, WR+WR, QB+skill, TE+skill).",
+      bounds=(1, 4), unit="slots"),
     S(ROSTER, "robo.moves", "SLATE_DEPTH", int,
       "How deep each slot's waiver priority list goes.",
       "Several claims naming the SAME drop form a priority list: Sleeper works "
@@ -558,6 +626,12 @@ REGISTRY: list[S] = [
       "off a player no longer on our roster at zero cost. A one-deep slate is "
       "the failure mode here, not a long one.",
       bounds=(1, 20), unit="claims"),
+    S(ROSTER, "robo.moves", "CLAIMS_SETTLEMENT_MAX_AHEAD_H", float,
+      "Hours before waiver settlement inside which claims may be planned.",
+      "48 hours covers Monday and Tuesday leading to Wednesday 03:00 settlement. "
+      "Players whose unlock is further out (Thursday locked players on Friday) are "
+      "excluded, while mid-week 1-day drop waivers are retained.",
+      bounds=(1.0, 168.0), unit="hours"),
     S(ROSTER, "robo.faab", "MIN_POINTS_PER_DOLLAR", float,
       "What a FAAB dollar is worth in simulated lineup points, at an even pace.",
       "THE BID POLICY IN ONE NUMBER -- it decides where on the win-probability "
@@ -582,10 +656,11 @@ REGISTRY: list[S] = [
       "anyway.",
       bounds=(0, 10), unit="FAAB"),
     S(ROSTER, "robo.moves", "ROS_MOVE_BLACKOUT_H", float,
-      "Hours before kickoff when long-horizon roster moves stop.",
-      "A rest-of-season swap made an hour before the early games is this week's "
+      "Hours before kickoff when long-horizon roster moves stop (90 minutes).",
+      "A rest-of-season swap made within 90 minutes of kickoff is this week's "
       "panic with the season's consequences, and nothing about it could not have "
-      "waited for Tuesday. Everything but `patch` is held; that one still runs, "
+      "waited for Tuesday. Scoped strictly to the players involved in the "
+      "transaction rather than national schedule. `patch` still runs, "
       "because an unfillable starting slot is the emergency the hour justifies. "
       "Set to 0 to remove the brake entirely.",
       bounds=(0.0, 48.0), unit="hours"),
@@ -594,6 +669,20 @@ REGISTRY: list[S] = [
       "Raising it pre-empts byes earlier at the cost of holding cover we may not "
       "need; the wire turns over, so cover bought five weeks out is often wasted.",
       bounds=(0, 6), unit="weeks"),
+    S(ROSTER, "robo.marginal", "TAKEOVER_MAX_RANK", int,
+      "Maximum depth rank that can challenge for an unprompted starting job takeover.",
+      "Only rank 2 (direct heir) can challenge; rank >= 3 cannot take over the job "
+      "from an active starter without an injury vacancy occurring first.",
+      bounds=(1, 5)),
+    S(ROSTER, "robo.roles", "TAKEOVER_VET_MIN_USAGE", float,
+      "Minimum usage share for a veteran backup to challenge for an organic starting job takeover.",
+      "Veterans with low usage are pure backups whose value comes from vacancy absorption, "
+      "not an unprompted benching of an active starter.",
+      bounds=(0.0, 1.0)),
+    S(ROSTER, "robo.roles", "TAKEOVER_VET_ESTABLISHED_USAGE", float,
+      "Minimum usage share for older (exp >= 4) or Day 3/UDFA veteran backups to challenge for an organic takeover.",
+      "Specialist 3rd-down pass protectors with 20-35% usage do not take over starting roles from healthy starters.",
+      bounds=(0.0, 1.0)),
     S(ROSTER, "robo.ros", "UPSIDE_WEIGHT", float,
       "How hard the rising-role premium protects a player from being dropped.",
       "THE ROOKIE-HOLD DIAL. At 0 an add and a drop are priced off the same "

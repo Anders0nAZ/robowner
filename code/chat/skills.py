@@ -12,6 +12,7 @@ python -m robo.skills <skill> [args...]    # manual test
 
 import json
 import sys
+import time
 from datetime import datetime, timezone
 from functools import lru_cache
 
@@ -28,9 +29,30 @@ LAST_SEASON = "2025"
 
 # ---------------------------------------------------------------- resolution
 
-@lru_cache(maxsize=1)
+# How long the responder may reuse its own copy of the dump before re-reading.
+# Short because the questions it answers are about right now; the disk cache
+# underneath absorbs the network cost, so this only bounds a re-parse.
+_PLAYERS_TTL_S = 300
+_PLAYERS_SEEN: tuple[float, dict] = (0.0, {})
+
+
 def _players() -> dict:
-    return api.players()
+    """Sleeper's dump, re-read often enough to answer an injury question.
+
+    IT WAS lru_cache(maxsize=1), which froze the dump at process start -- and the
+    responder runs for days between restarts, so the league could be told a man
+    was Questionable long after Sleeper had ruled him Out. Measured 18 Sep 2026:
+    a six-hour-old copy disagreed with Sleeper live on 89 designations.
+
+    Sleeper's own field is what the question is about, so this asks for a copy
+    fresh enough to act on and keeps it for a few minutes rather than forever.
+    """
+    global _PLAYERS_SEEN
+    at, data = _PLAYERS_SEEN
+    if not data or time.time() - at > _PLAYERS_TTL_S:
+        data = api.players(max_age_h=api.FRESH_STATUS_MAX_AGE_H)
+        _PLAYERS_SEEN = (time.time(), data)
+    return data
 
 
 @lru_cache(maxsize=1)
@@ -753,6 +775,125 @@ def defense_streaming(weeks: int = 3) -> str:
     return streaming.report(weeks=n, top=6)
 
 
+def matchup_status(team: str = "", week: str = "") -> str:
+    """Current head-to-head matchup status, live score, and remaining leverage."""
+    from robo import season
+    wk = int(week) if str(week).strip().isdigit() else season.current_week()
+    try:
+        matchups_data = api.matchups(LEAGUE_ID_2026, wk)
+    except Exception as e:
+        return f"Could not read matchups for week {wk} ({e})."
+
+    owners = _league_owners()
+    pl = _players()
+    wp = season.week_points(wk)
+
+    target_roster_id = 4  # Roboner roster ID
+    if team.strip():
+        t = team.strip().lower()
+        matched = [rid for rid, o in owners.items() if t in o.lower()]
+        if matched:
+            target_roster_id = matched[0]
+        else:
+            return f"No team found matching '{team}'."
+
+    target_matchup = next((m for m in matchups_data if m.get("roster_id") == target_roster_id), None)
+    if not target_matchup:
+        return f"No matchup data found for week {wk}."
+
+    mid = target_matchup.get("matchup_id")
+    opp_matchup = next((m for m in matchups_data if m.get("matchup_id") == mid and m.get("roster_id") != target_roster_id), None)
+    if not opp_matchup:
+        return f"Week {wk} matchup partner not found."
+
+    my_name = owners.get(target_roster_id, "Us")
+    opp_name = owners.get(opp_matchup.get("roster_id"), "Opponent")
+
+    my_pts = round(float(target_matchup.get("points") or 0.0), 1)
+    opp_pts = round(float(opp_matchup.get("points") or 0.0), 1)
+
+    def analyze_team(m):
+        starters = m.get("starters") or []
+        pts_list = m.get("starters_points") or [0.0] * len(starters)
+        played = 0
+        remaining = 0
+        proj_remaining = 0.0
+        booms = []
+        busts = []
+        for pid, act in zip(starters, pts_list):
+            if pid in ("0", "", None):
+                continue
+            act = float(act or 0.0)
+            w = wp.get(pid) or {}
+            proj = float(w.get("pts") or 0.0)
+            is_locked = bool(w.get("locked")) or w.get("game_status") == "complete" or act > 0
+            if is_locked:
+                played += 1
+                diff = act - proj
+                pname = api.player_name(pl, pid)
+                if diff >= 5.0:
+                    booms.append(f"{pname} ({act:.1f} pts, {diff:+.1f} vs proj)")
+                elif diff <= -5.0 and (w.get("game_status") == "complete" or act > 0):
+                    busts.append(f"{pname} ({act:.1f} pts, {diff:+.1f} vs proj)")
+            else:
+                remaining += 1
+                proj_remaining += proj
+        return played, remaining, proj_remaining, booms, busts
+
+    my_played, my_rem, my_proj_rem, my_booms, my_busts = analyze_team(target_matchup)
+    opp_played, opp_rem, opp_proj_rem, opp_booms, opp_busts = analyze_team(opp_matchup)
+
+    total_my_proj = round(my_pts + my_proj_rem, 1)
+    total_opp_proj = round(opp_pts + opp_proj_rem, 1)
+    margin = round(my_pts - opp_pts, 1)
+
+    lines = [
+        f"Week {wk} Matchup: {my_name} vs {opp_name}",
+        f"Current Score: {my_name} {my_pts} | {opp_name} {opp_pts} ({my_name} {margin:+.1f})",
+        f"Starters Remaining: {my_name} has {my_rem} left ({my_proj_rem:.1f} proj) | {opp_name} has {opp_rem} left ({opp_proj_rem:.1f} proj)",
+        f"Full-Week Projected Total: {my_name} {total_my_proj} vs {opp_name} {total_opp_proj} (Projected spread: {total_my_proj - total_opp_proj:+.1f})"
+    ]
+    if my_booms or opp_booms:
+        b_str = []
+        if my_booms: b_str.append(f"{my_name} booms: " + ", ".join(my_booms))
+        if opp_booms: b_str.append(f"{opp_name} booms: " + ", ".join(opp_booms))
+        lines.append("Booms: " + "; ".join(b_str))
+    if my_busts or opp_busts:
+        u_str = []
+        if my_busts: u_str.append(f"{my_name} duds: " + ", ".join(my_busts))
+        if opp_busts: u_str.append(f"{opp_name} duds: " + ", ".join(opp_busts))
+        lines.append("Duds: " + "; ".join(u_str))
+
+    return "\n".join(lines)
+
+
+def scout_evaluation(player: str) -> str:
+    """Qualitative scouting verdict and news evaluation for a player."""
+    hit = resolve_player(player)
+    if not hit:
+        return f"No player found matching '{player}'."
+    pid, p = hit
+    p_name = p.get("full_name") or player
+    verdicts_path = DATA / "news_verdicts.json"
+    if verdicts_path.exists():
+        try:
+            data = json.loads(verdicts_path.read_text(encoding="utf-8"))
+            v = data.get("verdicts", {}).get(pid)
+            if v:
+                lines = [
+                    f"{p_name} ({p.get('position')}, {p.get('team') or 'FA'}) — Scout Outlook: {v.get('verdict','').upper()} (Confidence: {int(v.get('confidence',0)*100)}%)"
+                ]
+                if v.get("return_week"):
+                    basis = f" ({v.get('return_basis')})" if v.get("return_basis") else ""
+                    lines.append(f"Projected Return: Week {v.get('return_week')}{basis}")
+                if v.get("reason"):
+                    lines.append(f"Scout Rationale: {v.get('reason')}")
+                return "\n".join(lines)
+        except Exception:
+            pass
+    return f"No formal scout verdict on file. Recent news:\n" + player_news(player, limit=2)
+
+
 SKILLS = {
     "league_chat_history": league_chat_history,
     "my_franchise": my_franchise,
@@ -781,10 +922,23 @@ SKILLS = {
     "player_value": player_value,
     "playoff_odds": playoff_odds,
     "defense_streaming": defense_streaming,
+    "matchup_status": matchup_status,
+    "scout_evaluation": scout_evaluation,
 }
 
 # Ollama/OpenAI-style tool schemas for the local model
 TOOL_SCHEMAS = [
+    {"type": "function", "function": {
+        "name": "matchup_status",
+        "description": "Active head-to-head weekly matchup score, starters remaining, boom/bust differentials, and projected margin. Call for 'how are we doing', 'what is the score', 'did I win', 'how did my players do', or checking weekly game flow.",
+        "parameters": {"type": "object", "properties": {
+            "team": {"type": "string", "description": "Optional team or owner name; omit for Roboner's matchup"},
+            "week": {"type": "string", "description": "Optional week number; omit for current week"}}, "required": []}}},
+    {"type": "function", "function": {
+        "name": "scout_evaluation",
+        "description": "Qualitative scouting assessment, outlook verdict (boost/neutral/fade), confidence rating, and return timeline for an injured or trending NFL player. Call for player takes, injury timelines, or sleeper stash advice.",
+        "parameters": {"type": "object", "properties": {
+            "player": {"type": "string", "description": "The player's name"}}, "required": ["player"]}}},
     {"type": "function", "function": {
         "name": "my_status",
         "description": "How many replies I have left in my hourly allowance in each chat, when I last spoke, and how long I have been up. Call this for 'how much do you have left', 'are you rate limited', 'how long have you been running', or anyone checking whether I am about to go quiet.",

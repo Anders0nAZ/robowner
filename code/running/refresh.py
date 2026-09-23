@@ -432,20 +432,22 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--no-restart", action="store_true")
     args = ap.parse_args()
-    _log("=== refresh start ===")
-    # refresh_adp_live() is NOT in this list. Average draft position stopped
-    # meaning anything the moment the board filled, and nothing in season reads
-    # it. Put it back with the draft-prep tasks next August; data/adp_live.json
-    # simply holds its last pre-draft values until then.
-    ok = [refresh_players(), refresh_projections(), refresh_ecr(),
-          refresh_buzz(), refresh_model(), rebuild_board(),
-          capture_projections(), refresh_playoff_odds(),
-          refresh_injuries(), refresh_scout(), rebuild_expected(), rebuild_ros(),
-          ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
-          refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
-    if not args.no_restart:
-        ok.append(restart_responder())
-    _log(f"=== refresh done: {sum(ok)}/{len(ok)} steps OK ===")
+    from robo.runlock import DecisionRun
+    with DecisionRun("Daily refresh", wait_s=5 * 60):
+        _log("=== refresh start ===")
+        # refresh_adp_live() is NOT in this list. Average draft position stopped
+        # meaning anything the moment the board filled, and nothing in season reads
+        # it. Put it back with the draft-prep tasks next August; data/adp_live.json
+        # simply holds its last pre-draft values until then.
+        ok = [refresh_players(), refresh_projections(), refresh_ecr(),
+              refresh_buzz(), refresh_model(), rebuild_board(),
+              capture_projections(), refresh_playoff_odds(),
+              refresh_injuries(), refresh_scout(), rebuild_expected(), rebuild_ros(),
+              ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
+              refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
+        if not args.no_restart:
+            ok.append(restart_responder())
+        _log(f"=== refresh done: {sum(ok)}/{len(ok)} steps OK ===")
 
 
 if __name__ == "__main__":

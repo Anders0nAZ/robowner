@@ -54,6 +54,8 @@ artifact is the interface, and its concern is that a simulation stall must
 never become a lineup that never gets set. A subprocess with a timeout
 honours that; an import defeats it. Every fallback already exists -- a failed
 export leaves yesterday's artifact, and model_proj refuses one too old and drops
+honours that; an import defeats it. Every fallback already exists -- a failed
+export leaves yesterday's artifact, and model_proj refuses one too old and drops
 to Sleeper's live weekly feed, which is 23 of 57 scoring keys but current.
 
     python -m robo.cascade              # the whole chain, dry
@@ -61,7 +63,9 @@ to Sleeper's live weekly feed, which is 23 of 57 scoring keys but current.
 """
 
 import argparse
+from datetime import datetime, time as dtime
 import json
+import os
 import subprocess
 import sys
 import time
@@ -74,6 +78,12 @@ from robo import DATA, LEAGUE_ID_2026, ROOT, season, settings
 # worst observed run -- generous on purpose, because the cost of waiting is a
 # slower job and the cost of cutting it short is a stale number.
 EXPORT_TIMEOUT_S = 120
+
+# How long RobonerRoster waits for an actively running RobonerRefresh before proceeding.
+REFRESH_WAIT_S = 300
+
+# Maximum seconds a retriggered recovery refresh may run before timing out.
+REFRESH_RECOVERY_TIMEOUT_S = 600
 
 # Steps whose failure must NOT stop the chain. A stale weekly projection is
 # survivable and model_proj says so out loud; a lineup that never gets set is
@@ -309,7 +319,16 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     The daily and roster runs keep it, because that is where a date lands in
     the valuation it was written for.
     """
-    from robo import expected, ir, lineup, model_proj, moves, refresh, ros
+    from robo import construction
+    # The roster steps below are each construction sessions of their own; one
+    # outer session keeps them from each running the check, and the run ends
+    # with it as a named step instead.
+    with construction.deferred("cascade", apply=apply):
+        return _run(apply, league_id, verbose, pregame)
+
+
+def _run(apply: bool, league_id: str, verbose: bool, pregame: bool) -> dict:
+    from robo import construction, expected, ir, lineup, model_proj, moves, refresh, ros
 
     log: list = []
 
@@ -371,7 +390,23 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
         return f"{len(d['players'])} expected, {len(r['players'])} ros"
     step("rebuild", _rebuild)
 
-    if season.monday_guard_active():
+    # BEFORE ANY ROSTER OR LINEUP WRITE. A man left on reserve without an
+    # IR-eligible designation makes Sleeper refuse everything -- the lineup
+    # included -- so with lineup first the run died at its first write and never
+    # reached the step that could fix it. If it cannot be fixed, every write
+    # step below is skipped by name rather than failing one after another.
+    ub: dict = {}
+
+    def _unblock():
+        ub.update(ir.unblock(apply=apply, league_id=league_id, verbose=False))
+        return _fmt_unblock(ub, apply)
+    step("unblock", _unblock)
+    stop = "" if ub.get("legal", True) else (ub.get("reason") or "roster frozen")
+
+    if stop:
+        for name in ("lineup", "ir", "patch", "fill", "stream"):
+            step(name, lambda: f"skipped: roster frozen -- {stop}")
+    elif season.monday_guard_active():
         step("monday", lambda: _monday_guard_summary(
             monday_roster_guard(apply=apply, league_id=league_id, week=wk)))
         step("fill", lambda: "suppressed: Monday guard permits only IR-created fills")
@@ -384,7 +419,12 @@ def run(apply: bool = False, league_id: str = LEAGUE_ID_2026,
         step("ir2", lambda: _ir(ir, apply))
         step("fill", lambda: _moves(moves, "fill", apply))
         step("stream", lambda: _stream(moves, wk, apply, league_id))
-        step("lineup3", lambda: _lineup(lineup, wk, apply))
+    # LAST roster step on every branch, frozen and Monday included: whatever
+    # the steps above did or could not do, the run ends Sleeper-legal with
+    # every starting slot filled, or says why not.
+    step("construction", lambda: _construction(
+        construction.ensure(week=wk, league_id=league_id, apply=apply,
+                            trigger="cascade")))
     step("waivers", lambda: _waiver_watch(league_id))
 
     prov = model_proj.week_projections(wk)[1]
@@ -484,6 +524,30 @@ def _lineup(lineup, wk: int, apply: bool) -> str:
             + (f", ILLEGAL: {bad}" if bad else ""))
 
 
+def _construction(out: dict) -> str:
+    issues = out.get("issues") or {}
+    open_ = [k for k in ("frozen", "holes", "illegal") if issues.get(k)]
+    done = ", ".join(s["kind"] for s in out.get("steps") or [])
+    text = out["status"]
+    if done:
+        text += f" ({done})"
+    if open_:
+        text += " -- " + "; ".join(
+            f"{k}: {issues[k]}" if k != "frozen" else "roster frozen"
+            for k in open_)
+    return text
+
+
+def _fmt_unblock(out: dict, apply: bool) -> str:
+    if out.get("was_legal", True):
+        return "roster legal"
+    tag = "done" if apply else "plan"
+    steps = "; ".join(s["text"] for s in out.get("steps") or []
+                      if not apply or s.get("landed"))
+    head = f"was frozen ({out.get('before')}); {tag}: {steps or 'nothing'}"
+    return head + ("" if out.get("legal") else f"; STILL FROZEN: {out.get('reason')}")
+
+
 def _ir(ir, apply: bool) -> str:
     """BLOCKED IS REPORTED FIRST, because `changed` is False when it happens.
 
@@ -501,7 +565,7 @@ def _ir(ir, apply: bool) -> str:
     if stuck:
         parts.append("ROSTER BLOCKED by " + ", ".join(
             f"{b['name']} ({b['status']})" for b in stuck)
-            + " -- no move will be accepted until he is activated or cut")
+            + " -- no move will be accepted until unblock resolves it")
     if out.get("changed"):
         tag = "applied" if out.get("applied") else "would move"
         parts.append(f"{tag}: {len(res)} to reserve, {len(act)} to activate")
@@ -591,6 +655,8 @@ def _stream(moves, wk: int, apply: bool, league_id: str) -> str:
         return f"hold {ours}: {best}'s game locked before submission"
     out = {"submitted": [], "applied": False}
     moves.submit_free(ctx, plan, out, league_id)
+    if not out.get("submitted"):
+        return f"FAILED to stream {ours} -> {best}: transaction was not accepted"
     return f"streamed {ours} -> {best} ({d['gain']:+.2f})"
 
 
@@ -610,6 +676,128 @@ def _waiver_watch(league_id: str) -> str:
     return f"{len(onw)} on waivers for Tuesday: " + ", ".join(names)
 
 
+def is_refresh_running(lock_path=None) -> tuple[bool, str]:
+    """Whether RobonerRefresh is actively running right now."""
+    from robo.runlock import LOCK, pid_alive
+    lp = lock_path or LOCK
+    if lp.exists():
+        try:
+            doc = json.loads(lp.read_text(encoding="utf-8"))
+            owner = str(doc.get("owner") or "")
+            pid = int(doc.get("pid") or 0)
+            if "refresh" in owner.lower():
+                if pid and pid_alive(pid):
+                    return True, f"locked by {owner} (pid {pid})"
+        except Exception:
+            pass
+    try:
+        import psutil
+        for p in psutil.process_iter(["pid", "cmdline"]):
+            cmd = " ".join(p.info.get("cmdline") or [])
+            if "robo.refresh" in cmd and p.pid != os.getpid():
+                return True, f"process running (pid {p.pid})"
+    except Exception:
+        pass
+    return False, ""
+
+
+def refresh_completed_today(today_str: str | None = None, log_path=None) -> bool:
+    """Whether RobonerRefresh has logged a completed run for today."""
+    target_date = today_str or datetime.now().strftime("%Y-%m-%d")
+    lp = log_path or (ROOT / "refresh.log")
+    if not lp.exists():
+        return False
+    try:
+        with lp.open("r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+        for line in reversed(lines[-200:]):
+            if f"[{target_date} " in line and "=== refresh done:" in line:
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def preflight_refresh(max_wait_s: int = REFRESH_WAIT_S,
+                      pregame: bool = False,
+                      verbose: bool = True,
+                      lock_path=None,
+                      log_path=None,
+                      now_fn=None) -> dict:
+    """Preflight check for RobonerRoster: ensure today's 06:30 refresh completed.
+
+    1. If pregame is True, skips immediately (never delay before kickoff).
+    2. If before 06:30 local time, skips immediately (today's refresh not yet due).
+    3. If RobonerRefresh is actively running, delays and polls every 5s up to max_wait_s.
+    4. If today's refresh did not complete (crashed, failed, or missing), retriggers
+       a recovery run via `python -m robo.refresh --no-restart`.
+    5. Fails soft: if recovery fails or times out, logs a warning and allows the
+       cascade to continue with existing data so lineups are never stranded.
+    """
+    if pregame:
+        return {"status": "skipped", "detail": "pregame run"}
+
+    now = now_fn() if now_fn else datetime.now()
+    refresh_due_time = dtime(6, 30)
+    if now.time() < refresh_due_time:
+        return {"status": "skipped", "detail": "before 06:30 scheduled refresh"}
+
+    # 1. Delay while refresh is currently active
+    t0 = time.time()
+    deadline = t0 + max_wait_s
+    waited = False
+    running = False
+    why = ""
+    while time.time() < deadline:
+        running, why = is_refresh_running(lock_path=lock_path)
+        if not running:
+            break
+        waited = True
+        if verbose:
+            print(f"  preflight  waiting for RobonerRefresh ({why})...", flush=True)
+        time.sleep(5)
+
+    if running:
+        msg = f"RobonerRefresh still running after {int(time.time() - t0)}s; proceeding with available data"
+        if verbose:
+            print(f"  preflight  WARN: {msg}", flush=True)
+        return {"status": "timed_out", "detail": msg}
+
+    if waited and verbose:
+        print(f"  preflight  ok  RobonerRefresh finished after {time.time() - t0:.1f}s", flush=True)
+
+    # 2. Check if today's refresh succeeded
+    if refresh_completed_today(today_str=now.strftime("%Y-%m-%d"), log_path=log_path):
+        if verbose and not waited:
+            print("  preflight  ok  today's refresh completed", flush=True)
+        return {"status": "ok", "detail": "today's refresh completed"}
+
+    # 3. Retrigger recovery refresh
+    if verbose:
+        print("  preflight  WARN: today's 06:30 refresh not completed; retriggering...", flush=True)
+    try:
+        t_rec = time.time()
+        r = subprocess.run([sys.executable, "-m", "robo.refresh", "--no-restart"],
+                           cwd=str(ROOT), capture_output=True, text=True,
+                           timeout=REFRESH_RECOVERY_TIMEOUT_S)
+        ok = (r.returncode == 0) and refresh_completed_today(today_str=now.strftime("%Y-%m-%d"), log_path=log_path)
+        detail = (f"recovery refresh completed in {time.time() - t_rec:.1f}s" if ok
+                  else f"recovery refresh exited {r.returncode} ({time.time() - t_rec:.1f}s)")
+        if verbose:
+            print(f"  preflight  {'ok ' if ok else 'FAIL'} {detail}", flush=True)
+        return {"status": "retriggered" if ok else "retrigger_failed", "detail": detail}
+    except subprocess.TimeoutExpired:
+        msg = f"recovery refresh timed out after {REFRESH_RECOVERY_TIMEOUT_S}s; proceeding with available data"
+        if verbose:
+            print(f"  preflight  WARN: {msg}", flush=True)
+        return {"status": "retrigger_timeout", "detail": msg}
+    except Exception as e:
+        msg = f"could not retrigger refresh: {str(e)[:120]}; proceeding with available data"
+        if verbose:
+            print(f"  preflight  WARN: {msg}", flush=True)
+        return {"status": "retrigger_error", "detail": msg}
+
+
 def main():
     ap = argparse.ArgumentParser(description="the in-season chain, in order")
     ap.add_argument("--apply", action="store_true",
@@ -617,6 +805,12 @@ def main():
     ap.add_argument("--pregame", action="store_true",
                     help="minutes before kickoff: skip scout (see run.__doc__)")
     a = ap.parse_args()
+
+    # Before acquiring the cascade lock, ensure the morning refresh is not
+    # running and has completed. Done outside DecisionRun so that a retriggered
+    # refresh can acquire its own lock and not deadlock.
+    preflight_refresh(pregame=a.pregame)
+
     from robo.runlock import DecisionRun
     # Scheduled cascades own the shared writer lock. A news pulse never waits
     # ahead of this path, and the offset watcher schedule avoids start races.

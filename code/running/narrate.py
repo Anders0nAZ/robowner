@@ -117,7 +117,14 @@ def claim_story(claim: dict) -> str:
     head = (f"Claim {target} for ${bid}"
             + (f", cutting {cut}" if drop.get("player_id") else " into an open roster spot"))
     gain, se = claim.get("bid_gain", claim.get("gain")), claim.get("bid_se", claim.get("se"))
-    body = (f"It is worth {_n(gain)} to the starting lineup, ±{_n(se, '{:.2f}')}.")
+    body = f"It is worth {_n(gain)} to the starting lineup, ±{_n(se, '{:.2f}')}."
+    q_info = claim.get("quality") or (claim.get("bid_quote") or {}).get("quality")
+    if q_info:
+        tier = q_info.get("tier", "")
+        q_val = float(q_info.get("q") or 0.0)
+        opt = float(q_info.get("option_value") or 0.0)
+        opt_str = f" with {opt:+.1f} option equity" if opt > 0 else ""
+        body += f" Quality {tier} (Q={q_val:.2f}{opt_str})."
     quote = (claim.get("bid_quote") or {}).get("reason")
     return f"{head}. {body}" + (f" {quote}" if quote else "")
 
@@ -135,8 +142,14 @@ def bid_story(claim: dict) -> str:
     res, high = q.get("reservation_bid"), q.get("expected_highest")
     if res is None or lam <= 0:
         return ""
+    eff = q.get("effective_gain")
+    opt = q.get("option_value", 0.0)
+    if eff is not None and opt and float(opt) > 0:
+        gain_desc = f"of {_n(q.get('gain'))} plus {_n(opt)} option equity ({_n(eff)} total)"
+    else:
+        gain_desc = f"of {_n(q.get('gain'))}"
     out = (f"The reservation price is ${res}. At {lam:.2f} lineup points per dollar, a gain "
-           f"of {_n(q.get('gain'))} cannot justify paying more, so the curve stops there.")
+           f"{gain_desc} cannot justify paying more, so the curve stops there.")
     if high is not None and float(high) > float(res):
         need = (float(high) + 1) * lam
         out += (f" Beating the expected top bid of ${float(high):.0f} would need a gain of "

@@ -90,9 +90,19 @@ def pending_spec(row: dict, order: int = 0) -> dict:
 
 def normalize_spec(spec: dict, order: int = 0) -> dict:
     out = dict(spec)
-    out["add_id"] = str(spec.get("add_id"))
-    out["drop_id"] = (None if spec.get("drop_id") is None
-                      else str(spec.get("drop_id")))
+    add_val = spec.get("add_id")
+    if add_val is None and isinstance(spec.get("add"), dict):
+        add_val = spec["add"].get("player_id")
+    elif add_val is None and spec.get("add") is not None:
+        add_val = spec.get("add")
+    out["add_id"] = str(add_val)
+
+    drop_val = spec.get("drop_id")
+    if drop_val is None and isinstance(spec.get("drop"), dict):
+        drop_val = spec["drop"].get("player_id")
+    elif drop_val is None and "drop" in spec:
+        drop_val = spec.get("drop")
+    out["drop_id"] = None if drop_val in (None, "", "None") else str(drop_val)
     out["bid"] = max(0, int(spec.get("bid") or 0))
     out["group_id"] = str(spec.get("group_id") or
                           ("open" if out["drop_id"] is None
@@ -100,6 +110,7 @@ def normalize_spec(spec: dict, order: int = 0) -> dict:
     out["kind"] = str(spec.get("kind") or
                       ("open" if out["drop_id"] is None else "skill"))
     out["submit_order"] = int(spec.get("submit_order", order))
+    out["capacity"] = max(1, int(spec.get("capacity") or spec.get("group_capacity") or 1))
     return out
 
 
@@ -347,6 +358,10 @@ def inspect(league_id: str, roster_id: int, week: int) -> dict:
     if published:
         _write(doc)
     if settled:
+        # A settled claim reshapes the roster without any write of ours; the
+        # enclosing construction session is what gets the new man started.
+        from robo import construction
+        construction.mark_dirty()
         for row in settled:
             _event("settled", transaction_id=row["transaction_id"],
                    result=row.get("result"), spec=row.get("spec"))
@@ -412,6 +427,61 @@ def _submit(spec: dict, roster_id: int, league_id: str, source: str,
     return saved
 
 
+def worst_case_spend(specs: list[dict]) -> int:
+    """True maximum concurrent spend across all groups, deduplicating player wins.
+
+    A player cannot be won more than once across groups. Each group g can win at
+    most group['capacity'] claims. We find the assignment of winning claims that
+    maximizes total spend without repeating any add_id.
+    """
+    by_group = defaultdict(list)
+    capacities = {}
+    for raw in specs:
+        s = normalize_spec(raw)
+        gid = s["group_id"]
+        by_group[gid].append(s)
+        capacities[gid] = max(capacities.get(gid, 1), int(s.get("capacity") or 1))
+
+    group_items = []
+    for gid, claims in by_group.items():
+        cap = capacities[gid]
+        valid_claims = [c for c in claims if int(c.get("bid") or 0) > 0]
+        valid_claims.sort(key=lambda c: -int(c.get("bid") or 0))
+        group_items.append((gid, cap, valid_claims))
+
+    max_spend = 0
+
+    def search(g_idx: int, used_adds: frozenset, current_spend: int):
+        nonlocal max_spend
+        if g_idx >= len(group_items):
+            if current_spend > max_spend:
+                max_spend = current_spend
+            return
+
+        gid, cap, claims = group_items[g_idx]
+        available_claims = [c for c in claims if c["add_id"] not in used_adds]
+
+        # Branch 1: group wins 0 claims
+        search(g_idx + 1, used_adds, current_spend)
+
+        # Branch 2: group wins up to cap claims
+        if cap == 1:
+            for c in available_claims:
+                bid = int(c.get("bid") or 0)
+                search(g_idx + 1, used_adds | {c["add_id"]}, current_spend + bid)
+        else:
+            import itertools
+            for k in range(1, min(cap, len(available_claims)) + 1):
+                for combo in itertools.combinations(available_claims, k):
+                    combo_adds = {c["add_id"] for c in combo}
+                    if len(combo_adds) == len(combo):
+                        spend_add = sum(int(c.get("bid") or 0) for c in combo)
+                        search(g_idx + 1, used_adds | combo_adds, current_spend + spend_add)
+
+    search(0, frozenset(), 0)
+    return max_spend
+
+
 def portfolio_summary(specs: list[dict]) -> dict:
     """Group capacities and true worst-case spend for UI/audit consumers."""
     groups = {}
@@ -433,7 +503,7 @@ def portfolio_summary(specs: list[dict]) -> dict:
     rows.sort(key=lambda x: ({"open": 0, "skill": 1, "def": 2}
                              .get(x["kind"], 9), x["group_id"]))
     return {"groups": rows,
-            "worst_case_exposure": sum(x["exposure"] for x in rows)}
+            "worst_case_exposure": worst_case_spend(specs)}
 
 
 def reconcile(desired: list[dict], *, league_id: str, roster_id: int,

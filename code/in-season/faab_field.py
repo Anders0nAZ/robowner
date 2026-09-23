@@ -21,7 +21,7 @@ from functools import lru_cache
 from robo import DATA, ROBOWNER_USER_ID, lineup, season
 
 DB = DATA / "history.db"
-MODEL_VERSION = 3
+MODEL_VERSION = 4
 SKILL = {"QB", "RB", "WR", "TE"}
 STARTERS = {"QB": 2, "RB": 2, "WR": 2, "TE": 1}
 DEPTH = {"QB": 3, "RB": 4, "WR": 4, "TE": 2}
@@ -394,7 +394,8 @@ def validation() -> dict:
     }
 
 
-def predict(ctx: dict, candidate_id: str, table: dict | None = None) -> dict:
+def predict(ctx: dict, candidate_id: str, table: dict | None = None,
+            quality: dict | None = None) -> dict:
     """Predict the full rival field and our integer-bid win curve."""
     from robo import expected
     panel = list(historical_panel())
@@ -417,6 +418,10 @@ def predict(ctx: dict, candidate_id: str, table: dict | None = None) -> dict:
     our_priority = int((ours.get("settings") or {}).get("waiver_position") or 999)
     week = int(ctx["week"])
     pos = _player_row(table, candidate_id).get("pos") or "?"
+
+    q_val = float(quality["q"]) if quality and "q" in quality else None
+    q_mult = float(quality["rival_bid_mult"]) if quality and "rival_bid_mult" in quality else None
+
     opponents = []
     for roster in current:
         uid = str(roster.get("owner_id") or "")
@@ -427,8 +432,23 @@ def predict(ctx: dict, candidate_id: str, table: dict | None = None) -> dict:
         priority = int(settings.get("waiver_position") or 999)
         need = _deterministic_need(table, roster, candidate_id)
         pclaim, evidence = _claim_probability(panel, uid, week, pos, need["need"])
+        if q_val is not None:
+            # Shift claim probability in logit space based on quality deviation from baseline (0.40)
+            logit_boost = 1.8 * (q_val - 0.40)
+            pclaim = _logistic(_logit(pclaim) + logit_boost)
+
         bid_given_claim, bid_evidence = _bid_pmf(panel, uid, week, pos,
                                                  need["need"], left)
+        if q_mult is not None and q_mult != 1.0:
+            scaled_bids: dict[int, float] = defaultdict(float)
+            for b, prob in bid_given_claim.items():
+                if b == 0:
+                    scaled_bids[0] += prob
+                else:
+                    new_b = min(left, max(1, int(round(b * q_mult))))
+                    scaled_bids[new_b] += prob
+            bid_given_claim = dict(scaled_bids)
+
         pmf = {-1: 1.0 - pclaim}
         for bid, prob in bid_given_claim.items():
             pmf[int(bid)] = pmf.get(int(bid), 0.0) + pclaim * prob
@@ -478,4 +498,4 @@ def predict(ctx: dict, candidate_id: str, table: dict | None = None) -> dict:
             "opponents": opponents, "expected_highest": round(expected_max, 2),
             "highest_quantiles": field_quantiles, "max_pmf": max_pmf,
             "win_curve": win_curve, "training_rows": len(panel),
-            "validation": checked}
+            "validation": checked, "quality": quality}

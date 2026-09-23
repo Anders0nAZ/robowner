@@ -130,10 +130,54 @@ def next_kickoff(season_yr, week: int, now: float | None = None) -> float | None
     """
     import time as _time
     now = now if now is not None else _time.time()
-    ahead = [t for w, t in _kickoffs(int(season_yr)) if w == week and t > now]
+    ahead = [t for w, t in _kickoffs(int(season_yr)) if w >= week and t > now]
     if not ahead:
         return None
     return min(ahead) - now
+
+
+def latest_kickoff(season_yr, week: int, now: float | None = None) -> float | None:
+    """Seconds until the LAST kickoff of `week` (or future weeks), or None if unreadable."""
+    import time as _time
+    now = now if now is not None else _time.time()
+    ahead = [t for w, t in _kickoffs(int(season_yr)) if w >= week and t > now]
+    if not ahead:
+        return None
+    return max(ahead) - now
+
+
+@lru_cache(maxsize=36)
+def team_kickoffs(season_yr: int, week: int) -> dict[str, float]:
+    """team_code -> epoch_seconds of kickoff for `week`, from nflverse.
+
+    Teams on bye, or unlisted teams, are absent.
+    Both home and away teams are mapped via team_code().
+    """
+    try:
+        import polars as pl
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        df = pl.read_parquet(PARQUET).filter(
+            (pl.col("season") == int(season_yr)) & (pl.col("week") == int(week))
+        )
+        et = ZoneInfo("America/New_York")
+        out = {}
+        for home, away, day, tm in df.select(["home_team", "away_team", "gameday", "gametime"]).iter_rows():
+            if not day or not tm:
+                continue
+            try:
+                dt = datetime.strptime(f"{day} {tm}", "%Y-%m-%d %H:%M").replace(tzinfo=et)
+                ts = dt.timestamp()
+                h, a = team_code(home), team_code(away)
+                if h:
+                    out[h] = ts
+                if a:
+                    out[a] = ts
+            except ValueError:
+                continue
+        return out
+    except Exception:
+        return {}
 
 
 def implied_totals(season_yr, week: int, record: dict | None = None) -> dict:

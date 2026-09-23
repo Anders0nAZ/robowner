@@ -235,21 +235,9 @@ def auctions() -> tuple:
     return tuple(out)
 
 
-@lru_cache(maxsize=8)
-def _model(week: int, pos: str | None = None) -> tuple:
-    """(P(contested), sorted top-rival bids) for this week's bucket.
-
-    Falls back to the whole record when a bucket is too thin to say anything,
-    which matters most in the late-season buckets where contests are rare.
-
-    TWO SEPARATE QUESTIONS, ANSWERED FROM DIFFERENT SLICES. How OFTEN a claim is
-    contested depends on the position -- a quarterback in this superflex league
-    is fought over half again as often as a receiver -- while how MUCH the top
-    rival bid is a question about the week, which is where the budget is. So the
-    rate comes from the positional cell when it is thick enough and the rival
-    distribution stays on the week's bucket, which also keeps the ladder's price
-    curve on the sample size it was fitted with.
-    """
+@lru_cache(maxsize=32)
+def _base_model(week: int, pos: str | None = None) -> tuple:
+    """(P(contested), sorted top-rival bids) for this week's bucket and position."""
     lo, hi = bucket_of(week)
     sub = [a for a in auctions() if lo <= a[0] <= hi]
     if len(sub) < 20:
@@ -259,12 +247,6 @@ def _model(week: int, pos: str | None = None) -> tuple:
     rivals = sorted(a[2] for a in sub if a[2] is not None)
     rate = len(rivals) / len(sub)
     if pos and rivals:
-        # HOW MUCH the field bids is positional too, and pooling it understates
-        # exactly the claim worth winning: a contested quarterback cost a median
-        # $5 and a p75 of $13 against a pooled $2 and $10, while a kicker's
-        # whole distribution is $1. Scaled rather than substituted, for the same
-        # reason the rate is -- the bucket carries the week (budgets deplete and
-        # late contests are cheap) and the position carries the level.
         every = [a for a in auctions() if a[2] is not None]
         cell = [a[2] for a in every if a[1] == pos]
         if len(cell) >= MIN_POS_RIVALS and every:
@@ -274,16 +256,6 @@ def _model(week: int, pos: str | None = None) -> tuple:
                 k = mine / base
                 rivals = sorted(int(round(r * k)) for r in rivals)
     if pos:
-        # A MULTIPLIER ON THE WEEK'S RATE, NOT A REPLACEMENT FOR IT. Both
-        # signals are real and they are not the same signal: contests run 38% in
-        # weeks 1-3 against 20% from week 12, and across all weeks a QB is
-        # fought over 1.5x as often as the average claim. Slicing week AND
-        # position directly would be right and there is not the data for it --
-        # 91 quarterback claims over four buckets is ~23 a cell -- so the
-        # positional cell supplies a ratio and the bucket keeps the level.
-        # Substituting the all-weeks positional rate outright would have quietly
-        # thrown the week away: in week 2 that swaps a bucket rate of 38% for a
-        # season-average 37% and calls it an improvement.
         every = auctions()
         cell = [a for a in every if a[1] == pos]
         if len(cell) >= MIN_POS_CLAIMS and every:
@@ -294,14 +266,34 @@ def _model(week: int, pos: str | None = None) -> tuple:
     return rate, tuple(rivals)
 
 
-def p_win(bid: int, week: int, pos: str | None = None) -> float:
+def _model(week: int, pos: str | None = None, quality: dict | None = None) -> tuple:
+    """(P(contested), sorted top-rival bids) adjusted for player quality.
+
+    Falls back to the whole record when a bucket is too thin to say anything,
+    which matters most in the late-season buckets where contests are rare.
+
+    When player quality is provided, scales the contest probability by
+    quality's p_contested_boost and shifts the rival bid distribution by
+    rival_bid_mult.
+    """
+    rate, rivals = _base_model(week, pos)
+    if quality:
+        boost = float(quality.get("p_contested_boost") or 0.0)
+        rate = max(0.0, min(1.0, rate + boost))
+        mult = float(quality.get("rival_bid_mult") or 1.0)
+        if mult != 1.0 and rivals:
+            rivals = tuple(sorted(max(0, int(round(r * mult))) for r in rivals))
+    return rate, rivals
+
+
+def p_win(bid: int, week: int, pos: str | None = None, quality: dict | None = None) -> float:
     """P(nobody else wants him) + P(contested) x P(top rival bids less than us).
 
     Ties go to the OTHER owner. Sleeper breaks an equal-bid tie on waiver
     priority, which we do not control and cannot see, so assuming we lose it is
     the assumption that cannot flatter us.
     """
-    p_contested, rivals = _model(week, pos)
+    p_contested, rivals = _model(week, pos, quality=quality)
     if not rivals:
         return 1.0
     beat = sum(1 for r in rivals if r < bid) / len(rivals)
@@ -309,7 +301,8 @@ def p_win(bid: int, week: int, pos: str | None = None) -> float:
 
 
 def quote(gain: float, week: int, faab_left: int,
-          pos: str | None = None, field: dict | None = None) -> dict:
+          pos: str | None = None, field: dict | None = None,
+          quality: dict | None = None) -> dict:
     """A complete integer-bid utility curve and its cheapest near-optimum.
 
     FAAB IS PAID ONLY WHEN THE CLAIM WINS.  The expected utility is therefore
@@ -317,34 +310,38 @@ def quote(gain: float, week: int, faab_left: int,
     unconditional bid cost.  The latter silently charged failed claims and was
     the main reason realistic marginal gains collapsed to $0 bids.
 
-    When an opponent field is available it supplies the integer win curve,
-    including manager-specific need, balances and tie priority.  Otherwise the
-    measured pooled curve remains the explicit fallback.
+    When player quality is supplied, incorporates option/denial equity into
+    effective gain for reservation pricing and evaluates competition using
+    quality-adjusted win probability.
     """
     faab_left = max(0, int(faab_left))
-    if gain <= 0:
-        return {"bid": 0, "reason": "no positive roster gain to buy",
-                "gain": gain, "curve": [], "near_optimal": [0, 0]}
+    option_val = float((quality or {}).get("option_value") or 0.0)
+    effective_gain = float(gain) + option_val
+
+    if effective_gain <= 0:
+        return {"bid": 0, "reason": "no positive roster gain or option value to buy",
+                "gain": gain, "effective_gain": effective_gain, "option_value": option_val,
+                "curve": [], "near_optimal": [0, 0], "quality": quality}
     lam = dollar_price(week, faab_left)
-    reservation = faab_left if lam <= 0 else max(0, int(gain / lam))
+    reservation = faab_left if lam <= 0 else max(0, int(effective_gain / lam))
     cap = min(faab_left, reservation)
     supplied = list((field or {}).get("win_curve") or [])
 
     def chance(bid: int) -> float:
         if bid < len(supplied):
             return float(supplied[bid])
-        return p_win(bid, week, pos)
+        return p_win(bid, week, pos, quality=quality)
 
     curve = []
     for bid in range(0, cap + 1):
         pw = chance(bid)
-        utility = pw * (gain - bid * lam)
+        utility = pw * (effective_gain - bid * lam)
         curve.append({"bid": bid, "p_win": round(pw, 6),
-                      "net_if_won": round(gain - bid * lam, 6),
+                      "net_if_won": round(effective_gain - bid * lam, 6),
                       "expected_utility": round(utility, 6)})
     if not curve:
-        curve = [{"bid": 0, "p_win": chance(0), "net_if_won": gain,
-                  "expected_utility": chance(0) * gain}]
+        curve = [{"bid": 0, "p_win": chance(0), "net_if_won": effective_gain,
+                  "expected_utility": chance(0) * effective_gain}]
     peak = max(r["expected_utility"] for r in curve)
     tol = max(1e-9, BID_TOLERANCE_PCT * abs(peak))
     near = [r for r in curve if r["expected_utility"] >= peak - tol]
@@ -353,22 +350,20 @@ def quote(gain: float, week: int, faab_left: int,
     expected = (field or {}).get("expected_highest")
     expected_plus = (None if expected is None else
                      min(faab_left, max(0, int(math.floor(float(expected))) + 1)))
-    reason = (f"P(win) {chosen['p_win']:.0%} at ${chosen['bid']} via {source}; "
-              f"a dollar is priced at {lam:.2f} lineup pts; reservation ${cap}")
+    q_tag = f" [{quality.get('tier')} Q={quality.get('q'):.2f}]" if quality else ""
+    opt_tag = f" (+{option_val:.1f} option)" if option_val > 0 else ""
+    reason = (f"P(win) {chosen['p_win']:.0%} at ${chosen['bid']} via {source}{q_tag}; "
+              f"a dollar is priced at {lam:.2f} lineup pts; reservation ${cap}{opt_tag}")
     return {"bid": int(chosen["bid"]), "reason": reason, "gain": round(gain, 4),
+            "effective_gain": round(effective_gain, 4), "option_value": round(option_val, 4),
             "p_win": chosen["p_win"], "expected_utility": chosen["expected_utility"],
             "dollar_price": round(lam, 6), "reservation_bid": cap,
             "near_optimal": [min(r["bid"] for r in near), max(r["bid"] for r in near)],
             "expected_highest": expected, "expected_highest_plus_one": expected_plus,
             "highest_quantiles": (field or {}).get("highest_quantiles"),
             "model_version": (field or {}).get("version"),
+            "quality": quality,
             "shadow_price": {
-                # THE REALISED PRICE, NOT THE FLOOR CONSTANT. Every number in
-                # the curve above uses `lam`, and this reported
-                # MIN_POINTS_PER_DOLLAR instead -- 0.40 against an actual
-                # 0.3765 in week 2 at a full budget. An audit that prints a
-                # different price from the one it charged cannot be used to
-                # check the bid by hand, which is the only thing it is for.
                 "points_per_dollar": round(lam, 6),
                 "floor_constant": MIN_POINTS_PER_DOLLAR,
                 "status": "provisional",
@@ -379,9 +374,10 @@ def quote(gain: float, week: int, faab_left: int,
 
 
 def best_bid(gain: float, week: int, faab_left: int,
-             pos: str | None = None, field: dict | None = None) -> tuple[int, str]:
+             pos: str | None = None, field: dict | None = None,
+             quality: dict | None = None) -> tuple[int, str]:
     """Compatibility wrapper around :func:`quote`."""
-    q = quote(gain, week, faab_left, pos, field)
+    q = quote(gain, week, faab_left, pos, field, quality=quality)
     return q["bid"], q["reason"]
 
 
@@ -413,13 +409,15 @@ def dollar_price(week: int, faab_left: int) -> float:
 
 def ladder_quotes(week: int, gains: list[float], faab_left: int,
                   positions: list | None = None,
-                  fields: list[dict | None] | None = None) -> list[dict]:
+                  fields: list[dict | None] | None = None,
+                  qualities: list[dict | None] | None = None) -> list[dict]:
     """Full quotes for one priority ladder, with non-increasing live bids."""
     out, ceiling = [], None
     pos = list(positions or []) + [None] * len(gains)
     models = list(fields or []) + [None] * len(gains)
-    for gain, ps, field in zip(gains, pos, models):
-        q = quote(gain, week, faab_left, ps, field)
+    quals = list(qualities or []) + [None] * len(gains)
+    for gain, ps, field, q_info in zip(gains, pos, models, quals):
+        q = quote(gain, week, faab_left, ps, field, quality=q_info)
         bid = int(q["bid"])
         if MIN_LIVE_BID:
             bid = max(MIN_LIVE_BID, bid)
@@ -439,7 +437,8 @@ def ladder_quotes(week: int, gains: list[float], faab_left: int,
 
 def ladder(week: int, gains: list[float], faab_left: int,
            positions: list | None = None,
-           fields: list[dict | None] | None = None) -> list[int]:
+           fields: list[dict | None] | None = None,
+           qualities: list[dict | None] | None = None) -> list[int]:
     """Bids for one slot's priority list, top rung first.
 
     Each rung is priced on ITS OWN gain and then held to the rung above it, so
@@ -454,7 +453,7 @@ def ladder(week: int, gains: list[float], faab_left: int,
     every rung below the first to the floor.
     """
     return [q["bid"] for q in ladder_quotes(week, gains, faab_left,
-                                             positions, fields)]
+                                             positions, fields, qualities)]
 
 
 def failure_reasons() -> dict:

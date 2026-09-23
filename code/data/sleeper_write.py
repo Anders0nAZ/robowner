@@ -93,6 +93,9 @@ def set_reserve(roster_id: int, reserve: list[str],
         roster_update_reserve(league_id: "{league_id}", roster_id: {roster_id},
             reserve: {json.dumps(reserve)}) {{ league_id }}
     }}"""
+    from robo import construction
+    # Before the call, not after: a write that raised may still have landed.
+    construction.mark_dirty()
     gql("roster_update_reserve", q)
 
 
@@ -111,6 +114,8 @@ def free_agent_transaction(adds: dict[str, int] | None, drops: dict[str, int] | 
         "k_adds": list((adds or {}).keys()), "v_adds": list((adds or {}).values()),
         "k_drops": list((drops or {}).keys()), "v_drops": list((drops or {}).values()),
     }
+    from robo import construction
+    construction.mark_dirty()
     return gql("league_create_transaction", q, v)
 
 

@@ -271,6 +271,17 @@ def illegal_starters(current: list[str], cands: list[dict]) -> list[str]:
     return bad
 
 
+def score_current(current: list[str], cands: list[dict]) -> tuple[float, list[str], dict[int, dict]]:
+    """Evaluate points, legality, and pinned slots for the current starting lineup.
+
+    Returns (cur_total, bad, pinned).
+    """
+    pinned = pin_locked(cands, current)
+    cur_total = round(sum(c["pts"] for c in cands if c["player_id"] in set(current)), 2)
+    bad = illegal_starters(current, cands) if current else []
+    return cur_total, bad, pinned
+
+
 def describe(lineup: list, total: float) -> str:
     parts = []
     for slot, p in zip(SLOTS, lineup):
@@ -312,7 +323,9 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
         league_id: str = LEAGUE_ID_2026, apply: bool = False,
         roster_id: int | None = None, verbose: bool = True) -> dict:
     week = week or season.current_week()
-    players_map = api.players()
+    # NEVER_START is tested against Sleeper's own designation, so a stale copy
+    # of it starts a man Sleeper has already ruled out.
+    players_map = api.players(max_age_h=api.FRESH_STATUS_MAX_AGE_H)
     if roster_id is None:
         roster = season.mine(league_id)
     else:
@@ -324,16 +337,14 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
     cands, provenance = project_roster(active, season_yr, week, players_map,
                                        league_id)
     current = [p for p in (roster.get("starters") or [])]
-    pinned = pin_locked(cands, current)
+    cur_total, bad, pinned = score_current(current, cands)
+    cur_total = round(cur_total, 1)
     lineup, total = optimize(cands, pinned)
 
     starter_ids = [p["player_id"] if p else "0" for p in lineup]
-    cur_total = round(sum(c["pts"] for c in cands
-                          if c["player_id"] in set(current)), 1)
     gain = round(total - cur_total, 1)
     changed = starter_ids != current[:len(SLOTS)]
 
-    bad = illegal_starters(current, cands) if current else []
     modelled = sum(1 for c in cands if c["pts_source"] == "model")
     out = {"week": week, "total": total, "current_total": cur_total, "gain": gain,
            "starters": starter_ids, "previous": current, "changed": changed,
@@ -379,6 +390,16 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
         if verbose:
             print(out["write_blocked"])
         return out
+    if roster_id is None:
+        # An illegal reserve or an over-limit roster makes Sleeper refuse any
+        # lineup edit; ir.unblock() owns that state and runs first.
+        from robo import ir
+        stop = ir.frozen(league_id)
+        if stop:
+            out["write_blocked"] = stop
+            if verbose:
+                print(stop)
+            return out
     set_starters(roster["roster_id"], week, starter_ids, league_id)
     out["applied"] = True
     engine = (f"Roboner's NFL model means for {modelled} of {len(cands)} "
@@ -417,7 +438,7 @@ def compare(week: int | None = None, season_yr: str = season.SEASON,
     lineup actually moves. Never writes.
     """
     week = week or season.current_week()
-    players_map = api.players()
+    players_map = api.players(max_age_h=api.FRESH_STATUS_MAX_AGE_H)
     roster = season.mine(league_id)
     reserve = set(roster.get("reserve") or [])
     active = [x for x in (roster.get("players") or []) if x not in reserve]

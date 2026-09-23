@@ -35,14 +35,40 @@ def nfl_state():              return get("state/nfl")
 _PLAYERS_CACHE = RAW / "players_nfl.json"
 _PLAYERS_MAX_AGE_H = 24
 
+# HOW STALE A SLEEPER DESIGNATION MAY BE BEFORE A ROSTER DECISION READS IT.
+# Sleeper enforces its own IR rule against its own `injury_status`, so that field
+# is the authority on who may be reserved and who may not be started -- and it is
+# the field this dump carries. At the default 24h it can be a full day behind:
+# measured 18 Sep 2026, a 6.4-hour-old dump had Nico Collins at Questionable
+# while Sleeper live said Out, and 89 players' designations had moved. He was
+# IR-eligible with three empty reserve slots and the sweep could not see it.
+#
+# A FRESHNESS BOUND, NOT A TUNING KNOB. The dump is ~16MB, so this is the trade:
+# every roster decision inside one window shares a single pull, and the first
+# caller in that window pays it. Lower it and the bot reacts sooner at the cost
+# of more pulls; the whole-dump fetch is why it is not simply always refreshed.
+FRESH_STATUS_MAX_AGE_H = 0.5
 
-def players(refresh: bool = False) -> dict:
-    """Full NFL player dump (~5 MB). Cached on disk, refreshed daily."""
-    stale = (
-        not _PLAYERS_CACHE.exists()
-        or time.time() - _PLAYERS_CACHE.stat().st_mtime > _PLAYERS_MAX_AGE_H * 3600
-    )
-    if refresh or stale:
+
+def players_age_h() -> float | None:
+    """How old the cached dump is, so staleness can be reported rather than
+    silently acted on. None when nothing has been cached yet."""
+    if not _PLAYERS_CACHE.exists():
+        return None
+    return (time.time() - _PLAYERS_CACHE.stat().st_mtime) / 3600.0
+
+
+def players(refresh: bool = False, max_age_h: float | None = None) -> dict:
+    """Full NFL player dump (~16 MB). Cached on disk, refreshed daily.
+
+    `max_age_h` lets a caller that is about to ACT on a designation demand a
+    fresher copy than the ordinary daily one -- see FRESH_STATUS_MAX_AGE_H. The
+    cost is paid once per window however many callers ask, because the refresh
+    rewrites the shared cache file.
+    """
+    limit = _PLAYERS_MAX_AGE_H if max_age_h is None else float(max_age_h)
+    age = players_age_h()
+    if refresh or age is None or age > limit:
         data = get("players/nfl")
         _PLAYERS_CACHE.parent.mkdir(parents=True, exist_ok=True)
         _PLAYERS_CACHE.write_text(json.dumps(data), encoding="utf-8")

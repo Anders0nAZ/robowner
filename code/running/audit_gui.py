@@ -39,10 +39,10 @@ st.set_page_config(page_title="Roboner audit", page_icon="🔍", layout="wide")
 # is no second path to it, so naming one here would only be a path that 404s.
 st.navigation([
     st.Page("pages/0_Now.py", title="Now", icon="🔍", default=True),
-    st.Page("pages/1_Decisions.py", title="Decisions", icon="🧾",
-            url_path="Decisions"),
-    st.Page("pages/2_Players.py", title="Players", icon="📈",
-            url_path="Players"),
-    st.Page("pages/3_Calibration.py", title="Calibration", icon="🔧",
-            url_path="Calibration"),
+    st.Page("pages/1_Lineups.py", title="Lineups", icon="⚖️", url_path="Lineups"),
+    st.Page("pages/2_Moves.py", title="Moves & Waivers", icon="📋", url_path="Moves"),
+    st.Page("pages/3_Projections.py", title="Projections Hub", icon="📊", url_path="Projections"),
+    st.Page("pages/4_AI_Scout.py", title="AI & Scout", icon="🤖", url_path="AIScout"),
+    st.Page("pages/5_Calibration.py", title="Calibration", icon="🔧", url_path="Calibration"),
 ]).run()
+

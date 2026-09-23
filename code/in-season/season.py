@@ -357,14 +357,18 @@ def _eligibility_context(league_id: str = LEAGUE_ID_2026,
     now = time.time() if now is None else float(now)
     rows = _transaction_rows(league_id, week)
     cutoff = now - WAIVER_CLEAR_DAYS * 86400
-    recent_drops = set()
+    # KEYED BY WHEN HE WAS DROPPED, so the clear time can be stated rather than
+    # implied. The latest drop wins: a man dropped twice clears from the second.
+    recent_drops: dict[str, float] = {}
     settlements = []
     for tx in rows:
         if tx.get("status") != "complete":
             continue
         ts = _timestamp(tx.get("status_updated") or tx.get("created")) or 0
         if ts >= cutoff:
-            recent_drops |= {str(pid) for pid in (tx.get("drops") or {})}
+            for pid in (tx.get("drops") or {}):
+                pid = str(pid)
+                recent_drops[pid] = max(recent_drops.get(pid, 0.0), ts)
         if tx.get("type") == "waiver" and ts > 0:
             settlements.append(ts)
     schedule_by_id = {str(g.get("game_id")): g for g in schedule(SEASON)
@@ -404,11 +408,18 @@ def transaction_eligibility(player_id: str,
                 "unlock_basis": None}
 
     if pid in c["recent_drops"]:
+        # WHEN, not just "soon". The clear time is exactly computable from the
+        # drop, and leaving it None made this the one waiver state a reader had
+        # to reconstruct by hand -- which is how a claim on a man who had
+        # already cleared read as a page bug rather than a stale run.
+        dropped_at = c["recent_drops"].get(pid) if isinstance(c["recent_drops"], dict) else None
         return {"player_id": pid, "roster_movement": roster_state,
                 "acquisition": "drop_waiver", "week": c["week"],
                 "game_id": current.get("game_id"),
                 "reason": f"dropped within the last {WAIVER_CLEAR_DAYS} day(s)",
-                "unlock_at": None, "unlock_basis": "drop-clear period"}
+                "unlock_at": (dropped_at + WAIVER_CLEAR_DAYS * 86400
+                              if dropped_at else None),
+                "unlock_basis": "drop-clear period"}
 
     locked = []
     for w, points in c["by_week"].items():
@@ -453,6 +464,73 @@ def transaction_states(player_ids,
             for pid in player_ids}
 
 
+def next_waiver_run(now: float | None = None) -> float:
+    """The next weekly waiver settlement at or after `now`, Phoenix.
+
+    A DIFFERENT QUESTION FROM `_weekly_fallback`, which is asked of a GAME and
+    therefore rolls a Wednesday kickoff to the FOLLOWING Wednesday. Asked of the
+    clock, today's pending run is the answer: at 01:00 on a Wednesday the 03:00
+    run has not happened yet, and `or 7` there would push it a week out.
+    """
+    stamp = time.time() if now is None else float(now)
+    base = datetime.fromtimestamp(stamp, PHOENIX)
+    target = (base.replace(hour=WEEKLY_FALLBACK_HOUR, minute=0, second=0,
+                           microsecond=0)
+              + timedelta(days=(2 - base.weekday()) % 7))
+    if target.timestamp() < stamp:
+        target += timedelta(days=7)
+    return target.timestamp()
+
+
+def _first_game_day(season: str = SEASON) -> dict[int, float]:
+    """week -> the Phoenix midnight of that week's earliest scheduled game."""
+    out: dict[int, float] = {}
+    for g in schedule(season):
+        w, at = g.get("week"), _timestamp(g.get("date"))
+        if not w or at is None:
+            continue
+        w = int(w)
+        out[w] = min(out[w], at) if w in out else at
+    return out
+
+
+def settlement_week(league_id: str = LEAGUE_ID_2026, *,
+                    week: int | None = None, now: float | None = None,
+                    settles_at: float | None = None) -> dict:
+    """The first NFL week a claim submitted now could actually be played in.
+
+    A CLAIM DOES NOT RESOLVE UNTIL THE WAIVER RUN, so every week that ends
+    before that run is a week the claim cannot reach, and pricing one into the
+    claim pays for points nobody can receive. Measured on Friday of week 2:
+    every man on waivers is one of Thursday night's participants and his week-2
+    game is already over, yet he still carried a week-2 projection.
+
+    Compared on the game's DAY, never its clock, for the reason
+    `_weekly_fallback` records -- the schedule's `date` is a calendar date that
+    parses to midnight, hours before kickoff. A game on the settlement's own
+    Wednesday IS reachable, because the run is at 03:00 and the ball is not.
+
+    `settles_at` lets a caller that has already classified the pool pass the
+    real unlock it read there, so an OBSERVED settlement beats the calendar.
+    Unknown falls back to the calendar, which is late rather than wrong.
+    """
+    stamp = time.time() if now is None else float(now)
+    current = current_week() if week is None else int(week)
+    settles = float(settles_at) if settles_at else next_waiver_run(stamp)
+    basis = ("unlock read from the live waiver pool" if settles_at
+             else "next weekly waiver run (Wednesday 03:00 Phoenix)")
+    day = (datetime.fromtimestamp(settles, PHOENIX)
+           .replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
+    first = _first_game_day()
+    # AN UNREADABLE SCHEDULE MUST NOT SHORTEN THE HORIZON. Unlike the kickoff
+    # blackout, where unknown counts as too close, unknown here has to mean
+    # "price everything": silently deleting weeks is what makes a bad claim
+    # look good, and that is the failure this function exists to stop.
+    reachable = [w for w, at in first.items() if at >= day] if first else []
+    return {"week": min(reachable) if reachable else current,
+            "settles_at": settles, "basis": basis, "current_week": current}
+
+
 # -------------------------------------------------------------------- waivers
 
 def on_waivers(league_id: str = LEAGUE_ID_2026,
@@ -474,7 +552,7 @@ def on_waivers(league_id: str = LEAGUE_ID_2026,
         ids = set()
         for w in {max(1, wk - 1), wk}:
             ids |= set(week_points(w, SEASON, league_id))
-        ids |= _eligibility_context(league_id, wk)["recent_drops"]
+        ids.update(_eligibility_context(league_id, wk)["recent_drops"])
         player_ids = ids
     states = transaction_states(player_ids, league_id)
     return {pid for pid, state in states.items()

@@ -27,6 +27,7 @@ A corrupt record is skipped rather than allowed to sink the page.
 from __future__ import annotations
 
 import bisect
+import time
 
 from robo import news_audit, waiver_audit
 
@@ -131,6 +132,14 @@ def _candidate_row(row: dict, channel: str, phase: str) -> dict:
         "pre_ros": row.get("pre_ros"),
         "post_ros": row.get("post_ros"),
         "causal_edge": row.get("causal_edge"),
+        # Every screen's verdict, not the one that happened to fire first --
+        # see moves._claim_screens. Absent on a row no screen reached, which is
+        # different from a row every screen cleared.
+        "screens": row.get("screens"),
+        "over_free": row.get("over_free"),
+        "over_free_gain": row.get("over_free_gain"),
+        "direct_ros": row.get("direct_ros"),
+        "priced_weeks": row.get("priced_weeks"),
         "raw": row,
     }
 
@@ -218,6 +227,12 @@ def _clock(doc: dict) -> dict:
         "control_checks": (list(free_audit.get("control_checks") or [])
                            + list(claims_audit.get("control_checks") or [])),
         "thresholds": claims_audit.get("thresholds") or free_audit.get("thresholds") or {},
+        # WHAT WAS ON OFFER, as that run measured it. A page that recomputes
+        # the pool live answers a different question from the one the slate
+        # answered, and puts the two side by side with no seam.
+        "claim_pool": claims_audit.get("claim_pool") or {},
+        "claim_horizon": claims_audit.get("claim_horizon") or {},
+        "wire_floor": claims_audit.get("wire_floor") or [],
         "roster_state": {"active": len(roster) or None, "faab": doc.get("faab_left"),
                          "hours_to_kickoff": doc.get("hours_to_kickoff")},
         "faab_left": doc.get("faab_left"),
@@ -238,6 +253,28 @@ def _clock(doc: dict) -> dict:
     }
 
 
+def _clock_claims_already_pending(claims: list) -> bool:
+    try:
+        from robo import waiver_manager
+        snap = waiver_manager.load()
+        active = snap.get("active") or {}
+        if not active:
+            return False
+        active_keys = {
+            (s["spec"].get("add_id"), s["spec"].get("drop_id"), int(s["spec"].get("bid") or 0))
+            for s in active.values() if "spec" in s
+        }
+        props = {
+            (c.get("add", {}).get("player_id"),
+             c.get("drop", {}).get("player_id") if isinstance(c.get("drop"), dict) else (c.get("drop") or None),
+             int(c.get("bid") or 0))
+            for c in claims or []
+        }
+        return bool(props and props == active_keys)
+    except Exception:
+        return False
+
+
 def _clock_outcome(doc: dict, free: list, claims: list) -> str:
     if doc.get("blackout"):
         return "Held: too close to kickoff"
@@ -247,6 +284,8 @@ def _clock_outcome(doc: dict, free: list, claims: list) -> str:
         return "No move cleared"
     if doc.get("gated"):
         return "Proposal only"
+    if not free and claims and _clock_claims_already_pending(claims):
+        return "Already pending (unchanged)"
     return "Proposed, submission not recorded"
 
 
@@ -311,6 +350,9 @@ def _absorb(news: dict, clock: dict) -> None:
     news["claims"] = news["claims"] or clock["claims"]
     news["worst_case_faab"] = clock.get("worst_case_faab")
     news["valuation_computed"] = clock.get("valuation_computed")
+    news["claim_pool"] = clock.get("claim_pool")
+    news["claim_horizon"] = clock.get("claim_horizon")
+    news["wire_floor"] = clock.get("wire_floor")
     news["sequence_basis"] = clock.get("sequence_basis")
     news["blackout"] = clock.get("blackout")
     news["control_block"] = clock.get("control_block")
@@ -375,6 +417,109 @@ def slate(run: dict) -> list[dict]:
                      "gain": c.get("gain"), "ceiling": c.get("ceiling"),
                      "why": c.get("why"), "raw": c})
     return rows
+
+
+def _trigger_ids(run: dict) -> set:
+    return {str(e.get("player_id")) for e in (run.get("trigger") or [])
+            if e.get("player_id")}
+
+
+def prose_reads(run: dict) -> dict:
+    """This run's own prose reads, split from the backlog it happened to drain.
+
+    THE TWO ARE NOT THE SAME QUESTION AND ALMOST NEVER THE SAME PLAYERS. A pulse
+    hands its triggers to scout_queue and then asks the queue for one batch, so
+    the eight it reads are whatever reached the front of a shared line -- work
+    queued by earlier pulses, the cascade, or the morning refresh. Measured over
+    five consecutive pulses on 18 Sep 2026 the overlap was 0, 0, 0, 2, 0.
+
+    Presenting the batch under "what set this off" told a reader those eight
+    were the reading behind this decision. They are the reading behind an
+    earlier one.
+    """
+    reviews = ((run.get("timing") or {}).get("advisory_reviews") or [])
+    ids = _trigger_ids(run)
+    mine = [r for r in reviews if str(r.get("player_id")) in ids]
+    return {"mine": mine, "backlog": [r for r in reviews
+                                      if str(r.get("player_id")) not in ids],
+            "unread": sorted(ids - {str(r.get("player_id")) for r in mine})}
+
+
+def _cadence(rows: list[dict]) -> float:
+    """The observed gap between pulses, for turning a queue place into a wait.
+
+    MEASURED, not the scheduled interval: the task's cadence is set outside this
+    codebase and a pulse that stands down for a live game does not drain.
+    """
+    stamps = sorted(float(r.get("at") or 0) for r in rows if r.get("at"))
+    gaps = sorted(b - a for a, b in zip(stamps, stamps[1:]) if 0 < b - a < 3 * 3600)
+    return gaps[len(gaps) // 2] if gaps else 20 * 60.0
+
+
+def prose_followups(run: dict, rows: list[dict] | None = None) -> dict[str, dict]:
+    """For each trigger this run did not read: when it WAS read, or where it sits.
+
+    A later record settles it outright and is preferred over anything live --
+    "read 40 minutes later" is a fact about what happened. Only a player nobody
+    has read yet falls through to the live queue, where a place and a wait are
+    the honest answer and are labelled as being about now rather than then.
+    """
+    rows = events(limit=None) if rows is None else rows
+    unread = prose_reads(run)["unread"]
+    if not unread:
+        return {}
+    at = float(run.get("at") or 0)
+    later = sorted((r for r in rows if float(r.get("at") or 0) > at),
+                   key=lambda r: float(r.get("at") or 0))
+    out = {}
+    for i, r in enumerate(later, start=1):
+        for rev in ((r.get("timing") or {}).get("advisory_reviews") or []):
+            pid = str(rev.get("player_id"))
+            if pid in unread and pid not in out:
+                out[pid] = {"player_id": pid, "name": rev.get("name"),
+                            "read_at": r.get("at"), "pulses_later": i,
+                            "verdict": rev.get("verdict"), "state": "read"}
+    still = [pid for pid in unread if pid not in out]
+    if still:
+        from robo import scout_queue
+        gap = _cadence(rows)
+        for pid, place in (scout_queue.positions(still) or {}).items():
+            out[pid] = {**place, "state": "queued", "cadence_s": gap,
+                        "eta_at": time.time()
+                        + max(place["batches_ahead"], 0) * gap
+                        + place["not_due_for_s"]}
+        for pid, done in (scout_queue.outcomes(still) or {}).items():
+            out.setdefault(pid, {**done, "state": "retired"})
+        for pid in still:
+            out.setdefault(pid, {"player_id": pid, "state": "never_queued"})
+    return out
+
+
+def direct_ros_tier(direct: dict) -> str:
+    """How far the season-total comparator disagreed, across both spellings.
+
+    Records written on 18 Sep 2026 spell it `tier`; everything after spells it
+    `verdict_tier`, because `tier` already means a draft board tier and the
+    field gloss is flat. Normalising the container is this module's job, and
+    the alternative is a page that renders a refused claim as agreeing.
+    """
+    return str((direct or {}).get("verdict_tier")
+               or (direct or {}).get("tier") or "")
+
+
+def claim_pool(run: dict) -> dict:
+    """How many men were on waivers versus free when this slate was built."""
+    return run.get("claim_pool") or {}
+
+
+def claim_horizon(run: dict) -> dict:
+    """When a claim in this run settles, and the first week it could be played."""
+    return run.get("claim_horizon") or {}
+
+
+def wire_floor(run: dict) -> list:
+    """How much of each position the wire already supplied, as measured then."""
+    return run.get("wire_floor") or []
 
 
 def _main() -> None:

@@ -77,11 +77,26 @@ so the statement is true by construction. See robo/faab.py.
 """
 
 import argparse
+import inspect
 import json
 import time
+from datetime import datetime
 
 from robo import LEAGUE_ID_2026, faab, lineup, season, settings, value, vegas
 from robo import sleeper_read as api
+
+def _quote_claim(gain: float, week: int, budget: int, pos: str | None,
+                 field: dict | None, quality: dict | None = None) -> dict:
+    target = getattr(faab.quote, "side_effect", None) or faab.quote
+    try:
+        sig = inspect.signature(target)
+        accepts_q = any(p.name == "quality" or p.kind == inspect.Parameter.VAR_KEYWORD
+                        for p in sig.parameters.values())
+    except Exception:
+        accepts_q = True
+    if accepts_q:
+        return faab.quote(gain, week, budget, pos, field, quality=quality)
+    return faab.quote(gain, week, budget, pos, field)
 
 # How much a candidate must add to our STARTING LINEUP, across simulated
 # seasons, before a transaction is worth making -- ON TOP of being larger than
@@ -128,19 +143,78 @@ DROP_FLOOR = 120.0
 # a WR1 as the more expensive cut.
 TICKET_PROTECT_POINTS = 7.0
 
+# HOW MUCH BETTER THAN THE BEST FREE AGENT A CLAIM MUST BE TO BE WORTH FAAB.
+# In the same simulated lineup points as MIN_GAIN_TO_ADD, and measured against
+# the best free option for the SAME drop on the SAME drawn worlds -- a paired
+# difference, not two estimates subtracted.
+#
+# The comparison was already being computed and recorded as `over_free_gain`
+# and reached no decision: on 18 Sep 2026 a run recorded that it preferred a
+# 35-point waiver tight end to a 94-point free one and claimed the waiver man
+# anyway. At 0 the bot refuses only a claim something free strictly beats;
+# raise it and it insists a claim be meaningfully better before spending a
+# dollar, which in a deep-wire week means no claims at all.
+CLAIM_OVER_FREE_MIN = 0.0
+
+# WHERE THE SEASON-TOTAL COMPARATOR STOPS BEING A FOOTNOTE. Both in
+# rest-of-season points, both negative: the gap is add minus drop, so a claim
+# that gives up far more than it gains is a large negative number.
+#
+# Sized against this league's own record rather than picked. Of 236 claims the
+# bot has selected, 75 disagreed with the comparator; a veto at -25 refuses
+# claims that surrender more than 25 season points (such as cutting an 80+ ROS
+# starter for a 30-point backup). Raising the veto toward 0 starts refusing
+# genuine lottery tickets, which look terrible on season totals by construction --
+# that is what HIT_POINTS and the bench branch of clears() exist to permit.
+DIRECT_ROS_FLAG = -20.0
+DIRECT_ROS_VETO = -20.0
+
+# Minimum player quality score Q to justify dropping an active rostered player
+# on a waiver claim. Below this is T4_REPLACEMENT (Q < 0.25) -- bottom-tier
+# replacement players who cannot displace an established roster asset.
+CLAIM_DROP_MIN_QUALITY = 0.25
+
+# Gain bin width within which moves are considered a dead heat. When two
+# waiver wire options share the same FAAB bid and coverage priority, simulated
+# gains inside this margin (< standard error) are arbitrated by the local LLM
+# scout sentiment before falling back to raw simulation gain and player ID.
+# Set to 0.0 to disable and let raw simulation gain decide.
+TIEBREAKER_DEAD_HEAT_BIN = 0.5
+
+# Qualitative LLM arbitration for near-tie / dead-heat move proposals.
+# When a candidate move drops an active rostered player and the quantitative edge
+# is negligible (< ARBITRATION_MAX_GAIN or < ARBITRATION_MAX_ROS_DIFF) in the same
+# quality tier, the decision is referred to the local LLM scout. If the LLM rules
+# KEEP_INCUMBENT, the move is refused to prevent lateral transaction churn.
+ARBITRATION_ENABLED = True
+ARBITRATION_MAX_GAIN = 1.5
+ARBITRATION_MAX_ROS_DIFF = 5.0
+ARBITRATION_MIN_CONFIDENCE = 0.60
+
 # How many roster spots we are willing to turn over in one waiver run. This caps
 # SLOTS, never claims -- capping claims would throw away the free optionality
 # that makes a priority list worth submitting in the first place.
 MAX_SLOTS_TO_TURN_OVER = 2
 
+# Maximum number of skill-position claim slots (slates) to plan on weekly waivers.
+# Weekly waivers can evaluate and submit claims across up to 2 distinct skill slots
+# (e.g. RB+WR, RB+RB, WR+WR, QB+skill, TE+skill) under Option A positional rules.
+WAIVER_MAX_SKILL_SLOTS = 2
+
 # How deep each slot's priority list goes. Losing costs nothing, so this is
 # bounded by how many candidates are plausibly worth the slot, not by risk.
 SLATE_DEPTH = 5
 
-# Hours before the next kickoff inside which `ros` stops running. Six covers a
-# Sunday morning: the daily job fires at 07:00 local and the early games start
-# at 10:00 Phoenix time.
-ROS_MOVE_BLACKOUT_H = 6.0
+# Hours before kickoff inside which `ros` stops running. 1.5 hours (90 min)
+# strictly covers final inactives and Sleeper API game-lockout windows.
+# Scoped to players involved in the transaction rather than national schedule.
+ROS_MOVE_BLACKOUT_H = 1.5
+
+# Hours before the next waiver settlement inside which `claims` may run. 48 hours
+# covers Monday and Tuesday: the scheduled Tuesday waiver run fires at 20:00
+# local (7h before Wednesday 03:00 settlement). Any run earlier in the week
+# (Thursday-Sunday) sees only the locked Thursday players and is blacked out.
+CLAIMS_SETTLEMENT_MAX_AHEAD_H = 48.0
 
 # How far ahead to look for a week we cannot field a legal lineup in. Three is
 # about how far a bye is worth pre-empting -- further out and the wire will have
@@ -193,7 +267,9 @@ def _context(league_id: str = LEAGUE_ID_2026, mode: str = "ros",
     return {
         "board": board, "by_id": by_id, "roster": r, "week": week, "mode": mode,
         "reserve": set(r.get("reserve") or []), "starters": set(r.get("starters") or []),
-        "players": api.players(),
+        # Every proposal is priced against this roster, so the designations it
+        # carries have to be the ones Sleeper would enforce on the write.
+        "players": api.players(max_age_h=api.FRESH_STATUS_MAX_AGE_H),
         "available": available, "eligibility": eligibility,
         "on_waivers": {pid for pid, state in eligibility.items()
                        if state["acquisition"] in {"weekly_waiver", "drop_waiver"}},
@@ -212,22 +288,150 @@ def _context(league_id: str = LEAGUE_ID_2026, mode: str = "ros",
     }
 
 
-def blacked_out(ctx: dict) -> str:
+def _claim_horizon(ctx: dict) -> dict:
+    """When a claim built now would settle, and the first week it could play.
+
+    The unlock comes from the pool we have ALREADY classified rather than the
+    calendar, so an observed settlement beats the Wednesday fallback -- the same
+    preference season.transaction_eligibility makes. The LATEST unlock is taken:
+    too late under-values a claim, which is the safe direction, while too early
+    restores the week nobody can receive.
+
+    Only unlocks within CLAIMS_SETTLEMENT_MAX_AHEAD_H are considered actionable.
+    If no actionable unlocks exist, settles_at falls back to the upcoming weekly run.
+    """
+    if "_claim_horizon" in ctx:
+        return ctx["_claim_horizon"]
+    now = time.time()
+    actionable = [float(s["unlock_at"]) for s in (ctx.get("eligibility") or {}).values()
+                  if s.get("acquisition") in {"weekly_waiver", "drop_waiver"}
+                  and s.get("unlock_at")
+                  and (float(s["unlock_at"]) - now) <= CLAIMS_SETTLEMENT_MAX_AHEAD_H * 3600.0]
+    h = season.settlement_week(ctx.get("league_id") or LEAGUE_ID_2026,
+                               week=ctx.get("week"),
+                               settles_at=max(actionable) if actionable else None)
+    at = datetime.fromtimestamp(h["settles_at"], season.PHOENIX)
+    res = {**h, "settles_label": at.strftime("%a %H:%M"),
+           "settles_iso": at.isoformat(),
+           "has_actionable_unlocks": bool(actionable)}
+    ctx["_claim_horizon"] = res
+    return res
+
+
+def hours_to_settlement(ctx: dict) -> float | None:
+    """Hours until the next waiver run this context would submit into."""
+    try:
+        h = _claim_horizon(ctx)
+        settles_at = float(h.get("settles_at") or 0)
+        if settles_at > 0:
+            return round((settles_at - time.time()) / 3600.0, 2)
+    except Exception:
+        pass
+    return None
+
+
+def player_hours_to_kickoff(pid: str | None, ctx: dict, now: float | None = None) -> float | None:
+    """Hours until `pid`'s NFL game kicks off in `ctx['week']`.
+
+    Returns None if:
+    - The player has no NFL team (free agent / unrostered in NFL).
+    - The player's team is on bye in this week.
+    - Kickoff times cannot be read from the schedule.
+
+    Returns negative float if the game has already kicked off.
+    """
+    if not pid:
+        return None
+    import time as _time
+    now_ts = now if now is not None else _time.time()
+    pinfo = (ctx.get("players") or {}).get(str(pid)) or {}
+    team = pinfo.get("team")
+    if not team:
+        team = ((ctx.get("by_id") or {}).get(str(pid)) or {}).get("team")
+    if not team:
+        return None
+    season_yr = getattr(season, "SEASON", 2026)
+    week = ctx.get("week") or season.current_week()
+    t_map = vegas.team_kickoffs(season_yr, week)
+    if not t_map:
+        return None
+    code = vegas.team_code(team)
+    kickoff_ts = t_map.get(code)
+    if kickoff_ts is None:
+        return None  # On bye this week
+    return round((kickoff_ts - now_ts) / 3600.0, 2)
+
+
+def blacked_out(ctx: dict, channel: str | None = None,
+                players=None,
+                add_id: str | None = None,
+                drop_id: str | None = None) -> str:
     """Why a long-horizon move must not run right now, or "" if it may.
 
-    `patch` is never blacked out. Everything else is, close to kickoff, and an
-    unreadable schedule counts as close.
+    `patch`, `news`, `ir_fill`, and `stream` are never blacked out.
+    Claims are blacked out if the next waiver settlement is more than
+    CLAIMS_SETTLEMENT_MAX_AHEAD_H hours away (Thursday through Sunday).
+
+    For ordinary free-agent moves (`ros`), the blackout is scoped to the
+    players involved in the transaction (add and drop). A player whose game
+    kicks off within ROS_MOVE_BLACKOUT_H (1.5h = 90 min) or has already kicked off
+    is blacked out from long-horizon swaps.
     """
-    if ctx["mode"] in ("patch", "news", "ir_fill"):
+    ch = channel or ctx.get("channel")
+    if ch == "claims":
+        hs = hours_to_settlement(ctx)
+        if hs is not None and hs > CLAIMS_SETTLEMENT_MAX_AHEAD_H:
+            return (f"{hs:.1f}h to waiver settlement, outside the "
+                    f"{CLAIMS_SETTLEMENT_MAX_AHEAD_H:.0f}h window for claims")
         return ""
-    h = ctx["hours_to_kickoff"]
-    if h is None:
+    if ctx.get("mode") in ("patch", "news", "ir_fill", "stream"):
+        return ""
+
+    h_next = ctx.get("hours_to_kickoff")
+
+    involved = set()
+    if players is not None:
+        involved.update(str(p) for p in players if p is not None)
+    if add_id is not None:
+        involved.add(str(add_id))
+    if drop_id is not None:
+        involved.add(str(drop_id))
+
+    if involved:
+        for pid in sorted(involved):
+            elig = (ctx.get("eligibility") or {}).get(pid) or {}
+            if elig.get("roster_movement") == "roster_locked":
+                pname = (ctx.get("players") or {}).get(pid, {}).get("full_name") or pid
+                return f"{pname}'s game has started, so Sleeper has locked the player"
+
+            h_p = player_hours_to_kickoff(pid, ctx)
+            if h_p is None:
+                if h_next is None:
+                    pinfo = (ctx.get("players") or {}).get(str(pid)) or {}
+                    if pinfo.get("team"):
+                        return ("cannot read kickoff times, so the blackout cannot be cleared; "
+                                "treating unknown as too close")
+                continue
+            if h_p <= 0:
+                pname = (ctx.get("players") or {}).get(pid, {}).get("full_name") or pid
+                return f"{pname}'s game has already kicked off ({abs(h_p):.1f}h ago)"
+            if h_p < ROS_MOVE_BLACKOUT_H:
+                pname = (ctx.get("players") or {}).get(pid, {}).get("full_name") or pid
+                mins = int(round(ROS_MOVE_BLACKOUT_H * 60))
+                return (f"{pname} kicks off in {h_p:.1f}h, inside the "
+                        f"{ROS_MOVE_BLACKOUT_H:.1f}h ({mins}m) blackout for long-horizon moves")
+        return ""
+
+    # Blanket/fallback check when no specific players are specified
+    if h_next is None:
         return ("cannot read kickoff times, so the blackout cannot be cleared; "
                 "treating unknown as too close")
-    if h < ROS_MOVE_BLACKOUT_H:
-        return (f"{h:.1f}h to the next kickoff, inside the "
-                f"{ROS_MOVE_BLACKOUT_H:.0f}h blackout for long-horizon moves")
+    if h_next < ROS_MOVE_BLACKOUT_H:
+        mins = int(round(ROS_MOVE_BLACKOUT_H * 60))
+        return (f"{h_next:.1f}h to the next kickoff, inside the "
+                f"{ROS_MOVE_BLACKOUT_H:.1f}h ({mins}m) blackout for long-horizon moves")
     return ""
+
 
 
 def holes(ctx: dict) -> list[dict]:
@@ -315,6 +519,8 @@ def _droppables(ctx: dict) -> list[dict]:
         # rejected transaction and a plan that reads as submitted.
         if (locks.get(pid) or {}).get("locked"):
             continue
+        if ctx["mode"] == "ros" and blacked_out(ctx, channel="free", drop_id=pid):
+            continue
         row = ctx["by_id"].get(pid)
         if not row:
             continue
@@ -381,6 +587,7 @@ def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[di
     """
     onw = ctx["on_waivers"]
     out = []
+    now = time.time()
     for row in ctx["available"]:
         state = (ctx.get("eligibility") or {}).get(row["player_id"]) or {}
         acquisition = state.get("acquisition")
@@ -388,13 +595,28 @@ def candidates(ctx: dict, waivers: bool, pos: set[str] | None = None) -> list[di
             continue
         if not waivers and acquisition not in {None, "free_now"}:
             continue
+        if waivers:
+            unlock_at = state.get("unlock_at")
+            if unlock_at is not None:
+                if (float(unlock_at) - now) / 3600.0 > CLAIMS_SETTLEMENT_MAX_AHEAD_H:
+                    continue
         if ctx["mode"] == "news" and row["player_id"] not in ctx["affected"]:
             continue
+        if ctx.get("mode") == "ros" and not waivers:
+            if blacked_out(ctx, channel="free", add_id=row["player_id"]):
+                continue
         if (row["player_id"] in onw) != waivers:
             continue
         if pos and (row.get("pos") or "") not in pos:
             continue
-        v, real = value.value_of(row, ctx["week"])
+        if ctx.get("mode") == "patch":
+            table = _expected_table(ctx)
+            v = value.near_value(row["player_id"], ctx["week"], horizon=1, table=table)
+            real = True
+            if v <= 0:
+                v, real = value.value_of(row, ctx["week"], table=table)
+        else:
+            v, real = value.value_of(row, ctx["week"], table=_expected_table(ctx))
         out.append({"row": row, "value": v, "real": real})
     return sorted(out, key=lambda d: (-d["value"], d["row"]["player_id"]))
 
@@ -485,16 +707,17 @@ def _skill_lineup_fillable(table: dict, active_ids: set[str], week: int) -> bool
     return (1 << len(slots)) - 1 in masks
 
 
-def _coverage_after(ctx: dict, add_id: str, drop_id: str | None,
+def _coverage_after(ctx: dict, add_id: str | list | set | tuple,
+                    drop_id: str | list | set | tuple | None,
                     table: dict | None = None,
                     record: dict | None = None) -> tuple[bool, str]:
     """Protect roster construction while allowing cross-position upgrades."""
     table = table or _expected_table(ctx)
     held = set(ctx["roster"].get("players") or [])
     reserve = set(ctx["roster"].get("reserve") or [])
-    active = (held - reserve) | {str(add_id)}
-    if drop_id:
-        active.discard(str(drop_id))
+    add_set = {str(x) for x in (add_id if isinstance(add_id, (list, set, tuple)) else [add_id]) if x}
+    drop_set = {str(x) for x in (drop_id if isinstance(drop_id, (list, set, tuple)) else [drop_id]) if x} if drop_id else set()
+    active = ((held - reserve) | add_set) - drop_set
     players = ctx.get("players") or {}
     erows = table.get("players") or {}
 
@@ -574,15 +797,55 @@ def _coverage_after(ctx: dict, add_id: str, drop_id: str | None,
     return finish(True, "")
 
 
-def _direct_ros(table: dict, add_id: str, drop_id: str | None) -> dict:
-    """The simple apples-to-apples answer carried beside a simulated one."""
-    rows = table.get("players") or {}
-    add_ros = float((rows.get(str(add_id)) or {}).get("ros") or 0.0)
-    drop_ros = (float((rows.get(str(drop_id)) or {}).get("ros") or 0.0)
-                if drop_id else 0.0)
+def _ros_over(table: dict, pid: str | None, weeks) -> float:
+    """His stored season total, re-summed over one horizon.
+
+    A RE-SUMMATION OF STORED TERMS, not a second valuation. expected.py already
+    writes every week's `final` and the weight applied to it, and `pts == final`
+    holds on every live row, so restricting the sum reads the same arithmetic
+    over fewer weeks. Recomputing it any other way would be the second
+    implementation that drifts.
+    """
+    row = (table.get("players") or {}).get(str(pid)) if pid else None
+    if not row:
+        return 0.0
+    by_week, weights = row.get("by_week") or {}, table.get("weights") or {}
+    if weeks is None or not by_week:
+        return float(row.get("ros") or 0.0)
+    keep = {int(w) for w in weeks}
+    return sum(float(cell.get("final") or 0.0) * float(weights.get(str(w), 1.0))
+               for w, cell in by_week.items() if int(w) in keep)
+
+
+def _direct_ros(table: dict, add_id: str, drop_id: str | None,
+                weeks=None) -> dict:
+    """The season-total comparator carried beside the simulated one, tiered.
+
+    NOT A SECOND AUTHORITY, and for the reason marginal.py exists: subtracting
+    two absolute season totals across positions is the question the simulator
+    was built to replace, since a defence summing to 118 is not better than a
+    fourth receiver summing to 45 if neither changes who starts. Inside the
+    tiers the paired figure still decides.
+
+    But it is not nothing either. Across every claim this bot has SELECTED, a
+    third disagreed with it, the worst giving up 101.5 rest-of-season points for
+    14.9. A gap that large is not a difference of opinion about lineup slots; it
+    is one of the two numbers being wrong, and neither is trustworthy enough to
+    spend on. So the far tail is a veto and the middle is a flag.
+
+    COMPARED OVER THE SAME WEEKS as the simulator. Two engines measured over
+    different horizons are not a cross-check, and the claims channel no longer
+    prices the week its claim cannot reach.
+    """
+    add_ros = _ros_over(table, add_id, weeks)
+    drop_ros = _ros_over(table, drop_id, weeks) if drop_id else 0.0
     gain = add_ros - drop_ros
+    tier = ("refused" if gain <= DIRECT_ROS_VETO else
+            "flagged" if gain <= DIRECT_ROS_FLAG else "agrees")
     return {"add_ros": round(add_ros, 3), "drop_ros": round(drop_ros, 3),
-            "gain": round(gain, 3), "prefers_move": gain > 0}
+            "gain": round(gain, 3), "prefers_move": gain > 0,
+            "verdict_tier": tier, "weeks": (list(weeks) if weeks else None),
+            "veto_at": DIRECT_ROS_VETO, "flag_at": DIRECT_ROS_FLAG}
 
 
 def _controlled_ros_options(ctx: dict, table: dict,
@@ -612,7 +875,10 @@ def _controlled_ros_options(ctx: dict, table: dict,
             checks.append({**check, "eligible": False, "reason": why,
                            "coverage": coverage})
             continue
-        direct = _direct_ros(table, add_id, drop_id)
+        # ATTACHED HERE, ENFORCED IN _rows. The tier is one of two screens that
+        # can refuse a claim and they must not short-circuit each other, or the
+        # record says which fired first instead of which were needed.
+        direct = _direct_ros(table, add_id, drop_id, option.get("priced_weeks"))
         # PRIORITY, NOT PERMISSION. 0 is a move that leaves every floor met --
         # including one that lifts us back over a floor we are under -- and 1 is
         # a move that is merely not worse. plan_claims orders on this before it
@@ -664,6 +930,19 @@ def _news_drop_pool(ctx: dict, add_id: str, table: dict) -> tuple[list[dict], li
         if not complete:
             checks.append({**check, "eligible": False, "reason": why})
             continue
+        drop_ros = float(rows[pid]["ros"])
+        if drop_ros > DROP_FLOOR:
+            checks.append({**check, "eligible": False,
+                           "reason": (f"drop price {drop_ros:.1f} exceeds the "
+                                      f"{DROP_FLOOR:.1f} protection floor")})
+            continue
+        tail = _ticket_tail(pid, ctx)
+        if tail is not None:
+            checks.append({**check, "eligible": False,
+                           "reason": (f"held as a lottery ticket: losing him "
+                                      f"costs {tail:.1f} in the worst world, "
+                                      f"over the {TICKET_PROTECT_POINTS:.1f} bar")})
+            continue
         coverage = {}
         safe, why = _coverage_after(ctx, add_id, pid, table, record=coverage)
         if not safe:
@@ -694,6 +973,11 @@ def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
         pid = str(c["player_id"])
         if pid not in ctx["affected"] or (waivers is not None and ((pid in onw) != waivers)):
             continue
+        if waivers:
+            state = (ctx.get("eligibility") or {}).get(pid) or {}
+            unlock_at = state.get("unlock_at")
+            if unlock_at is not None and (float(unlock_at) - time.time()) / 3600.0 > CLAIMS_SETTLEMENT_MAX_AHEAD_H:
+                continue
         delta = ctx.get("event_deltas", {}).get(pid) or {}
         identity = ctx["by_id"].get(pid) or erows.get(pid) or c
         check = {
@@ -752,6 +1036,21 @@ def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
                    drop_name=drop["row"].get("name"), drop_ros=drop["ros"],
                    gain=round(gain, 2), coverage=drop.get("coverage"))
             continue
+        if drop["player_id"] is not None:
+            try:
+                from robo import quality
+                q_info = quality.score(pid, week=ctx.get("week"), ctx=ctx, table=table)
+            except Exception:
+                q_info = None
+            if q_info:
+                q_val = float(q_info.get("q") or 0.0)
+                q_tier = q_info.get("tier") or "T4_REPLACEMENT"
+                if q_val < CLAIM_DROP_MIN_QUALITY or q_tier == "T4_REPLACEMENT":
+                    reject("quality_tier",
+                           f"replacement tier (cannot cut a rostered player for T4: Q={q_val:.2f})",
+                           candidate_ros=cand_ros, drop_id=drop["player_id"],
+                           drop_name=drop["row"].get("name"), drop_ros=drop["ros"])
+                    continue
         approved = {**check, "stage": "ros_comparison", "outcome": "proposed",
                     "reason": "positive event delta and candidate beats the cheapest coverage-safe incumbent",
                     "candidate_ros": cand_ros, "drop_id": drop["player_id"],
@@ -792,7 +1091,7 @@ def _news_channel_plans(ctx: dict, channel: str):
     # however: paired marginal lineup value against the roster we keep if the
     # claim loses.  Feeding direct player ROS into faab.py made a news claim and
     # an identical Tuesday claim receive different bids.
-    from robo import faab_field, marginal
+    from robo import faab_field, marginal, quality
     add_id = str(p["add"]["player_id"])
     drop_id = p["drop"].get("player_id")
     b = marginal.Board(ctx["league_id"], sims=NEWS_SIMS, extra=[add_id],
@@ -809,15 +1108,21 @@ def _news_channel_plans(ctx: dict, channel: str):
                        f"{NOISE_MULTIPLE:g}x error {priced['se']:.2f}")})
         return []
     try:
-        field = faab_field.predict(ctx, add_id, _expected_table(ctx))
+        q_info = quality.score(add_id, week=ctx.get("week"), ctx=ctx,
+                               table=_expected_table(ctx))
+    except Exception:
+        q_info = None
+    try:
+        field = faab_field.predict(ctx, add_id, _expected_table(ctx), quality=q_info)
     except Exception as e:
         field = {"available": False, "reason": f"{type(e).__name__}: {e}"}
-    quote = faab.quote(priced["gain"], ctx["week"], ctx["faab"],
-                       p["add"].get("pos"), field if field.get("available") else None)
+    quote = _quote_claim(priced["gain"], ctx["week"], ctx["faab"],
+                         p["add"].get("pos"), field if field.get("available") else None,
+                         quality=q_info)
     claim = {**p, "bid": int(quote["bid"]), "priority": 0, "seq": 0,
              "bid_gain": round(priced["gain"], 3),
              "bid_se": round(priced["se"], 3), "bid_quote": quote,
-             "opponent_field": field}
+             "opponent_field": field, "quality": q_info}
     return [{"drop": p["drop"], "drop_value": p["drop_value"], "claims": [claim]}]
 
 
@@ -909,14 +1214,31 @@ def _transaction_recheck(ctx: dict, add_id: str, drop_id=None,
         safe, why = _coverage_after(live_ctx, str(add_id), str(drop_id), table)
         if not safe:
             return why
+    if mode == "ros":
+        t_block = blacked_out(ctx, channel="claims" if claim else "free",
+                              add_id=add_id, drop_id=drop_id)
+        if t_block:
+            return t_block
     return ""
 
 
-def evaluation_block(ctx: dict) -> str:
+def evaluation_block(ctx: dict, channel: str | None = None) -> str:
     """Any hard reason this mode must not produce a transaction proposal."""
-    timing = blacked_out(ctx)
-    if timing:
-        return timing
+    if channel == "claims":
+        timing = blacked_out(ctx, channel=channel)
+        if timing:
+            return timing
+    elif ctx.get("mode") not in ("patch", "news", "ir_fill", "stream"):
+        if ctx.get("hours_to_kickoff") is None:
+            return ("cannot read kickoff times, so the blackout cannot be cleared; "
+                    "treating unknown as too close")
+        season_yr = getattr(season, "SEASON", 2026)
+        week = ctx.get("week") or season.current_week()
+        latest = vegas.latest_kickoff(season_yr, week)
+        if latest is not None and latest < ROS_MOVE_BLACKOUT_H * 3600.0:
+            mins = int(round(ROS_MOVE_BLACKOUT_H * 60))
+            return (f"all remaining kickoffs inside the "
+                    f"{ROS_MOVE_BLACKOUT_H:.1f}h ({mins}m) blackout for long-horizon moves")
     if ctx.get("mode") in {"ros", "ir_fill"}:
         ready, why = _table_ready(_expected_table(ctx), ROS_VALUE_MAX_AGE)
         if not ready:
@@ -947,9 +1269,16 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
     refusal to act -- has already happened by the time this is called, and a
     second copy of any of that is the thing most likely to forget the gate.
     """
-    from robo import sleeper_write as sw
+    from robo import ir, sleeper_write as sw
     rid = ctx["roster"]["roster_id"]
     mode = ctx.get("mode", "ros")
+    stop = ir.frozen(league_id) if plans else ""
+    if stop:
+        # Sleeper refuses every add while the account is frozen; ir.unblock()
+        # owns that state and runs before any of this.
+        print(f"  ** ADDS SKIPPED: {stop}")
+        out["control_block"] = stop
+        return out
     for p in plans:
         add, drop = p["add"], p["drop"]
         if mode in ("news", "ros", "ir_fill"):
@@ -1011,62 +1340,6 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
     return out
 
 
-def plan_strand(ctx: dict) -> list[dict]:
-    """Free a slot for a man Sleeper will not let stay on reserve.
-
-    THE ANNOYANCE THIS EXISTS FOR. A player parked on IR with an `Out`
-    designation loses that designation once the week's games finish. He is then
-    not IR-eligible, and Sleeper BLOCKS EVERY ROSTER MOVE -- adds, drops,
-    claims, all of it -- until he is activated or cut. It is the one roster
-    state that freezes the whole account.
-
-    ir.py detects it correctly and refuses to resolve it, on the grounds that
-    activating a man into a full roster means cutting somebody and a cut is a
-    valuation. That was right, and its handoff was wrong: it says to run
-    `moves --mode patch`, and patch fires only on holes(), which is about
-    UNFILLABLE STARTING SLOTS. A stranded man on reserve leaves the lineup
-    perfectly legal, so patch returned nothing and the deadlock sat there --
-    ir pointing at moves, moves seeing no hole, Sleeper refusing everything.
-
-    THE CUT IS NOW ANSWERABLE, which is what changed. The question is simply who
-    is cheapest to lose: the returning man himself, or the cheapest body on the
-    active roster. Both are priced by the same simulator, so this compares two
-    drop prices and takes the smaller. Dropping the stranded man is often
-    correct and was never even considered before.
-    """
-    from robo import ir, marginal
-    p = ir.plan(ctx["league_id"])
-    stuck = [b for b in p["blocked"] if b.get("player_id") in set(p["current"])]
-    if not stuck:
-        return []
-    out, spent = [], set()
-    for b in stuck:
-        pid = b["player_id"]
-        his = marginal.drop_price(pid, ctx["league_id"])
-        cands = [d for d in droppables(ctx) if d["row"]["player_id"] not in spent]
-        cheapest = cands[0] if cands else None
-        row = ctx["by_id"].get(pid) or {"player_id": pid, "name": b["name"], "pos": "--"}
-        if cheapest is None or his <= cheapest["value"]:
-            out.append({"add": {"player_id": None, "name": "(nobody -- a cut, not a swap)",
-                                "pos": "--"},
-                        "drop": row, "gain": 0.0, "add_value": 0.0,
-                        "drop_value": round(his, 1), "real": True,
-                        "why": f"{b['status']}, so he cannot stay on reserve, and at "
-                               f"{his:.1f} he is cheaper to lose than anyone we hold; "
-                               f"cutting him unblocks the roster"})
-            spent.add(pid)
-            continue
-        spent.add(cheapest["row"]["player_id"])
-        out.append({"add": row, "drop": cheapest["row"],
-                    "gain": round(his - cheapest["value"], 1),
-                    "add_value": round(his, 1),
-                    "drop_value": round(cheapest["value"], 1), "real": True,
-                    "why": f"activating him off reserve ({b['status']}) needs an "
-                           f"active slot; he is worth {his:.1f} against "
-                           f"{cheapest['value']:.1f} for the cheapest body we hold"})
-    return out
-
-
 def plan_free(ctx: dict) -> list[dict]:
     """Instant adds. One proposal per roster slot we are willing to turn over."""
     mode = ctx["mode"]
@@ -1105,20 +1378,27 @@ def plan_free(ctx: dict) -> list[dict]:
                 for ros_value, _, row in options[:count]]
     if mode == "news":
         return _news_channel_plans(ctx, "free")
-    if mode == "patch":
-        # A STRANDED RESERVE IS A LEGALITY PROBLEM TOO, and the more urgent one:
-        # an unfillable lineup slot costs us one week's points, while a man
-        # Sleeper will not let stay on reserve blocks every transaction on the
-        # account until he moves. It is checked first for that reason.
-        stranded = plan_strand(ctx)
-        if stranded:
-            return stranded
-    need = _need_positions(ctx) if mode == "patch" else None
+    need =_need_positions(ctx) if mode == "patch" else None
     if mode == "patch" and not need:
         return []
     drops = droppables(ctx)
     pool = candidates(ctx, waivers=False, pos=need)
     if mode == "patch":
+        if need == {"DEF"}:
+            # An empty DEF slot is a weekly matchup problem. The ordinary
+            # board's season number picked DET over the better free defence
+            # after our waiver winner was cut during an IR unblock. Use the
+            # same fitted weekly ranking as the normal streaming decision.
+            from robo import streaming
+            weekly = {r["team"]: r["pts"] for r in streaming.rank_week(ctx["week"])}
+            if weekly:
+                for candidate in pool:
+                    pid = candidate["row"]["player_id"]
+                    if pid in weekly:
+                        candidate["value"] = weekly[pid]
+                pool.sort(key=lambda c: (-weekly.get(c["row"]["player_id"],
+                                                float("-inf")),
+                                         c["row"]["player_id"]))
         # ONE ADD PER HOLE, not one per eligible POSITION. A single SUPER_FLEX
         # gap is eligible for QB, RB, WR and TE, so counting positions would
         # turn over four roster spots to fill one slot -- and patch is the mode
@@ -1190,37 +1470,109 @@ def plan_free(ctx: dict) -> list[dict]:
     # have had for nothing with a spot still open.
     opens = [d for d in P["drops"] if d is None]
     swaps = [d for d in P["drops"] if d is not None]
-    slot_drops = opens + (swaps[:max(1, slots)] if mode != "fill" else [])
-    for drop in slot_drops:
+    # An open spot is free and strictly dominant, so it is taken first and never
+    # competes with a swap.
+    for drop in opens:
         o = best_free([x for x in P["free"] if x["add"] not in used], drop,
-                      fill=(mode == "fill"))
+                      fill=(mode == "fill"), ctx=ctx, board=P["board"])
         if not o:
             continue
         used.add(o["add"])
         out.append(_option_row(ctx, P["board"], o))
+    if mode == "fill":
+        return out
+
+    # THE CHEAPEST MAN TO CUT IS NOT THE BEST SLOT TO SPEND, and `gain` already
+    # knows it: price_options scores the WHOLE swapped roster against our own, so
+    # what we give up by dropping him is inside the number. Ordering the pool on
+    # drop price and then taking `swaps[:1]` therefore applied the drop cost
+    # twice -- once inside every gain, and again as a filter that decided which
+    # gains were allowed to be seen at all.
+    #
+    # Measured 18 Sep 2026, every pair already priced in the same run:
+    #   Mendoza <- Dobbins  +18.20      Mendoza <- Boston  +17.73
+    #   Barner  <- Strange   +0.70  <-- taken, because Strange was 1.17 cheaper
+    # Mendoza could not pair with a tight end's slot without breaking the TE
+    # coverage floor, so he was not beaten; he was never asked. The ledger then
+    # recorded him at +20 as "cleared; lower-ranked option".
+    #
+    # The mutation budget is unchanged: still `slots` slots turned over. What
+    # changes is that the best MOVE picks the slot, not the cheapest incumbent.
+    # No extra simulation -- every (add, drop) pair in P["free"] is already priced.
+    passed_over = ctx.setdefault("_slots_passed_over", [])
+    for _ in range(max(1, slots)):
+        best = None
+        for drop in swaps:
+            if drop in used:
+                continue
+            o = best_free([x for x in P["free"] if x["add"] not in used], drop,
+                          ctx=ctx, board=P["board"])
+            if o and (best is None or o["gain"] > best["gain"]):
+                if best is not None:
+                    passed_over.append({"drop": best["drop"], "add": best["add"],
+                                        "gain": round(best["gain"], 3)})
+                best = o
+            elif o:
+                passed_over.append({"drop": o["drop"], "add": o["add"],
+                                    "gain": round(o["gain"], 3)})
+        if not best:
+            break
+        used.add(best["add"])
+        used.add(best["drop"])
+        out.append(_option_row(ctx, P["board"], best))
     return out
+
+
+def _identity(ctx: dict, board, pid) -> dict | None:
+    """Who a player id refers to, from the board we already built.
+
+    One definition, because a bare id in a record is a number the reader has to
+    go and resolve: `over_free 11603` says nothing, "AJ Barner (SEA TE)" says
+    the whole thing.
+    """
+    if pid is None:
+        return None
+    row = (ctx.get("by_id") or {}).get(pid)
+    if row:
+        return row
+    p = (getattr(board, "S", None) or {}).get(pid) or {}
+    return {"player_id": pid, "name": p.get("name") or pid, "pos": p.get("pos")}
 
 
 def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
     """One priced option in the shape render_free and run() already expect."""
-    add_row = ctx["by_id"].get(o["add"]) or {"player_id": o["add"],
-                                             "name": board.S[o["add"]]["name"],
-                                             "pos": board.S[o["add"]]["pos"]}
+    add_row = _identity(ctx, board, o["add"])
     if o["drop"] is None:
         drop_row = {"player_id": None, "name": "(open roster spot)", "pos": "--"}
         drop_val = 0.0
     else:
-        drop_row = ctx["by_id"].get(o["drop"]) or {"player_id": o["drop"],
-                                                   "name": board.S[o["drop"]]["name"],
-                                                   "pos": board.S[o["drop"]]["pos"]}
-        drop_val = round(board.drop_price(o["drop"])[0], 1)
+        drop_row = _identity(ctx, board, o["drop"])
+        # THE SAME HORIZON THAT PRICED THE GAIN, or `gain` and `drop_value`
+        # stop reconciling by hand -- which is the one check an audit page
+        # exists to make.
+        drop_val = round(board.drop_price(o["drop"], weeks=o.get("priced_weeks"))[0], 1)
     kind = "starting slot" if o["starter"] else "bench, judged on the ceiling"
     direct = o.get("direct_ros")
     comparison = ""
     if direct:
-        verdict = "agrees" if direct["prefers_move"] else "disagrees"
-        comparison = (f"; direct ROS {direct['add_ros']:.1f} vs "
-                      f"{direct['drop_ros']:.1f} ({direct['gain']:+.1f}, {verdict})")
+        # NOT "agrees"/"disagrees". That reads as two engines having fought and
+        # this one having won, and narrate.py quotes this sentence verbatim.
+        # Name what the two numbers are and which one decided.
+        tail = {"refused": "refused", "flagged": "flagged"}.get(
+            direct.get("verdict_tier"), "the lineup-marginal figure decides")
+        comparison = (f"; season totals {direct['add_ros']:.1f} vs "
+                      f"{direct['drop_ros']:.1f} ({direct['gain']:+.1f}); {tail}")
+    from robo import quality, scout
+    sentiment = float(o["scout_sentiment"]) if "scout_sentiment" in o else (
+        scout.scout_sentiment(str(o["add"])) if o.get("add") is not None else 0.0)
+    q_info = o.get("quality")
+    if q_info is None and o.get("add"):
+        try:
+            q_info = quality.score(str(o["add"]), week=ctx.get("week"), ctx=ctx,
+                                   table=_expected_table(ctx))
+        except Exception:
+            q_info = None
+    horizon = o.get("priced_weeks")
     return {"add": add_row, "drop": drop_row,
             "gain": round(o["gain"], 1),
             "add_value": round(o["gain"], 1),
@@ -1228,8 +1580,13 @@ def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
             "real": True,
             "se": round(o["se"], 2), "ceiling": round(o["ceiling"], 1),
             "coverage": o.get("coverage"), "direct_ros": direct,
+            "quality": q_info,
+            "scout_sentiment": sentiment,
             "coverage_priority": o.get("coverage_priority", 0),
             "valuation_computed": o.get("valuation_computed"),
+            "priced_weeks": horizon,
+            "weeks_excluded": o.get("weeks_excluded"),
+            "excluded_reason": o.get("excluded_reason"),
             "why": ((why or f"{kind}; +/- {o['se']:.1f}, ceiling {o['ceiling']:.1f}")
                     + comparison)}
 
@@ -1258,6 +1615,63 @@ def priced(ctx: dict) -> dict:
     if "_priced" not in ctx:
         ctx["_priced"] = _priced(ctx)
     return ctx["_priced"]
+
+
+
+
+def _record_claim_pool(ctx: dict, b) -> None:
+    """What the waiver pool actually WAS, and how high the wire floor sits.
+
+    NOT A GATE, and deliberately. This league has no global waiver run over all
+    free agents: `weekly_waiver` means a claim is genuinely required to acquire
+    him, so a pool of "this week's completed games" is what a waiver wire IS
+    here rather than an artifact to correct. Any rule of the form "refuse when
+    the pool is unrepresentative" fires on exactly the set the free-agent
+    comparison already refuses on a measured margin, so it would be the same
+    control twice with no number behind the second one.
+
+    What was missing was never a gate -- it was a reader's ability to see that
+    the thirty-two men on offer were two teams who happened to play on Thursday.
+    """
+    players = ctx.get("players") or {}
+    onw = ctx.get("on_waivers") or set()
+    teams, by_pos = set(), {}
+    for pid in onw:
+        p = players.get(str(pid)) or {}
+        if p.get("team"):
+            teams.add(p["team"])
+        pos = p.get("position") or "?"
+        by_pos[pos] = by_pos.get(pos, 0) + 1
+    free_n = sum(1 for pid, s in (ctx.get("eligibility") or {}).items()
+                 if s.get("acquisition") == "free_now")
+    horizon = ctx.get("_claim_horizon") or {}
+    ctx["_claim_pool"] = {
+        "waiver_pool_size": len(onw), "free_pool_size": free_n,
+        "waiver_teams": sorted(teams), "waiver_by_pos": dict(sorted(by_pos.items())),
+        "basis": ("unrostered players whose NFL game has locked and whose "
+                  "waivers have not settled"),
+        "settles_at": horizon.get("settles_at"),
+        "settlement_basis": horizon.get("basis")}
+    # HOW MUCH OF EACH POSITION THE WIRE ALREADY SUPPLIES, which is what decides
+    # whether a bench spot spent there is worth holding. replaceability() has
+    # measured it since it was written and nothing had ever read it.
+    #
+    # Measured against the floor the simulator PRICED against -- the men neither
+    # rostered nor in this run's own shortlist -- so this percentage and the
+    # gains beside it come from one pool. It does not on its own explain any
+    # single drop price: a tight end can price near zero simply because he is
+    # our second one.
+    from robo import marginal
+    try:
+        ctx["_wire_floor"] = [
+            {"pos": r["pos"], "ours": round(r["ours"], 2),
+             "wire_first": round(r["wire_first"], 2),
+             "wire_second": round(r["wire_second"], 2),
+             "pct": round(r["pct"], 4), "excluded": r["excluded"],
+             "supplier": r["supplier"], "supplier_weeks": r["supplier_weeks"]}
+            for r in marginal.replaceability(b, ctx["league_id"])]
+    except Exception as e:
+        ctx["_wire_floor_error"] = f"{type(e).__name__}: {e}"
 
 
 def _priced(ctx: dict) -> dict:
@@ -1370,7 +1784,14 @@ def _priced(ctx: dict) -> dict:
             if not complete:
                 drop_checks.append({**check, "eligible": False, "reason": why})
                 continue
-            cost = b.drop_price(pid)[0]
+            # THE ERROR TRAVELS WITH THE PRICE. drop_price() has always returned
+            # both and every caller took `[0]`, so the record could not show that
+            # a slot was decided on a tie -- and it routinely is: on 18 Sep 2026
+            # the three cheapest men on this roster priced at 0.069, -0.000 and
+            # -0.000, and which of them landed first chose between a +20 move and
+            # a +0.6 one.
+            cost, cost_se = b.drop_price(pid)
+            check = {**check, "drop_se": round(cost_se, 3)}
             if cost > DROP_FLOOR:
                 drop_checks.append({**check, "eligible": False,
                                     "drop_price": round(cost, 3),
@@ -1396,15 +1817,19 @@ def _priced(ctx: dict) -> dict:
             drop_checks.append({**check, "eligible": True,
                                 "drop_price": round(cost, 3),
                                 "reason": "available for an upgrade comparison"})
-            priced_drops.append((cost, pid))
+            priced_drops.append((cost, pid, cost_se))
         # AN EMPTY ROSTER SPOT IS A DROP THAT COSTS NOTHING, and until now the
         # ordinary channel could not see one: `fill` and `news` both put None in
         # here, `ros` never did, and `ros` is the only mode the Tuesday waiver
         # task runs. So a night with an open slot and a full FAAB budget built a
         # slate of swaps or nothing at all. Prepended AFTER the sort -- putting
         # None into priced_drops would compare None to a str on a cost tie.
+        # STILL SORTED, because it bounds which drops get priced at all and the
+        # cheapest are the likeliest to survive DROP_FLOOR. It no longer decides
+        # WHICH slot is spent -- see plan_free.
+        priced_drops.sort()
         drops = ([None] if ctx["slots"]["open"] > 0 else []) \
-            + [pid for _, pid in sorted(priced_drops)]
+            + [pid for _, pid, _se in priced_drops]
     affected_weeks = None
     if ctx["mode"] == "news":
         affected_weeks = set()
@@ -1414,8 +1839,29 @@ def _priced(ctx: dict) -> dict:
                     affected_weeks.add(int(w))
         if not affected_weeks:
             affected_weeks.add(ctx["week"])
+    # A CLAIM IS PRICED ONLY OVER THE WEEKS A CLAIM CAN REACH. It does not
+    # resolve until the waiver run, so a week that ends before that run is one
+    # nobody can receive -- and the claims pool is made of exactly the men whose
+    # current-week game is already over, because that is what puts them on
+    # waivers in the first place.
+    #
+    # THE FREE CHANNEL NEEDS NO HORIZON, and the reason is enforced upstream
+    # rather than asserted here: candidates(waivers=False) admits only
+    # `free_now`, and a player's game locking is precisely what ends that. A
+    # free agent's current week is by construction still ahead of him.
+    horizon = _claim_horizon(ctx)
+    ctx["_claim_horizon"] = horizon
+    claim_weeks = [w for w in b.weeks if w >= horizon["week"]] or list(b.weeks)
+    dropped = [w for w in b.weeks if w not in set(claim_weeks)]
     free_options = marginal.price_options(b, drops, free, affected_weeks)
-    wire_options = marginal.price_options(b, drops, wire, affected_weeks)
+    wire_options = marginal.price_options(b, drops, wire, affected_weeks,
+                                          weeks=claim_weeks)
+    for o in wire_options:
+        o["weeks_excluded"] = dropped
+        o["excluded_reason"] = (
+            f"the claim settles {horizon['settles_label']}, after "
+            f"{'week ' + ', '.join(str(w) for w in dropped)}" if dropped else None)
+    _record_claim_pool(ctx, b)
     if ctx["mode"] == "ros":
         free_options = _controlled_ros_options(ctx, table, free_options)
         wire_options = _controlled_ros_options(ctx, table, wire_options)
@@ -1454,10 +1900,216 @@ def clears(o: dict, fill: bool = False) -> bool:
     return o["gain"] >= MIN_GAIN_TO_ADD
 
 
-def best_free(opts: list[dict], drop, fill: bool = False) -> dict | None:
+def best_free(opts: list[dict], drop, fill: bool = False,
+              ctx: dict | None = None, board=None) -> dict | None:
     """The best thing available for nothing, for this slot."""
-    fits = [o for o in opts if o["drop"] == drop and clears(o, fill=fill)]
+    fits = []
+    for o in opts:
+        if o["drop"] != drop or not clears(o, fill=fill):
+            continue
+        if ctx is not None and board is not None:
+            row = _option_row(ctx, board, o)
+            screens = _claim_screens(row)
+            if any(s.get("refused") for s in screens):
+                continue
+        fits.append(o)
     return max(fits, key=lambda o: o["ceiling"] if fill else o["gain"]) if fits else None
+
+
+def _claim_screens(row: dict) -> list[dict]:
+    """Every screen's verdict on one claim, none of them short-circuited.
+
+    EVALUATE ALL, RECORD ALL, REFUSE IF ANY FIRED. Stopping at the first
+    refusal records which screen happened to run first, not which were needed --
+    so a reader cannot tell whether the free-agent comparison was doing work or
+    whether the season-total veto was catching everything on its own. That is
+    exactly the question anyone tuning these two bars has to answer, and the
+    cost of answering it is one extra comparison on a row we are discarding.
+    """
+    out = []
+    gap = row.get("over_free_gain")
+    if gap is not None:
+        beaten = gap <= CLAIM_OVER_FREE_MIN
+        name = (row.get("over_free") or {}).get("name") or "a free agent"
+        out.append({
+            "name": "over_free", "refused": beaten,
+            "verdict": ("refused: beaten by a free agent" if beaten
+                        else "clears the free board"),
+            "margin": gap, "se": row.get("over_free_se"),
+            "threshold": CLAIM_OVER_FREE_MIN,
+            "detail": (f"{name} is free and worth {abs(gap):.1f} more"
+                       if beaten else f"{abs(gap):.1f} better than {name}, free")})
+    direct = row.get("direct_ros") or {}
+    if direct:
+        tier = direct.get("verdict_tier")
+        out.append({
+            "name": "direct_ros", "refused": tier == "refused",
+            "verdict": {"refused": "refused: season totals disagree",
+                        "flagged": "cleared; season totals disagree",
+                        }.get(tier, "season totals agree"),
+            "margin": direct.get("gain"), "verdict_tier": tier,
+            "threshold": direct.get("veto_at"),
+            "detail": (f"season totals {direct.get('add_ros'):.1f} vs "
+                       f"{direct.get('drop_ros'):.1f}")})
+    # Proposal 2A: Minimum quality tier when dropping an active rostered player.
+    # An open roster spot allows replacement tier, but dropping an asset for T4 is refused.
+    # Furthermore, dropping an asset for a strictly lower quality tier is refused (no downgrades).
+    drop_val = row.get("drop")
+    if isinstance(drop_val, dict):
+        drop_id = drop_val.get("player_id")
+        drop_name = drop_val.get("name") or (str(drop_id) if drop_id else "incumbent")
+        drop_q = drop_val.get("quality")
+    else:
+        drop_id = drop_val
+        drop_name = str(drop_val) if drop_val else "incumbent"
+        drop_q = None
+
+    add_val = row.get("add")
+    if isinstance(add_val, dict):
+        add_id = add_val.get("player_id")
+        add_name = add_val.get("name") or "candidate"
+    else:
+        add_id = add_val
+        add_name = str(add_val) if add_val else "candidate"
+
+    tier = "T4_REPLACEMENT"
+    q_info = row.get("quality")
+    if q_info:
+        q_val = float(q_info.get("q") or 0.0)
+        tier = q_info.get("tier") or "T4_REPLACEMENT"
+        if drop_id is not None and str(drop_id).strip() not in ("", "(open roster spot)"):
+            is_t4 = (q_val < CLAIM_DROP_MIN_QUALITY) or (tier == "T4_REPLACEMENT")
+            if drop_q is None and drop_id:
+                try:
+                    from robo import quality
+                    drop_q = quality.score(str(drop_id), week=row.get("priced_weeks", [None])[0] if isinstance(row.get("priced_weeks"), list) else None)
+                except Exception:
+                    drop_q = None
+            tier_rank = {"T1_BREAKOUT": 1, "T2_CONTRIBUTOR": 2, "T3_SPECULATIVE": 3, "T4_REPLACEMENT": 4}
+            add_tr = tier_rank.get(tier, 4)
+            drop_tier = (drop_q or {}).get("tier") if drop_q else None
+            drop_tr = tier_rank.get(drop_tier, 4) if drop_tier else None
+            is_downgrade = (drop_tr is not None and add_tr > drop_tr)
+
+            refused = is_t4 or is_downgrade
+            if is_t4:
+                verdict = "refused: replacement tier (cannot cut a rostered player for T4)"
+                detail = f"{add_name} is tier {tier} (Q={q_val:.2f}) < {CLAIM_DROP_MIN_QUALITY:.2f}"
+            elif is_downgrade:
+                verdict = f"refused: quality tier downgrade (cannot drop {drop_tier} for {tier})"
+                detail = f"{add_name} ({tier}, Q={q_val:.2f}) downgrades from {drop_name} ({drop_tier}, Q={drop_q.get('q', 0.0):.2f})"
+            else:
+                verdict = f"clears quality floor ({tier})" + (f" >= {drop_tier}" if drop_tier else "")
+                detail = f"{add_name} ({tier}, Q={q_val:.2f})" + (f" vs {drop_name} ({drop_tier}, Q={drop_q.get('q', 0.0):.2f})" if drop_q else "")
+            out.append({
+                "name": "quality_tier",
+                "refused": refused,
+                "verdict": verdict,
+                "margin": round(q_val - CLAIM_DROP_MIN_QUALITY, 3),
+                "threshold": CLAIM_DROP_MIN_QUALITY,
+                "detail": detail})
+        else:
+            out.append({
+                "name": "quality_tier",
+                "refused": False,
+                "verdict": f"cleared: open slot allows {tier}",
+                "margin": round(q_val - CLAIM_DROP_MIN_QUALITY, 3),
+                "threshold": CLAIM_DROP_MIN_QUALITY,
+                "detail": f"open roster spot: {tier} (Q={q_val:.2f}) permitted"})
+
+    # Proposal 2B: LLM Arbitration on Near-Tie / Dead-Heat Moves.
+    # When dropping an active rostered player and the quantitative margin is a dead
+    # heat (< ARBITRATION_MAX_GAIN or < ARBITRATION_MAX_ROS_DIFF) in the same quality
+    # tier, consult the local LLM scout. If the LLM rules KEEP_INCUMBENT, refuse
+    # the move to stop lateral transaction churn.
+    if (ARBITRATION_ENABLED
+            and drop_id is not None
+            and str(drop_id).strip() not in ("", "(open roster spot)")
+            and not any(s.get("refused") for s in out)):
+        tier_rank = {"T1_BREAKOUT": 1, "T2_CONTRIBUTOR": 2, "T3_SPECULATIVE": 3, "T4_REPLACEMENT": 4}
+        add_tr = tier_rank.get(tier, 4) if q_info else 4
+        drop_tier = (drop_q or {}).get("tier") if drop_q else None
+        drop_tr = tier_rank.get(drop_tier, 4) if drop_tier else None
+
+        sim_gain = float(row["gain"]) if ("gain" in row and row["gain"] is not None) else None
+        direct_info = row.get("direct_ros") or {}
+        direct_diff = float(direct_info["gain"]) if (direct_info.get("gain") is not None) else None
+
+        has_metrics = (sim_gain is not None) or (direct_diff is not None)
+        is_dead_heat = (has_metrics and drop_tr is not None and add_tr == drop_tr and (
+            (sim_gain is not None and sim_gain <= ARBITRATION_MAX_GAIN)
+            or (direct_diff is not None and direct_diff <= ARBITRATION_MAX_ROS_DIFF)
+        ))
+
+        if is_dead_heat and add_id and drop_id:
+            try:
+                from robo import scout
+                arb_metrics = {
+                    "add_name": add_name, "drop_name": drop_name,
+                    "pos": (row.get("add") or {}).get("pos") if isinstance(row.get("add"), dict) else None,
+                    "week": row.get("priced_weeks", [None])[0] if isinstance(row.get("priced_weeks"), list) else 2,
+                    "gain": sim_gain if sim_gain is not None else 0.0,
+                    "se": float(row.get("se") or 0.1),
+                    "ros_diff": direct_diff if direct_diff is not None else 0.0,
+                    "add_ros": float(direct_info.get("add_ros") or 0.0),
+                    "drop_ros": float(direct_info.get("drop_ros") or 0.0),
+                    "add_proj": float((row.get("add") or {}).get("proj") or 0.0) if isinstance(row.get("add"), dict) else 0.0,
+                    "drop_proj": float((row.get("drop") or {}).get("proj") or 0.0) if isinstance(row.get("drop"), dict) else 0.0,
+                    "add_q": q_info,
+                    "drop_q": drop_q,
+                }
+                decision = scout.arbitrate_dead_heat(str(add_id), str(drop_id), arb_metrics)
+                keep = (decision.get("verdict") == "KEEP_INCUMBENT" or
+                        float(decision.get("confidence") or 0.0) < ARBITRATION_MIN_CONFIDENCE)
+                if keep:
+                    verdict = "refused: LLM arbitration kept incumbent"
+                    detail = f"LLM kept {drop_name} (conf={decision.get('confidence', 0.5):.2f}): {decision.get('reason', '')}"
+                else:
+                    verdict = "cleared: LLM arbitration approved swap"
+                    detail = f"LLM approved {add_name} (conf={decision.get('confidence', 0.5):.2f}): {decision.get('reason', '')}"
+                out.append({
+                    "name": "llm_arbitration",
+                    "refused": keep,
+                    "verdict": verdict,
+                    "margin": round(sim_gain if sim_gain is not None else (direct_diff or 0.0), 2),
+                    "threshold": ARBITRATION_MAX_GAIN,
+                    "detail": detail
+                })
+            except Exception as e:
+                out.append({
+                    "name": "llm_arbitration",
+                    "refused": True,
+                    "verdict": "refused: LLM arbitration error (incumbent kept)",
+                    "margin": round(sim_gain if sim_gain is not None else (direct_diff or 0.0), 2),
+                    "threshold": ARBITRATION_MAX_GAIN,
+                    "detail": f"Arbitration error: {e}"
+                })
+    return out
+
+
+def _claim_sort_key(r: dict, kind_order: int | None = None, slate_idx: int = 0) -> tuple:
+    """Sort key for waiver claim priority.
+
+    Primary: descending bid.
+    Secondary: group kind order (if multi-group portfolio), coverage priority, and slate index.
+    Tertiary: dead-heat gain bin (if enabled), broken by local LLM scout sentiment,
+              then exact simulated gain, and finally deterministic player ID.
+    """
+    bid = -int(r.get("bid") or 0)
+    cov = int(r.get("coverage_priority") or 0)
+    gain = float(r.get("gain") or 0.0)
+    sent = float(r.get("scout_sentiment") or 0.0)
+    pid = str((r.get("add") or {}).get("player_id") or "")
+
+    if TIEBREAKER_DEAD_HEAT_BIN > 0:
+        gain_bin = round(gain / TIEBREAKER_DEAD_HEAT_BIN)
+        tiebreak = (-gain_bin, -sent, -gain, pid)
+    else:
+        tiebreak = (-gain, -sent, pid)
+
+    if kind_order is not None:
+        return (bid, kind_order, cov, slate_idx) + tiebreak
+    return (bid, cov, slate_idx) + tiebreak
 
 
 def plan_claims(ctx: dict) -> list[dict]:
@@ -1494,19 +2146,38 @@ def plan_claims(ctx: dict) -> list[dict]:
         price and nothing more -- if the floor is genuinely worth more than the
         best receiver on the wire, that belongs in the BID, not in a sort that
         overrides one."""
-        alt = best_free(P["free"], drop)
-        out = []
+        # THE YARDSTICK MUST BE THE FREE MOVE WE WOULD ACTUALLY HAVE MADE. Once
+        # this comparison gates rather than decorates, `fill` matters: against
+        # an open slot the free channel ranks on the ceiling and skips the
+        # upgrade bar, so asking it the other question would compare a claim
+        # against a free agent nobody would have taken.
+        fill = drop is None and open_slots > 0
+        alt = best_free(P["free"], drop, fill=fill, ctx=ctx, board=board)
+        out, refused = [], ctx.setdefault("_claim_refusals", [])
         for o in (x for x in P["wire"] if x["drop"] == drop):
             if not clears(o):
                 continue
             row = _option_row(ctx, board, o)
-            row["over_free"] = alt["add"] if alt else None
+            row["over_free"] = _identity(ctx, board, alt["add"]) if alt else None
             row["over_free_gain"] = (round(o["gain"] - alt["gain"], 3)
                                      if alt else None)
+            # A conservative bound: the two share a baseline and are positively
+            # correlated, so the true error of the difference is smaller. Recorded,
+            # never gated on -- the point estimate answers the question asked.
+            alt_se = alt.get("se") if alt else None
+            row["over_free_se"] = (
+                round((float(o.get("se") or 0.0) ** 2 + float(alt_se) ** 2) ** 0.5, 3)
+                if alt_se is not None else None)
+            screens = _claim_screens(row)
+            row["screens"] = screens
+            fired = [s for s in screens if s["refused"]]
+            if fired:
+                row["verdict"] = fired[0]["verdict"]
+                refused.append(row)
+                continue
             out.append(row)
         _price_claims(ctx, out)
-        out.sort(key=lambda r: (-int(r["bid"]), int(r.get("coverage_priority") or 0),
-                                -float(r["gain"]), r["add"]["player_id"]))
+        out.sort(key=_claim_sort_key)
         return out
 
     # THE CAPACITY POOL IS TIER ONE, and its top `capacity` claims cannot be
@@ -1529,23 +2200,76 @@ def plan_claims(ctx: dict) -> list[dict]:
     # on "too many players" while he is still unowned, and the drop route is
     # the live one.
     unblockable = {r["add"]["player_id"] for r in ranked[:max(1, open_slots)]}
-    skill_drops = 0
+    chosen_skill_slates: list[dict] = []
     for drop in P["drops"]:
-        if drop is None or skill_drops >= ROS_MAX_MUTATIONS:
+        if drop is None or len(chosen_skill_slates) >= WAIVER_MAX_SKILL_SLOTS:
             continue
         pos = (((ctx.get("players") or {}).get(str(drop)) or {}).get("position")
                or ((ctx.get("by_id") or {}).get(str(drop)) or {}).get("pos"))
         # K stays on the free patch path and DEF owns its dedicated group.
         if pos in {"K", "DEF"}:
             continue
-        picks = [r for r in _rows(drop)
-                 if r["add"]["player_id"] not in unblockable][:SLATE_DEPTH]
-        if not picks:
+        raw_picks = [r for r in _rows(drop)
+                     if r["add"]["player_id"] not in unblockable]
+        if not raw_picks:
             continue
-        skill_drops += 1
-        slates.append({"group_id": f"skill:{drop}", "kind": "skill", "capacity": 1,
-                       "drop": picks[0]["drop"],
-                       "drop_value": picks[0]["drop_value"], "claims": picks})
+
+        if not chosen_skill_slates:
+            # Slot 1: best cleared options against our cheapest droppable incumbent.
+            picks = raw_picks[:SLATE_DEPTH]
+            if not picks:
+                continue
+            slate = {"group_id": f"skill:{drop}", "kind": "skill", "capacity": 1,
+                     "drop": picks[0]["drop"],
+                     "drop_value": picks[0]["drop_value"], "claims": picks}
+            chosen_skill_slates.append(slate)
+            slates.append(slate)
+        else:
+            # Slot 2 (and beyond): enforce Option A positional limits, compound coverage, and cross-listing.
+            # 1. Primary winner of prior skill slot(s) is excluded so Slot 2 does not compete for the same #1 target.
+            prior_primaries = {s["claims"][0]["add"]["player_id"]
+                               for s in chosen_skill_slates if s.get("claims")}
+            # 2. Positional caps (Option A): max 1 QB slot, max 1 TE slot across the slate.
+            # Up to 2 RBs, up to 2 WRs. Mixed combinations permitted.
+            disallowed_positions = set()
+            for s in chosen_skill_slates:
+                s_positions = {
+                    (r["add"].get("pos") or
+                     (ctx.get("players") or {}).get(r["add"]["player_id"], {}).get("position"))
+                    for r in s.get("claims", [])
+                }
+                if "QB" in s_positions:
+                    disallowed_positions.add("QB")
+                if "TE" in s_positions:
+                    disallowed_positions.add("TE")
+
+            # 3. Compound coverage & candidate filtering:
+            s1_drop = chosen_skill_slates[0]["drop"]["player_id"]
+            s1_primary_add = chosen_skill_slates[0]["claims"][0]["add"]["player_id"]
+
+            eligible = []
+            for r in raw_picks:
+                c_pid = r["add"]["player_id"]
+                c_pos = (r["add"].get("pos") or
+                         (ctx.get("players") or {}).get(c_pid, {}).get("position"))
+                if c_pid in prior_primaries:
+                    continue
+                if c_pos in disallowed_positions:
+                    continue
+                # Verify compound roster coverage: dropping both incumbents while adding both primary targets
+                ok, _ = _coverage_after(ctx, [s1_primary_add, c_pid], [s1_drop, drop], table=_expected_table(ctx))
+                if not ok:
+                    continue
+                eligible.append(r)
+
+            picks = eligible[:SLATE_DEPTH]
+            if not picks:
+                continue
+            slate = {"group_id": f"skill:{drop}", "kind": "skill", "capacity": 1,
+                     "drop": picks[0]["drop"],
+                     "drop_value": picks[0]["drop_value"], "claims": picks}
+            chosen_skill_slates.append(slate)
+            slates.append(slate)
 
     # THE DEFENCE GROUP MUST NOT BE ABLE TO DISCARD THE SLATE. It is the only
     # part of this planner that makes live Sleeper reads, and it makes them
@@ -1577,16 +2301,23 @@ def plan_claims(ctx: dict) -> list[dict]:
     # number and the ordering the slate was built to express is thrown away at
     # the last step.
     group_order = {"open": 0, "skill": 1, "def": 2}
-    flat = [(s, c) for s in slates for c in s["claims"]]
-    flat.sort(key=lambda sc: (-sc[1]["bid"],
-                              group_order.get(sc[0].get("kind"), 9),
-                              sc[1].get("coverage_priority", 0),
-                              -sc[1]["gain"], sc[1]["add"]["player_id"]))
-    for i, (_, c) in enumerate(flat):
+    flat = []
+    for s_idx, s in enumerate(slates):
+        for c in s["claims"]:
+            flat.append((s_idx, s, c))
+    flat.sort(key=lambda sc: _claim_sort_key(
+        sc[2],
+        kind_order=group_order.get(sc[1].get("kind"), 9),
+        slate_idx=sc[0]
+    ))
+    for i, (_, _, c) in enumerate(flat):
         c["seq"] = i
         c["priority"] = i
         c["submit_order"] = i
-    ctx["_claim_exposure"] = sum(int(s.get("exposure") or 0) for s in slates)
+    from robo import waiver_manager
+    ctx["_claim_exposure"] = waiver_manager.worst_case_spend(
+        [c for s in slates for c in s.get("claims", [])]
+    )
     return slates
 
 
@@ -1620,8 +2351,10 @@ def _plan_defence_claims(ctx: dict) -> dict | None:
     for row in board:
         pid = str(row["team"])
         state = (ctx.get("eligibility") or {}).get(pid) or {}
+        unlock_at = state.get("unlock_at")
         if (pid in rostered
                 or state.get("acquisition") not in {"weekly_waiver", "drop_waiver"}
+                or (unlock_at is not None and (float(unlock_at) - time.time()) / 3600.0 > CLAIMS_SETTLEMENT_MAX_AHEAD_H)
                 or state.get("roster_movement") == "roster_locked"
                 or (locks.get(pid) or {}).get("locked")):
             continue
@@ -1674,32 +2407,41 @@ def _price_claims(ctx: dict, rows: list[dict]) -> list[dict]:
     pay more for the WORSE version of the same acquisition. Cached on the
     context so a man who appears in two tiers carries one number into both.
     """
-    from robo import faab_field
+    from robo import faab_field, quality
     cache = ctx.setdefault("_claim_prices", {})
     budget = max(0, int(ctx.get("faab") or 0))
     for p in rows:
         pid = p["add"]["player_id"]
         if pid not in cache:
+            q_info = p.get("quality")
+            if q_info is None:
+                try:
+                    q_info = quality.score(pid, week=ctx.get("week"), ctx=ctx,
+                                           table=_expected_table(ctx))
+                except Exception:
+                    q_info = None
             field = p.get("opponent_field")
             if field is None:
                 try:
-                    field = faab_field.predict(ctx, pid, _expected_table(ctx))
+                    field = faab_field.predict(ctx, pid, _expected_table(ctx), quality=q_info)
                 except Exception as e:
                     field = {"available": False,
                              "reason": f"{type(e).__name__}: {e}"}
-            q = faab.quote(float(p.get("bid_gain", p["gain"])), ctx["week"],
-                           budget, p["add"].get("pos"),
-                           field if field.get("available") else None)
+            q = _quote_claim(float(p.get("bid_gain", p["gain"])), ctx["week"],
+                             budget, p["add"].get("pos"),
+                             field if field.get("available") else None,
+                             quality=q_info)
             bid = int(q["bid"])
             # Zero today and settable; a registry constant that quietly stops
             # being read is worse than no constant.
             if faab.MIN_LIVE_BID:
                 bid = max(int(faab.MIN_LIVE_BID), bid)
-            cache[pid] = (bid, q, field)
-        bid, q, field = cache[pid]
+            cache[pid] = (bid, q, field, q_info)
+        bid, q, field, q_info = cache[pid]
         p.update({"bid": bid, "bid_gain": p.get("bid_gain", p["gain"]),
                   "bid_se": p.get("bid_se", p.get("se")),
-                  "bid_quote": q, "opponent_field": field})
+                  "bid_quote": q, "opponent_field": field,
+                  "quality": q_info})
     return rows
 
 
@@ -1847,7 +2589,7 @@ def render_free(ctx: dict, plans: list[dict]) -> str:
 
 def render_claims(ctx: dict, slates: list[dict]) -> str:
     L = [f"WAIVER SLATE - {len(ctx['on_waivers'])} player(s) on waivers"] + _header(ctx)
-    block = evaluation_block(ctx)
+    block = evaluation_block(ctx, channel="claims")
     ctx["_evaluation_block"] = block
     if block:
         L.append(f"  BLACKED OUT: {block}")
@@ -1975,7 +2717,7 @@ def _after_free_context(ctx: dict, plan: dict) -> dict:
 
 
 def run_ros_sequence(apply: bool = False, league_id: str = LEAGUE_ID_2026,
-                     verbose: bool = True) -> dict:
+                     verbose: bool = True, source: str | None = None) -> dict:
     """Secure the best free improvement, then reprice the waiver board.
 
     Availability changes transaction mechanics, not player valuation.  The
@@ -2011,7 +2753,7 @@ def run_ros_sequence(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     claims_ctx["_sequence_free_audit"] = free.get("decision_audit") or {}
     claims_ctx["_sequence_free_plans"] = free.get("plans") or []
     claims = run("claims", apply=apply, league_id=league_id, mode="ros",
-                 verbose=verbose, _ctx=claims_ctx)
+                 verbose=verbose, _ctx=claims_ctx, source=source)
     return {"mode": "ros-sequence", "week": ctx["week"], "basis": basis,
             "free": free, "claims": claims,
             "applied": bool(free.get("applied") or claims.get("applied")),
@@ -2113,6 +2855,17 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         return {"player_id": str(pid), "name": row.get("name") or str(pid),
                 "pos": row.get("pos") or row.get("position")}
 
+    def _key(row: dict) -> tuple:
+        return (str((row.get("add") or {}).get("player_id")),
+                (row.get("drop") or {}).get("player_id"))
+
+    refusals = {_key(r): r for r in (ctx.get("_claim_refusals") or [])}
+    # A SELECTED CLAIM WENT THROUGH THE SAME SCREENS and must show the same
+    # evidence. Reading these only off the refusals left the one row a reader
+    # most wants to check -- the move actually taken -- with the comparison
+    # blank, as though nothing had been asked of it.
+    planned = {_key(c): c for s in plans for c in (s.get("claims") or [])}
+
     rows = []
     options = priced_board.get("free" if channel == "free" else "wire") or []
     for option in options:
@@ -2128,7 +2881,14 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         cov_priority = int(option.get("coverage_priority") or 0)
         best_priority = min((int(o.get("coverage_priority") or 0)
                              for o in options), default=0)
-        if picked:
+        # A row a screen REFUSED carries that screen's own words, and every
+        # other screen's verdict beside it. Without this it would fall through
+        # to "cleared; lower-ranked option", which is the one thing it is not.
+        refusal = refusals.get((add_id, drop_id)) or {}
+        evidence = refusal or planned.get((add_id, drop_id)) or {}
+        if refusal:
+            verdict = refusal.get("verdict") or "refused"
+        elif picked:
             verdict = "selected"
         elif noise_margin <= 0:
             verdict = "below simulator noise"
@@ -2152,7 +2912,14 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                      "selected": picked, "verdict": verdict,
                      "coverage": option.get("coverage"),
                      "coverage_priority": cov_priority,
-                     "direct_ros": option.get("direct_ros")})
+                     "direct_ros": option.get("direct_ros"),
+                     "priced_weeks": option.get("priced_weeks"),
+                     "weeks_excluded": option.get("weeks_excluded"),
+                     "excluded_reason": option.get("excluded_reason"),
+                     "over_free": evidence.get("over_free"),
+                     "over_free_gain": evidence.get("over_free_gain"),
+                     "over_free_se": evidence.get("over_free_se"),
+                     "screens": evidence.get("screens")})
     # Ordered the way the ladder is actually built, so the table a reader scans
     # top-down matches the priority list that was submitted.
     rows.sort(key=lambda r: (not r["selected"], r["coverage_priority"],
@@ -2170,8 +2937,23 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                        "drop_floor": DROP_FLOOR,
                        "skill_drop_limit": ROS_MAX_MUTATIONS,
                        "worst_case_faab": ctx.get("_claim_exposure", 0),
+                       "claim_over_free_min": CLAIM_OVER_FREE_MIN,
+                       "direct_ros_flag": DIRECT_ROS_FLAG,
+                       "direct_ros_veto": DIRECT_ROS_VETO,
+                       "claim_drop_min_quality": CLAIM_DROP_MIN_QUALITY,
+                       "tiebreaker_dead_heat_bin": TIEBREAKER_DEAD_HEAT_BIN,
                        "coverage_floor": dict(MIN_ROSTER_COVERAGE)},
+        "claim_horizon": ctx.get("_claim_horizon"),
+        "claim_pool": ctx.get("_claim_pool"),
+        "wire_floor": ctx.get("_wire_floor"),
         "drop_checks": ctx.get("_ros_drop_checks") or [],
+        # THE OTHER SLOTS, AND WHAT THEY WERE WORTH. The ledger used to record a
+        # +18 option as "cleared; lower-ranked option" when it had never been
+        # compared to anything -- the planner had already committed to a
+        # different slot. These are the pairs that genuinely lost on value.
+        "slots_passed_over": [
+            {**r, "add": identity(r.get("add")), "drop": identity(r.get("drop"))}
+            for r in (ctx.get("_slots_passed_over") or [])],
         "control_checks": controls,
         "options": rows,
     }
@@ -2182,12 +2964,25 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
         affected: set[str] | None = None, _ctx: dict | None = None,
         ir_open_slots: int = 0, ir_moves: list[dict] | None = None,
         excluded: set[str] | None = None, source: str | None = None) -> dict:
+    # Any add or drop reshapes the roster, so the outermost caller ends with a
+    # construction check -- the new man must reach the lineup, and a cut must
+    # not leave a slot nobody can fill.
+    from robo import construction
+    with construction.session(f"moves {channel} {mode}", apply=apply,
+                              league_id=league_id):
+        return _run(channel, apply, league_id, mode, verbose, affected, _ctx,
+                    ir_open_slots, ir_moves, excluded, source)
+
+
+def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
+         ir_open_slots, ir_moves, excluded, source) -> dict:
     if mode not in MODES:
         raise ValueError(f"mode must be one of {MODES}")
     ctx = _ctx or _context(league_id, mode, affected=affected,
                            ir_open_slots=ir_open_slots, ir_moves=ir_moves,
                            excluded=excluded)
-    block = evaluation_block(ctx)
+    ctx["channel"] = channel
+    block = evaluation_block(ctx, channel=channel)
     ctx["_evaluation_block"] = block
 
     if mode == "news" and not ctx["affected"]:
@@ -2207,7 +3002,7 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
 
     if verbose:
         print(text)
-    timing_block = blacked_out(ctx)
+    timing_block = blacked_out(ctx, channel=channel)
     out = {"channel": channel, "mode": mode, "week": ctx["week"], "plans": plans,
            "payloads": payloads, "applied": False, "submitted": [],
            "gated": not value.may_submit(), "blackout": timing_block,
@@ -2240,6 +3035,12 @@ def run(channel: str, apply: bool = False, league_id: str = LEAGUE_ID_2026,
     if channel == "free":
         return submit_free(ctx, plans, out, league_id)
 
+    from robo import ir
+    stop = ir.frozen(league_id)
+    if stop:
+        print(f"  ** CLAIMS SKIPPED: {stop}")
+        out["control_block"] = stop
+        return out
     rid = ctx["roster"]["roster_id"]
     desired = []
     for s in plans:
@@ -2290,6 +3091,12 @@ def run_ir_fills(opened: int, ir_moves: list[dict] | None = None,
     every attempt. If the top player loses an availability race, the next pass
     excludes him and tries the next-highest valid ROS player.
     """
+    from robo import construction
+    with construction.session("moves ir_fill", apply=apply, league_id=league_id):
+        return _run_ir_fills(opened, ir_moves, apply, league_id, verbose)
+
+
+def _run_ir_fills(opened, ir_moves, apply, league_id, verbose) -> dict:
     opened = max(0, int(opened))
     if opened <= 0:
         return {"channel": "free", "mode": "ir_fill", "plans": [],
@@ -2346,6 +3153,9 @@ def main():
     args = ap.parse_args()
     affected = {p.strip() for p in args.affected.split(",") if p.strip()}
     channel = "free" if args.free else "claims"
+    if args.apply:
+        from robo import ir
+        ir.unblock(apply=True, league_id=args.league)
     if args.mode == "ros":
         # Do not price a weekly move while a news/full cascade is replacing the
         # exact expected.py vintage the simulator reads.

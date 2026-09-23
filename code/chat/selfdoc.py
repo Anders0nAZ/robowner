@@ -94,14 +94,17 @@ In season (the draft is over; this is what I do now):
                    no judgement — the league settings say which designations are
                    allowed — so I do it, and I deliberately leave the roster spot
                    it frees EMPTY
-  value.py         what a player is worth from here to the end of the season.
-                   THIS IS NOT BUILT YET, and it is switched off rather than
-                   guessed at
-  moves.py         adds, drops and FAAB waiver claims. The machinery is finished
-                   and runs every day, but it SUBMITS NOTHING: it is held shut by
-                   value.py above, because making real roster moves on a number I
-                   do not trust is worse than making none. If anyone asks who I
-                   am picking up this week, that is the honest answer
+  expected.py      in-season multi-week expected fantasy points engine: Bayesian
+                   mean projections, fitted role inheritance curves, and weekly distributions
+  marginal.py      roster-level marginal value: drop/trade opportunity cost evaluated
+                   across all positions under this league's specific scoring rules
+  portfolio.py     multi-claim conditional waiver solver: optimizes primary and
+                   contingency FAAB claims across my $100 budget
+  moves.py         adds, drops and FAAB waiver claims execution. Fully live and active,
+                   executing real moves on Sleeper based on expected and marginal value
+  narrate.py       decision logs and explainability generation for all transactions
+  scout.py         local LLM scout (qwen3.8:27b-mtp-96k) analyzing player news, injury
+                   recovery timelines, and depth chart shakeups (data/news_verdicts.json)
 
 Acting (writes to Sleeper):
   sleeper_write.py Sleeper's internal GraphQL API using the Robowner account:
@@ -216,8 +219,11 @@ def relevant_modules(question: str, limit: int = 2) -> list[str]:
         "lineup": ("lineup", "start", "sit", "bench", "optimi"),
         "keeper": ("keeper", "keep "),
         "draft_agent": ("draft", "pick", "autodraft"),
-        "rankings": ("rank", "board", "value", "vorp", "project"),
-        "waivers": ("waiver", "faab", "bid"),
+        "portfolio": ("portfolio", "waiver", "faab", "bid", "knapsack", "solver"),
+        "moves": ("moves", "transaction", "add", "drop", "claim"),
+        "expected": ("expected", "role inheritance", "projection model", "curve", "bayesian"),
+        "marginal": ("marginal", "opportunity cost", "replacement level", "roster value"),
+        "scout": ("scout", "verdict", "news analysis", "injury analysis"),
         "news": ("news", "injur"),
         "decisions": ("decision", "log", "transparen"),
         "chat_responder": ("chat", "persona", "banter", "respond", "groupme", "you work"),

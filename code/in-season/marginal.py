@@ -99,6 +99,28 @@ HIT_POINTS = 7.0
 # to a thin signal is less of it, not a different number.
 TAKEOVER_WEIGHT = 1.0
 
+# Maximum depth rank that can challenge for an unprompted starting job takeover.
+# Only rank 2 (direct heir) can challenge; rank >= 3 cannot take over the job
+# from an active starter without an injury vacancy occurring first.
+TAKEOVER_MAX_RANK = 2
+
+# The streaming expectation depth for the waiver wire floor. Instead of assuming
+# the single best unrostered player (e.g. AJ Barner at 7.45) sits untouched on
+# waivers in perpetuity for all 16 weeks, the floor models the realistic streaming
+# expectation (average of the top-K available options with positive projection).
+STREAMING_FLOOR_TOP_K = 3
+
+# Empirical fantasy point absorption for tight ends. In 10 seasons of nflverse
+# data (397 TE vacancy events), backup TEs averaged only 3.0 targets and gained
+# a net +0.87 PPR fantasy points over active baseline (~0.098 fantasy absorption).
+# Isolated positional target-share (0.548) was inflated because team TE targets
+# drop 34% when the starter sits. Grounding this in realized fantasy points
+# prevents inline blocking TEs from hallucinating starter-level fantasy value.
+TE_RANK2_ABSORB_MEAN = 0.10
+TE_RANK2_ABSORB_SD = 0.15
+TE_DEEP_ABSORB_MEAN = 0.04
+TE_DEEP_ABSORB_SD = 0.08
+
 settings.apply(__name__, globals())
 
 
@@ -156,38 +178,24 @@ def _rooms_of(ids: list[str], S: dict) -> set:
 def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
                 exclude: frozenset = frozenset(),
                 held_extra: frozenset = frozenset()) -> dict:
-    """{pos: {week: points}} for the best man on the wire at that position.
+    """{pos: {week: points}} for the streaming expectation on the wire.
 
-    THE WIRE IS A FLOOR UNDER EVERY SLOT, and in a twelve-team league it is a
-    high one. Measured on this roster in week 5: the best free-agent receiver is
-    worth 6.3 points and our own WR3 is worth 6.3, the best free-agent back is
-    worth 3.5 and our RB6 is worth 2.3. A spot starter is simply available.
+    THE WIRE IS A STREAMING EXPECTATION, NOT AN IMMORTAL OUTLIER. Taking
+    max(unrostered) assumes the single best free agent today (e.g. AJ Barner at
+    7.45 pts) sits untouched on waivers for 16 consecutive weeks in all 200
+    worlds without any other manager claiming him.
 
-    So a hurt starter does not cost us the drop to our own bench -- it costs the
-    drop to whoever we claim on Tuesday, which is much less. Leaving the wire out
-    of the simulation overstates every depth piece we hold and understates the
-    case for spending a bench spot on a man who might become more than that.
-    A bench body worth less than this line is worth exactly nothing, and the only
-    thing that justifies the roster spot is a CEILING the wire cannot supply.
+    Instead, we model the realistic streaming expectation: the average of the
+    top STREAMING_FLOOR_TOP_K available players with positive projection. If only
+    one viable streamer exists (e.g. in 2QB where only one QB has >0 points),
+    it preserves that single player rather than diluting with zeroes.
 
-    One body per position per week, which is what a waiver claim actually buys.
-    The pool is treated as fixed: our own adds and drops would move it slightly,
-    and that second-order effect is not modelled.
-
-    `exclude` IS WHAT MAKES AN ACQUISITION PRICEABLE AT ALL. This is a max over
-    UNROSTERED men, and the candidate being priced is unrostered -- so without
-    it the best available player at a position is the floor his own addition is
-    measured against, and every such addition is worth about nothing by
-    construction. Measured: with San Francisco's quarterback concussed, the
-    week-2 QB floor was 13.72 and it WAS Mac Jones, the man being considered.
-    Excluding the candidates makes the floor "the best man we are NOT
-    considering", which is the actual alternative to claiming this one.
+    `exclude` IS WHAT MAKES AN ACQUISITION PRICEABLE AT ALL. The shortlisted
+    candidates are unrostered -- excluding them makes the floor the alternative
+    to claiming this candidate rather than the candidate himself.
     """
-    # `held_extra` carries a free agent acquired earlier in the same ordered
-    # transaction plan. Sleeper has not seen a dry-run hypothetical, so the live
-    # roster set alone would incorrectly leave our new player on the wire floor.
     held = season.rostered_ids(league_id) | set(held_extra)
-    out: dict = {}
+    by_pos_week: dict[str, dict[int, list[float]]] = {}
     for pid, p in S.items():
         if pid in held or pid in exclude:
             continue
@@ -195,9 +203,15 @@ def replacement(S: dict, weeks: list[int], league_id: str = LEAGUE_ID_2026,
             if p["weeks"].get(w) is None:
                 continue
             pts = weekly_points(p, w)
-            cur = out.setdefault(p["pos"], {}).get(w, 0.0)
-            if pts > cur:
-                out[p["pos"]][w] = pts
+            if pts > 0:
+                by_pos_week.setdefault(p["pos"], {}).setdefault(w, []).append(pts)
+    out: dict = {}
+    for pos, byweek in by_pos_week.items():
+        out[pos] = {}
+        for w, pts_list in byweek.items():
+            pts_list.sort(reverse=True)
+            k = min(STREAMING_FLOOR_TOP_K, len(pts_list))
+            out[pos][w] = sum(pts_list[:k]) / k if k > 0 else 0.0
     return out
 
 
@@ -231,7 +245,8 @@ def _room_leads(S: dict) -> dict:
             if p and p.get("rank") == 1 and all(p.get("room") or ())}
 
 
-def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
+def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0,
+          mine: list[str] | None = None):
     """The worlds. Fixed once and reused for every hypothetical.
 
     A ROOM VACANCY IS DRAWN PER WEEK, INDEPENDENTLY, because that is exactly what
@@ -245,19 +260,34 @@ def draws(ids: list[str], S: dict, weeks: list[int], sims: int, seed: int = 0):
     the room's vacancy -- rolling separately for him as well would charge him for
     the same injury in two places. So rank 1 takes the room draw, everyone else
     takes his own, and a known absence overrides both.
+
+    STARTER INSURANCE VS OPPONENT HANDCUFFS. Rooms where our own roster holds
+    a player are always drawn so backups and wire replacements protect against
+    our starter's loss. Running backs have proven standalone handcuff upside
+    across the NFL (mean 11.8 pts), so all RB rooms are drawn. If an opponent
+    starter carries a known injury tag (known_a < 1.0), the backup has an
+    immediate role and is drawn. But speculative lottery vacancies on healthy
+    opponent TEs and WRs are suppressed.
     """
     import random
     rng = random.Random(seed)
     vac = {}
+    my_rooms = _rooms_of(mine, S) if mine is not None else None
     room_leads = _room_leads(S)
     for (tm, pos) in sorted(_rooms_of(ids, S)):
+        lead = S.get(room_leads.get((tm, pos))) or {}
         for w in weeks:
-            lead = S.get(room_leads.get((tm, pos))) or {}
             cell = (lead.get("weeks") or {}).get(w)
             known_a = cell[2] if cell else 1.0
-            rate = 1.0 - known_a if known_a < 1.0 else roles.miss_rate(pos)
-            for s in range(sims):
-                vac[(tm, pos, w, s)] = rng.random() < rate
+            is_our_room = my_rooms is None or (tm, pos) in my_rooms
+            is_actionable = is_our_room or pos == "RB" or known_a < 1.0
+            if is_actionable:
+                rate = 1.0 - known_a if known_a < 1.0 else roles.miss_rate(pos)
+                for s in range(sims):
+                    vac[(tm, pos, w, s)] = rng.random() < rate
+            else:
+                for s in range(sims):
+                    vac[(tm, pos, w, s)] = False
     avail, share = {}, {}
     for pid in ids:
         p = S.get(pid)
@@ -313,7 +343,8 @@ def _takeovers(ids: list[str], S: dict, weeks: list[int], sims: int, rng) -> dic
         return took
     for pid in ids:
         p = S.get(pid)
-        if not p or p.get("rank") == 1:
+        rk = p.get("rank") if p else None
+        if rk is None or rk < 2 or rk > TAKEOVER_MAX_RANK:
             continue
         pos = p.get("pos")
         if pos not in roles.OPPORTUNITY:
@@ -365,6 +396,10 @@ def _absorb_dist(pos: str, rank) -> tuple[float, float]:
     """(mean, sd) of the fraction this rank absorbs. sd 0 where it is unfitted."""
     if not rank or rank <= 1:
         return 0.0, 0.0
+    if (pos or "").upper() == "TE":
+        if rank == 2:
+            return TE_RANK2_ABSORB_MEAN, TE_RANK2_ABSORB_SD
+        return TE_DEEP_ABSORB_MEAN, TE_DEEP_ABSORB_SD
     cell = ((roles.load_fit().get("curve") or {}).get(pos) or {}).get(str(rank))
     if not cell or cell.get("n", 0) < roles.MIN_EVENTS:
         return roles.absorption(pos, rank)[0], 0.0
@@ -478,26 +513,63 @@ class Board:
         # so a candidate is scored against the same worlds our own men are.
         pool = sorted(set(self.mine) | set(extra or []))
         self.vac, self.avail, self.share, self.took = draws(
-            pool, self.S, self.weeks, sims)
+            pool, self.S, self.weeks, sims, mine=self.mine)
         # The men under consideration are held OUT of the wire floor. See
         # replacement(): they are unrostered, so leaving them in makes each one
         # the baseline his own acquisition is measured against.
+        # KEPT, NOT JUST CONSUMED. The floor is measured against the men we are
+        # NOT considering, so without the exclusion set nothing downstream can
+        # reproduce the number the pricing used -- and replaceability() quietly
+        # reported a different one for a while because of it.
+        self.excluded = frozenset(extra or ())
         self.repl = replacement(self.S, self.weeks, league_id,
-                                exclude=frozenset(extra or ()),
+                                exclude=self.excluded,
                                 held_extra=frozenset(self.mine))
         self.p_playoffs = playoffs.p_playoffs(league_id=league_id, default=1.0)
         self.contender = self.p_playoffs >= CONTENDER_ODDS
+        self._bases: dict[tuple, list] = {}
         self.base = self.totals(self.mine)
 
-    def totals(self, ids):
-        return season_totals(ids, self.S, self.weeks, self.weights,
+    def horizon(self, weeks=None) -> list[int]:
+        """The week list to price over, and its own paired baseline.
+
+        A RESTRICTED HORIZON IS NOT A SECOND BOARD. `season_totals` already
+        takes its weeks as a parameter and the drawn worlds are keyed
+        `(pid, week, sim)`, so narrowing the list reuses the identical common
+        random numbers -- which is the whole reason a paired difference here has
+        a standard error of tenths rather than the season's own spread. Building
+        a second Board to answer "what is this worth from week 3" would redraw
+        every world and throw that away.
+        """
+        return self.weeks if weeks is None else [w for w in self.weeks if w in set(weeks)]
+
+    def baseline(self, weeks=None):
+        """Our own roster over the same weeks, cached per horizon.
+
+        A delta taken against the wrong baseline is worse than the bug it was
+        meant to fix, so the horizon that scores a hypothetical is the horizon
+        that scores what it is compared against.
+
+        The full horizon stays `self.base`, read rather than cached separately,
+        so a caller that substitutes a baseline still substitutes the one every
+        full-horizon comparison uses.
+        """
+        if weeks is None:
+            return self.base
+        key = tuple(self.horizon(weeks))
+        if key not in self._bases:
+            self._bases[key] = self.totals(self.mine, weeks=weeks)
+        return self._bases[key]
+
+    def totals(self, ids, weeks=None):
+        return season_totals(ids, self.S, self.horizon(weeks), self.weights,
                              self.vac, self.avail, self.share, self.sims, self.repl,
                              self.took)
 
     def score(self, totals):
         return _score(totals, self.contender)
 
-    def shape(self, totals) -> dict:
+    def shape(self, totals, weeks=None) -> dict:
         """The whole distribution of a change, not just its middle.
 
         THE MEAN CANNOT RANK THE BOTTOM OF A BENCH, and that is not a tuning
@@ -516,7 +588,7 @@ class Board:
         and a singles hitter actually lives.
         """
         import statistics as st
-        d = sorted(a - b for a, b in zip(totals, self.base))
+        d = sorted(a - b for a, b in zip(totals, self.baseline(weeks)))
         n = len(d)
         # BOTH tails are kept, because which one is the "upside" depends on the
         # question. Adding a man gives positive deltas and his ceiling is p90;
@@ -530,7 +602,7 @@ class Board:
                 "min": d[0], "max": d[-1],
                 "p_hit": sum(1 for x in d if abs(x) > HIT_POINTS) / n}
 
-    def _paired(self, totals) -> tuple[float, float]:
+    def _paired(self, totals, weeks=None) -> tuple[float, float]:
         """(delta, standard error) against the baseline, paired by world.
 
         PAIRED because the worlds are shared. The standard error of the
@@ -539,16 +611,18 @@ class Board:
         points -- and drown every gap this exists to rank.
         """
         import statistics as st
-        d = [a - b for a, b in zip(totals, self.base)]
+        base = self.baseline(weeks)
+        d = [a - b for a, b in zip(totals, base)]
         se = st.stdev(d) / (len(d) ** 0.5) if len(d) > 1 else 0.0
-        return self.score(totals) - self.score(self.base), se
+        return self.score(totals) - self.score(base), se
 
-    def drop_price(self, pid: str) -> tuple[float, float]:
+    def drop_price(self, pid: str, weeks=None) -> tuple[float, float]:
         """What we give up by cutting him -- delta and its standard error."""
-        d, se = self._paired(self.totals([p for p in self.mine if p != pid]))
+        d, se = self._paired(
+            self.totals([p for p in self.mine if p != pid], weeks=weeks), weeks)
         return -d, se
 
-    def drop_shape(self, pid: str) -> dict:
+    def drop_shape(self, pid: str, weeks=None) -> dict:
         """The whole distribution of what cutting him costs, signed as a COST.
 
         THE SAME ARGUMENT shape() MAKES ABOUT ADDING, APPLIED TO CUTTING. A bench
@@ -580,14 +654,68 @@ class Board:
         world where this man matters, which is a statement about the model's
         coverage as much as about the player. See the takeover event in draws().
         """
-        sh = self.shape(self.totals([p for p in self.mine if p != pid]))
+        sh = self.shape(
+            self.totals([p for p in self.mine if p != pid], weeks=weeks), weeks)
         mean = -sh["mean"]
         return {"mean": mean, "tail": max(-sh["p10"], mean), "se": sh["se"],
                 "p_matters": sh["p_hit"]}
 
-    def move_value(self, add: str, drop: str) -> tuple[float, float]:
+    def move_value(self, add: str, drop: str, weeks=None,
+                   record: dict | None = None) -> tuple[float, float]:
         ids = [p for p in self.mine if p != drop] + [add]
-        return self._paired(self.totals(ids))
+        out = self._paired(self.totals(ids, weeks=weeks), weeks)
+        if record is not None:
+            self.explain(add, drop, weeks, record)
+        return out
+
+    def explain(self, add: str, drop: str | None, weeks, record: dict) -> None:
+        """Why a swap priced the way it did, for a human reading afterwards.
+
+        THE OPEN QUESTION THIS EXISTS TO SETTLE. On 18 Sep 2026 swapping our
+        tight end for a 94-point free one priced at +0.55 while swapping him
+        for a 35-point waiver one priced at +3.1. Three mechanisms could
+        produce that and guessing between them is how a simulator acquires a
+        correction it did not need:
+
+        `wire_floor` -- replacement() is handed `exclude=frozenset(extra)`, so
+        EVERY shortlisted candidate is held out of the floor at once, not just
+        the one being priced. The docstring argues for excluding the candidate;
+        with sixty of them the floor becomes "the best man we are not
+        considering", which lifts all of them together.
+
+        `room` -- a rank-1 man is REMOVED when his NFL room's vacancy is drawn
+        while a rank-2 man is PROMOTED, so a backup carries a free option his
+        lead does not. Measured on that pair: Strange rank 1 with `s2` 0.00,
+        Wright rank 2 with `s2` 69.77 behind a 127-point lead. That is a true
+        statement about an inheritance, not an error.
+        Note what it does NOT explain -- a cheap drop price. Strange priced at
+        0.6 to cut because he was our SECOND tight end behind Isaiah Likely and
+        one slot was on offer, which is roster position rather than anything in
+        this record.
+
+        `shape` -- which tail clears() actually read.
+
+        Zero cost when nobody asks: this runs only on the record path.
+        """
+        wk = self.horizon(weeks)
+        record["priced_weeks"] = list(wk)
+        record["wire_floor"] = {pos: {w: round(v, 3) for w, v in byweek.items() if w in set(wk)}
+                                for pos, byweek in (self.repl or {}).items()}
+        rooms = {}
+        for pid in [x for x in (add, drop) if x]:
+            p = self.S.get(pid) or {}
+            cells = {w: p["weeks"][w] for w in wk if w in (p.get("weeks") or {})}
+            rooms[pid] = {
+                "name": p.get("name"), "pos": p.get("pos"), "room": p.get("room"),
+                "rank": p.get("rank"), "absorbs": p.get("absorbs"),
+                # s1 is his own number, s2 what he inherits if the door opens.
+                "s1": round(sum(c[0] for c in cells.values()), 3),
+                "s2": round(sum(c[1] for c in cells.values()), 3),
+                "lead": round(sum(c[5] for c in cells.values()), 3)}
+        record["room"] = rooms
+        ids = [p for p in self.mine if p != drop] + ([add] if add else [])
+        record["shape"] = {k: round(v, 4) for k, v in
+                           self.shape(self.totals(ids, weeks=weeks), weeks).items()}
 
 
 # ---------------------------------------------------------------- reporting
@@ -597,8 +725,8 @@ def _base(p: dict, w: int) -> float:
     return weekly_points(p, w)
 
 
-def replaceability(b, league_id: str = LEAGUE_ID_2026) -> list[tuple]:
-    """(pos, our starters, wire 1st, wire 2nd, wire as % of ours), per position.
+def replaceability(b, league_id: str = LEAGUE_ID_2026) -> list[dict]:
+    """How much of each position the wire already supplies, per position.
 
     WHICH BENCH SPOTS ARE WORTH SPENDING ON A TICKET, and the answer is not the
     same at every position. Measured on this roster over weeks 2-14: the wire's
@@ -606,34 +734,54 @@ def replaceability(b, league_id: str = LEAGUE_ID_2026) -> list[tuple]:
     worthless at tight end and receiver, because a spot starter is simply there
     every Tuesday, and it is close to irreplaceable at running back.
 
-    The second column is the shape, and quarterback has a different one from
+    `wire_second` is the SHAPE, and quarterback has a different one from
     everything else: 11.3 then 4.0, a cliff rather than a slope. There is exactly
     one startable quarterback unowned, so in a two-quarterback league a single
     claim cannot cover both slots -- which is why the wire floor moved every
     other bench player toward zero and left Carson Beck untouched.
+
+    THE WIRE COLUMN IS `b.repl`, NOT A SECOND OPINION. It used to re-derive
+    the floor from the rostered set alone, while the Board prices against a
+    floor that also excludes every shortlisted candidate -- so on 18 Sep 2026
+    this reported the wire's best tight end at 94% of ours while the decision
+    beside it had been priced against 86%. Six tight ends were in that run's
+    shortlist, AJ Barner among them, and holding them out moved the floor 8.5%.
+    A number recorded for display that disagrees with the one that decided is
+    worse than no number: it is the check a reader performs to build confidence.
     """
     import statistics as st
     held = season.rostered_ids(league_id)
+    excluded = getattr(b, "excluded", frozenset())
     mine = set(b.mine)
     starts = {"QB": 2, "RB": 2, "WR": 2, "TE": 1}
     out = []
     for pos, n in starts.items():
-        ours, w1, w2 = [], [], []
+        ours, w1, w2, suppliers = [], [], [], {}
         for w in b.weeks:
             o = sorted((_base(b.S[p], w) for p in mine
                         if b.S.get(p, {}).get("pos") == pos), reverse=True)
-            f = sorted((_base(p, w) for pid, p in b.S.items()
-                        if pid not in held and p["pos"] == pos and w in p["weeks"]),
-                       reverse=True)
+            # Same filter the Board's own floor used, so second place is the
+            # shape of the first rather than of a different pool.
+            f = sorted(((_base(p, w), pid) for pid, p in b.S.items()
+                        if pid not in held and pid not in excluded
+                        and p["pos"] == pos and w in p["weeks"]), reverse=True)
             if o[:n]:
                 ours.append(st.mean(o[:n]))
             if f:
-                w1.append(f[0])
-                w2.append(f[1] if len(f) > 1 else f[0])
+                top = (b.repl.get(pos) or {}).get(w, f[0][0])
+                w1.append(top)
+                w2.append(f[1][0] if len(f) > 1 else f[0][0])
+                name = (b.S.get(f[0][1]) or {}).get("name") or f[0][1]
+                suppliers[name] = suppliers.get(name, 0) + 1
         if ours and w1:
             m = st.mean(ours)
-            out.append((pos, m, st.mean(w1), st.mean(w2), st.mean(w1) / max(m, 1e-9)))
-    return sorted(out, key=lambda t: -t[4])
+            out.append({"pos": pos, "ours": m, "wire_first": st.mean(w1),
+                        "wire_second": st.mean(w2),
+                        "pct": st.mean(w1) / max(m, 1e-9),
+                        "excluded": len(excluded),
+                        "supplier": max(suppliers, key=suppliers.get) if suppliers else None,
+                        "supplier_weeks": max(suppliers.values()) if suppliers else 0})
+    return sorted(out, key=lambda r: -r["pct"])
 
 
 def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
@@ -671,9 +819,11 @@ def roster_report(league_id: str = LEAGUE_ID_2026, sims: int = SIMS) -> str:
     L += ["", "HOW REPLACEABLE EACH POSITION IS -- which is where a bench spot is",
           "better spent on a man who might become more than just a guy:", "",
           f"  {'pos':<5}{'our starters':>13}{'wire 1st':>10}{'wire 2nd':>10}"
-          f"{'wire as % of ours':>19}"]
-    for pos, m, w1, w2, pct in replaceability(b, league_id):
-        L.append(f"  {pos:<5}{m:>13.1f}{w1:>10.1f}{w2:>10.1f}{pct:>18.0%}")
+          f"{'wire as % of ours':>19}  who supplies it"]
+    for r in replaceability(b, league_id):
+        L.append(f"  {r['pos']:<5}{r['ours']:>13.1f}{r['wire_first']:>10.1f}"
+                 f"{r['wire_second']:>10.1f}{r['pct']:>18.0%}  "
+                 f"{r['supplier'] or '-'} ({r['supplier_weeks']}/{len(b.weeks)} wks)")
     L += ["", "  a high percentage means the wire already supplies that slot, so depth",
           "  there is a wasted roster spot. The second column is the SHAPE, and",
           "  quarterback has a different one: a cliff rather than a slope, so one",
@@ -752,15 +902,23 @@ def starts_in_the_median_world(b, ids: list[str], pid: str) -> bool:
 
 
 def price_options(b, drops: list[str], adds: list[str],
-                  start_weeks: set[int] | None = None) -> list[dict]:
+                  start_weeks: set[int] | None = None,
+                  weeks: list[int] | None = None) -> list[dict]:
     """Every (add, drop) pair, priced and labelled by which slot it fills.
 
     `excess` is what makes the channel comparison possible in Phase 4: a waiver
     claim is only worth FAAB if it beats what the free board would have given us
     for the same slot, and that comparison needs both channels priced the same
     way against the same drop.
+
+    `weeks` restricts the horizon to the weeks an acquisition can actually be
+    played in -- see Board.horizon and season.settlement_week. The start profile
+    is restricted with it, because a starting slot in a week the move cannot
+    reach is not a slot this move fills.
     """
     out = []
+    only = start_weeks if weeks is None else (
+        set(weeks) if start_weeks is None else set(weeks) & set(start_weeks))
     for drop in drops:
         # None means ADD WITHOUT DROPPING -- an open roster spot, where there is
         # no incumbent to beat and the only question is what the man is worth.
@@ -770,9 +928,10 @@ def price_options(b, drops: list[str], adds: list[str],
             if add not in b.S or add == drop:
                 continue
             ids = [p for p in b.mine if p != drop] + [add]
-            sh = b.shape(b.totals(ids))
-            prof = median_start_profile(b, ids, add, only_weeks=start_weeks)
+            sh = b.shape(b.totals(ids, weeks=weeks), weeks)
+            prof = median_start_profile(b, ids, add, only_weeks=only)
             out.append({"add": add, "drop": drop,
+                        "priced_weeks": list(b.horizon(weeks)),
                         "gain": sh["mean"], "se": sh["se"],
                         "ceiling": sh["p90"], "p_hit": sh["p_hit"],
                         # How much of him is a lineup slot we fill with nobody
@@ -1006,9 +1165,23 @@ def main():
     ap.add_argument("--moves", action="store_true", help="every live proposal, old vs new")
     ap.add_argument("--hold", action="store_true",
                     help="drop cost per man: mean, loss tail, and the protection gate")
+    ap.add_argument("--explain", nargs=2, metavar=("ADD", "DROP"),
+                    help="why one swap prices the way it does: the wire floor it "
+                         "was measured against, both men's rooms, and the shape")
+    ap.add_argument("--from-week", type=int, default=None,
+                    help="price from this week on, as a claim that settles then would")
     ap.add_argument("--sims", type=int, default=SIMS)
     a = ap.parse_args()
-    if a.calibrate:
+    if a.explain:
+        add, drop = a.explain
+        b = Board(sims=a.sims, extra=[add])
+        weeks = ([w for w in b.weeks if w >= a.from_week]
+                 if a.from_week else None)
+        rec: dict = {}
+        gain, se = b.move_value(add, drop, weeks=weeks, record=rec)
+        print(f"{add} in, {drop} out: {gain:+.3f} +/- {se:.3f}")
+        print(json.dumps(rec, indent=2, default=str))
+    elif a.calibrate:
         print(calibrate())
     elif a.hold:
         print(hold_report())

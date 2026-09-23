@@ -63,7 +63,7 @@ CATEGORIES = [
      "every roster decision is priced on, and it is built from public "
      "projections, ten seasons of usage, and the betting market.",
      ["season", "cascade", "lineup", "model_proj", "ir", "value", "moves",
-      "newswatch", "waiver_manager", "waiver_audit",
+      "newswatch", "waiver_manager", "waiver_audit", "construction", "quality",
       "ros", "expected", "value_history", "returns", "marginal", "roles",
       "playoffs", "streaming", "faab", "faab_field"]),
     ("chat", "Talking",
@@ -81,8 +81,9 @@ CATEGORIES = [
      "kickoff, the tunable settings behind both, and the two local apps: one "
      "that edits the settings, one that explains the decisions.",
      ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
-      "audit_gui", "ui", "decision_audit", "narrate", "evidence",
-      "value_backfill", "0_Now", "1_Decisions", "2_Players", "3_Calibration"]),
+      "audit_gui", "ui", "ui_player_card", "decision_audit", "narrate",
+      "evidence", "value_backfill", "0_Now", "1_Lineups", "2_Moves",
+      "3_Projections", "4_AI_Scout", "5_Calibration"]),
 ]
 
 

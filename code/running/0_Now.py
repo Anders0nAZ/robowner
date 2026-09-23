@@ -10,10 +10,16 @@ staleness is stated at the top instead of being hidden by a recomputation.
 import pandas as pd
 import streamlit as st
 
-from robo import decision_audit, narrate, ui
+from robo import decision_audit, narrate, ui, ui_player_card
 
 st.title("🔍 What Roboner would do now")
 ui.gate_banner(st)
+
+col_s1, col_s2 = st.columns([3, 1])
+with col_s1:
+    ui_player_card.render_player_search_bar(key="now_player_search")
+ui_player_card.check_query_params_player()
+
 
 
 @st.cache_data(ttl=20, show_spinner=False)
@@ -99,10 +105,21 @@ slate = decision_audit.slate(run)
 if not slate:
     st.info(narrate.slate_absence(run))
 else:
-    st.dataframe(
-        pd.DataFrame([{k: v for k, v in row.items()
-                       if k not in {"raw", "add_id", "drop_id"}} for row in slate]),
+    df_now_slate = pd.DataFrame([{
+        "channel": row.get("channel"),
+        "rung": row.get("rung"),
+        "add": row.get("add"),
+        "drop": row.get("drop") or "(open spot)",
+        "bid": row.get("bid"),
+        "gain": row.get("gain"),
+        "ceiling": row.get("ceiling"),
+        "player_id": row.get("add_id") or (row.get("raw") or {}).get("add", {}).get("player_id"),
+    } for row in slate])
+    ev_now_slate = st.dataframe(
+        df_now_slate[["channel", "rung", "add", "drop", "bid", "gain", "ceiling"]],
         use_container_width=True, hide_index=True,
+        on_select="rerun", selection_mode="single-row",
+        key="now_slate_table",
         column_config={
             "channel": st.column_config.TextColumn(
                 help="A free agent can be added outright. A waiver claim has to be bid "
@@ -117,22 +134,59 @@ else:
                      "seasons."),
             "ceiling": st.column_config.NumberColumn(format="%.2f"),
         })
+    ui_player_card.attach_player_selection(df_now_slate, ev_now_slate, id_col="player_id", week=run.get("week"))
     for row in slate:
         if row["channel"] == "waiver claim":
             st.caption(ui.money(narrate.claim_story(row["raw"])))
 
-try:
-    w = wire_split()
-    st.caption(
-        f"The wire behind that slate: **{w['free']} free now** — addable outright, "
-        f"today, for nothing — and **{w['waivers']} on waivers**, who have to be "
-        f"bid for and do not resolve until the league's waiver run. A claim in the "
-        f"slate above is one of the second kind; a free-agent row is one of the "
-        f"first. {w['rostered']} are on somebody's roster.")
-except Exception as e:
-    st.caption(f"Wire split unavailable: {type(e).__name__}")
+# THE POOL AS THAT RUN SAW IT, not as it stands now. A live count beside a
+# recorded slate is how the page came to show "free now" for a man the slate was
+# still bidding on -- two vintages, no seam, and the reader left to guess which
+# one the bot acted on. The recorded figure is preferred and the live one is
+# labelled as a different question when it has to be used.
+pool = decision_audit.claim_pool(run)
+if pool:
+    teams = ", ".join(pool.get("waiver_teams") or []) or "no team"
+    st.caption(ui.money(
+        f"The wire as that run saw it: **{pool['waiver_pool_size']} on waivers** "
+        f"({teams} — this week's completed games), who have to be bid for and do "
+        f"not resolve until the league's waiver run, against "
+        f"**{pool['free_pool_size']} free now**, addable outright for nothing. A "
+        f"claim in the slate above is one of the first kind; a free-agent row is "
+        f"one of the second."))
+    horizon = decision_audit.claim_horizon(run)
+    if horizon and horizon.get("settles_label"):
+        st.caption(ui.money(
+            f"A claim built in that run settles **{horizon['settles_label']}**, so it "
+            f"was priced from **week {horizon['week']}** — the first week it could "
+            f"actually be played in. Everything before that is a week the claim "
+            f"cannot reach."))
+    floor = decision_audit.wire_floor(run)
+    if floor:
+        worst = max(floor, key=lambda r: r.get("pct") or 0)
+        who = worst.get("supplier")
+        held_out = worst.get("excluded") or 0
+        st.caption(ui.money(
+            f"How much of each slot the wire already supplies, measured against "
+            f"the same pool that priced the gains above"
+            + (f" — {held_out} candidates this run was considering are held out "
+               f"of it, so they are not their own baseline" if held_out else "")
+            + ". A high percentage means depth there is a wasted roster spot. "
+            + " · ".join(f"**{r['pos']} {r['pct']:.0%}**" for r in floor)
+            + (f". The best {worst['pos']} on offer is {who}." if who else "")))
+else:
+    try:
+        w = wire_split()
+        st.caption(
+            f"That run recorded no pool, so this is the wire **as it stands now**, "
+            f"which is a different question from what it was when the slate was "
+            f"built: **{w['free']} free now**, **{w['waivers']} on waivers**, "
+            f"{w['rostered']} on somebody's roster.")
+    except Exception as e:
+        st.caption(f"Wire split unavailable: {type(e).__name__}")
 
-st.markdown(f"[Open this decision front to back →](Decisions?run={run['fingerprint']})")
+st.markdown(f"[Open this decision front to back →](Moves?run={run['fingerprint']})")
+
 
 # --------------------------------------------------------- defence stream
 st.subheader("The defence")
@@ -234,15 +288,140 @@ try:
     elif not live.get("pending"):
         st.caption("Nothing is pending. Claims appear here once the transaction gate "
                    "opens and a slate is submitted.")
+    # 1. Live Active Pending Claims Table
+    owned_claims = live.get("owned") or []
+    if owned_claims:
+        st.markdown("##### Confirmed Active Claims on Sleeper")
+        active_by_id = {
+            str(txid): item
+            for txid, item in (live.get("state", {}).get("active") or {}).items()
+        }
+        owned_rows = []
+        for s in owned_claims:
+            txid = next(
+                (tx for tx, item in active_by_id.items()
+                 if (item.get("spec") or {}).get("add_id") == s.get("add_id")
+                 and (item.get("spec") or {}).get("drop_id") == s.get("drop_id")),
+                "—"
+            )
+            item = active_by_id.get(txid) or {}
+            sub_at = item.get("submitted_at")
+            rung = s.get("priority", s.get("submit_order", 0))
+            gain = s.get("gain")
+            gid = s.get("group_id") or "—"
+            cap = s.get("capacity", 1)
+            owned_rows.append({
+                "rung": f"#{rung}",
+                "add": s.get("add_name") or s.get("add_id"),
+                "drop": s.get("drop_name") or s.get("drop_id") or "(open spot)",
+                "bid": int(s.get("bid") or 0),
+                "gain": float(gain) if gain is not None else None,
+                "group": f"{gid} (max {cap})",
+                "tx_id": txid,
+                "submitted": ui.fmt_age(sub_at) if sub_at else "—",
+                "player_id": s.get("add_id"),
+            })
+        owned_rows.sort(key=lambda r: int(r["rung"].replace("#", "")))
+        df_owned = pd.DataFrame(owned_rows)
+        ev_owned = st.dataframe(
+            df_owned[["rung", "add", "drop", "bid", "gain", "group", "tx_id", "submitted"]],
+            use_container_width=True,
+            hide_index=True,
+            on_select="rerun",
+            selection_mode="single-row",
+            key="now_active_claims_table",
+            column_config={
+                "rung": st.column_config.TextColumn("Rung", width="small"),
+                "add": st.column_config.TextColumn("Target Add", width="medium"),
+                "drop": st.column_config.TextColumn("Incumbent Drop", width="medium"),
+                "bid": st.column_config.NumberColumn("FAAB Bid", format="$%d"),
+                "gain": st.column_config.NumberColumn("Lineup Gain", format="%+.2f pts"),
+                "group": st.column_config.TextColumn("Portfolio Group", width="medium"),
+                "tx_id": st.column_config.TextColumn("Sleeper Tx ID", width="medium"),
+                "submitted": st.column_config.TextColumn("Submitted", width="small"),
+            }
+        )
+        ui_player_card.attach_player_selection(df_owned, ev_owned, id_col="player_id", week=run.get("week"))
+
+    # 2. Lifecycle Audit History Table (Submissions, Cancellations, Reconciliations)
     events = live.get("events") or []
     if events:
-        with st.expander("What has been submitted, cancelled or rolled back"):
-            st.dataframe(pd.DataFrame([{
-                "at": ui.fmt_age(e.get("at")), "event": e.get("kind"),
-                "source": e.get("source"), "transaction": e.get("transaction_id"),
-                "detail": e.get("reason") or e.get("error")
-                          or (e.get("result") or {}).get("status") or "",
-            } for e in events]), use_container_width=True, hide_index=True)
+        with st.expander("Waiver Lifecycle & Audit Trail: Submissions, Cancellations, Reconciliations", expanded=True):
+            hist_rows = []
+            for e in events:
+                kind = (e.get("kind") or "event").upper()
+                spec = e.get("spec") or {}
+                reason = e.get("reason") or e.get("error") or (e.get("result") or {}).get("status") or ""
+                txid = str(e.get("transaction_id") or "")
+                
+                if kind == "RECONCILED":
+                    n_des = len(e.get("desired") or [])
+                    n_canc = len(e.get("cancelled") or [])
+                    n_sub = len(e.get("submitted") or [])
+                    add = f"Portfolio ({n_des} rungs)"
+                    drop = "—"
+                    bid = None
+                    priority = "—"
+                    gain = None
+                    detail = f"Reconciled portfolio: {n_canc} cancelled, {n_sub} submitted"
+                elif kind in ("SUBMITTED", "CANCELLED"):
+                    add = spec.get("add_name") or spec.get("add_id") or "—"
+                    drop = spec.get("drop_name") or spec.get("drop_id") or "(open spot)"
+                    bid = int(spec.get("bid")) if spec.get("bid") is not None else None
+                    p_val = spec.get("priority", spec.get("submit_order"))
+                    priority = f"#{p_val}" if p_val is not None else "—"
+                    gain = float(spec.get("gain")) if spec.get("gain") is not None else None
+                    src = e.get("source") or "live"
+                    detail = f"Cancelled ({reason})" if kind == "CANCELLED" else f"Submitted to Sleeper ({src})"
+                elif kind == "SETTLED":
+                    add = spec.get("add_name") or spec.get("add_id") or "—"
+                    drop = spec.get("drop_name") or spec.get("drop_id") or "(open spot)"
+                    bid = int(spec.get("bid")) if spec.get("bid") is not None else None
+                    priority = f"#{spec.get('priority', 0)}"
+                    gain = float(spec.get("gain")) if spec.get("gain") is not None else None
+                    res = (e.get("result") or {}).get("status") or "settled"
+                    detail = f"Settled: {res}"
+                else:
+                    add = spec.get("add_name") or spec.get("add_id") or "—"
+                    drop = spec.get("drop_name") or spec.get("drop_id") or "—"
+                    bid = int(spec.get("bid")) if spec.get("bid") is not None else None
+                    priority = str(spec.get("priority", "—"))
+                    gain = float(spec.get("gain")) if spec.get("gain") is not None else None
+                    detail = reason or str(e.get("result") or "")
+
+                hist_rows.append({
+                    "when": ui.fmt_age(e.get("at")),
+                    "action": kind,
+                    "add": add,
+                    "drop": drop,
+                    "bid": bid,
+                    "rung": priority,
+                    "gain": gain,
+                    "detail": detail,
+                    "tx_id": f"...{txid[-8:]}" if len(txid) > 8 else txid,
+                    "player_id": spec.get("add_id"),
+                })
+            df_hist = pd.DataFrame(hist_rows)
+            ev_hist = st.dataframe(
+                df_hist[["when", "action", "add", "drop", "bid", "rung", "gain", "detail", "tx_id"]],
+                use_container_width=True,
+                hide_index=True,
+                on_select="rerun",
+                selection_mode="single-row",
+                key="now_lifecycle_events_table",
+                column_config={
+                    "when": st.column_config.TextColumn("When", width="small"),
+                    "action": st.column_config.TextColumn("Action", width="small"),
+                    "add": st.column_config.TextColumn("Player Target", width="medium"),
+                    "drop": st.column_config.TextColumn("Player Dropped", width="medium"),
+                    "bid": st.column_config.NumberColumn("Bid", format="$%d"),
+                    "rung": st.column_config.TextColumn("Rung", width="small"),
+                    "gain": st.column_config.NumberColumn("Gain", format="%+.2f pts"),
+                    "detail": st.column_config.TextColumn("Detail / Rationale", width="large"),
+                    "tx_id": st.column_config.TextColumn("Tx ID", width="small"),
+                }
+            )
+            ui_player_card.attach_player_selection(df_hist, ev_hist, id_col="player_id", week=run.get("week"))
 except Exception as e:  # a dead Sleeper must not take the page with it
     st.warning(f"Live pending queue unavailable: {type(e).__name__}")
 
@@ -258,21 +437,25 @@ for c, r in zip(cols, rows):
                   delta_color="inverse" if r["stale"] else "off")
         st.caption(r["detail"] or "—")
 
-left, right = st.columns(2)
-with left:
-    st.page_link("pages/1_Decisions.py", icon="🧾",
-                 label="**Decisions** — every run, front to back")
-    st.caption("One timeline of every re-evaluation, whether the clock or the news "
-               "started it. Open one to see what fired, what moved, who was considered "
-               "and rejected, what the bid was worth, and whether anything could reach "
-               "Sleeper.")
-with right:
-    st.page_link("pages/2_Players.py", icon="📈",
-                 label="**Players** — what a man is worth, and why")
-    st.caption("The valuation board with day-over-day and week-over-week movement, and "
-               "a per-player traceback from the feeds to the printed total.")
-st.page_link("pages/3_Calibration.py", icon="🔧",
-             label="**Calibration** — how the machinery was fitted")
+c1, c2, c3 = st.columns(3)
+with c1:
+    st.page_link("pages/1_Lineups.py", icon="⚖️", label="**Lineups** — weekly start/sit trace")
+    st.caption("Starters, bench, missing keys, and Sleeper shadow comparison.")
+with c2:
+    st.page_link("pages/2_Moves.py", icon="📋", label="**Moves** — waivers pipeline")
+    st.caption("8-stage pipeline trace, tier quality, and LLM arbitrations.")
+with c3:
+    st.page_link("pages/3_Projections.py", icon="📊", label="**Projections Hub** — weekly & ROS")
+    st.caption("Quantile bands, edge vs Sleeper, and rest of season board.")
+
+p1, p2 = st.columns(2)
+with p1:
+    st.page_link("pages/4_AI_Scout.py", icon="🤖", label="**AI & Scout Center**")
+    st.caption("Dead-heat LLM arbitrations, news prose verdicts, and queue.")
+with p2:
+    st.page_link("pages/5_Calibration.py", icon="🔧", label="**Calibration** — fitted baselines")
+    st.caption("Role absorption, defence streaming fit, and return curves.")
+
 
 st.divider()
 st.caption("Settings live in the admin panel on port 8502. This app has no field that "
