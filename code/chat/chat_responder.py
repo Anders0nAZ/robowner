@@ -19,26 +19,29 @@ import requests
 
 from robo import DATA, LEAGUE_ID_2026, ROOT, SITE_URL
 from robo import archive_media, draft_chat, groupme, lore, media, season, selfdoc, skills, sleeper_chat, sleeper_read as api
+from robo import ctx_watch
 
 OLLAMA = "http://localhost:11434/api/chat"
-# The -96k variant, NOT the bare q4_K_M. The bare tag bakes no num_ctx, so it
-# inherits the machine-wide OLLAMA_CONTEXT_LENGTH of 32768 -- and when a prompt
-# exceeds that, Ollama silently drops the OLDEST tokens, which is the system
-# prompt: the persona, the identity map, and the rules about what it may claim.
-# No error, just a bot that quietly forgets who it is. Same 17GB and 100% GPU.
-MODEL = "qwen3.8:27b-mtp-96k"
-# Declared per request as well as baked into the -96k tag. Belt and braces on
-# this project's most expensive gotcha: a tag without a baked num_ctx inherits
-# the machine-wide OLLAMA_CONTEXT_LENGTH of 32768, and Ollama then SILENTLY
-# drops the oldest tokens -- which is the system prompt. No error, just a bot
-# that has forgotten who it is. Keep this equal to the tag's baked value.
-NUM_CTX = 98304
+# A tag with num_ctx BAKED IN, never the bare q4_K_M: the bare tag inherits the
+# machine-wide OLLAMA_CONTEXT_LENGTH of 32768 -- and when a prompt exceeds the
+# window, Ollama silently drops the OLDEST tokens, which is the system prompt:
+# the persona, the identity map, and the rules about what it may claim. No
+# error, just a bot that quietly forgets who it is.
+#
+# The same 48k text-only tag the scout uses, so the two share one resident
+# model instead of evicting each other (both cannot fit on 24 GB). The largest
+# measured prompt is ~10.8k tokens (three tool rounds); a full 150-message
+# week is ~18k. Nothing here sends the model an image.
+MODEL = "qwen3.8:27b-mtp-48k-text"
+# Declared per request as well as baked into the tag. Belt and braces on this
+# project's most expensive gotcha, above. Keep this equal to the tag's value.
+NUM_CTX = 49152
 TRIGGERS = ("roboner", "robert owner", "robowner", "robo owner", "the machine")
 MAX_REPLIES_PER_HOUR = 20
 # How much conversation goes into every prompt without the model asking for it.
 # Time-bound so it stays relevant, count-capped so one blow-up day cannot crowd
 # out the week: this group's busiest day was 153 messages. A week costs ~5k
-# tokens against a 98k window, so the binding limit here is attention, not room.
+# tokens against a 48k window, so the binding limit here is attention, not room.
 HISTORY_DAYS = 7.0
 HISTORY_MAX = 150
 KEEP_ALIVE = "30m"
@@ -413,7 +416,10 @@ def _chat(messages: list[dict], tools: list | None = None) -> dict:
                                     "options": {"num_ctx": NUM_CTX},
                                     "stream": False}, timeout=240)
     r.raise_for_status()
-    return r.json().get("message") or {}
+    body = r.json()
+    # Overflow is silent on Ollama; this only records whether it happened.
+    ctx_watch.record("responder", MODEL, messages, body, tools=tools, window=NUM_CTX)
+    return body.get("message") or {}
 
 
 # Thinking models fence their reasoning before the answer. qwen uses <think>,

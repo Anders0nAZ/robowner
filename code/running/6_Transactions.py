@@ -102,12 +102,15 @@ st.subheader(f"{r['type']}: "
                  ("+" + ", ".join(r["adds"])) if r["adds"] else "",
                  ("−" + ", ".join(r["drops"])) if r["drops"] else ""])))
 
+# Plain text, not st.metric: a timestamp is too wide for the metric font and
+# truncates to "Sep 23, 4:23:…" at any ordinary width.
 c = st.columns(4)
-c[0].metric("Made", news_audit.local_time(r["when"]) if r["when"] else "—")
-c[1].metric("Settled", news_audit.local_time(r["settled_at"]) if r.get("settled_at") else "—",
-            help="For a waiver claim, when Sleeper processed it.")
-c[2].metric("Status", r.get("status") or "—")
-c[3].metric("Record", r["provenance"])
+c[0].markdown(f"**Made**  \n{news_audit.local_time(r['when']) if r['when'] else '—'}")
+c[1].markdown(f"**Settled**  \n"
+              f"{news_audit.local_time(r['settled_at']) if r.get('settled_at') else '—'}",
+              help="For a waiver claim, when Sleeper processed it.")
+c[2].markdown(f"**Status**  \n{r.get('status') or '—'}")
+c[3].markdown(f"**Record**  \n{r['provenance']}")
 
 st.markdown("##### Who instructed it")
 if r["path"]:
@@ -117,7 +120,7 @@ else:
 if r.get("entry"):
     st.caption(f"Process entry point: `{r['entry']}`")
 if r.get("reason"):
-    st.write(r["reason"])
+    st.markdown(ui.money(r["reason"]))
 if r["origin"] == transactions.NOT_BOT:
     st.warning("No bot record explains this transaction: it was made on Sleeper by "
                "someone else (a commissioner edit or a change by hand).")
@@ -125,12 +128,12 @@ if r["origin"] == transactions.NOT_BOT:
 if r.get("decision"):
     st.markdown(f"##### Decision log entry #{r['decision_id']}")
     # Quoted, never paraphrased: this is the text the league reads.
-    st.markdown(f"> {r['decision']}")
+    st.markdown(f"> {ui.money(r['decision'])}")
     if r.get("rationale"):
-        st.markdown(f"> {r['rationale']}")
+        st.markdown(f"> {ui.money(r['rationale'])}")
 if r.get("sleeper_note"):
     st.markdown("##### Sleeper's note")
-    st.info(r["sleeper_note"])
+    st.info(ui.money(r["sleeper_note"]))
 
 links = []
 if r.get("run_fingerprint"):

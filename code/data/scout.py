@@ -53,7 +53,7 @@ import time
 from datetime import datetime
 from email.utils import parsedate_to_datetime
 
-from robo import DATA, injuries, roles, season, settings
+from robo import DATA, ctx_watch, injuries, roles, season, settings
 from robo import sleeper_read as api
 
 NEWS_LIMIT = 8
@@ -381,10 +381,17 @@ def needs_judging(bundles: list[dict], max_age_days: float = 7.0,
 
 
 OLLAMA = "http://localhost:11434/api/chat"
-# The -96k tag, never the bare one: the bare model bakes no num_ctx and inherits
-# the machine-wide 32k, and Ollama drops the OLDEST tokens on overflow -- which
-# is the system prompt, i.e. every rule above about not guessing a date.
-LOCAL_MODEL = "qwen3.8:27b-mtp-96k"
+# A tag with num_ctx BAKED IN, never the bare one: the bare model inherits the
+# machine-wide 32k, and Ollama drops the OLDEST tokens on overflow -- which is
+# the system prompt, i.e. every rule above about not guessing a date.
+#
+# 48k and text-only (C:\Users\Nate\qwen3.8-27b-mtp-48k-text.modelfile): same
+# weights, renderer, parser and sampling as the responder's -96k tag, measured
+# at 18,655 MiB against 21,669. A batch of four is ~9-12k tokens, and nothing
+# here sends an image. At 21.7 GB the model could not fit beside ~2.2 GB of
+# desktop apps plus the VRAM gate's 1 GB reserve, so every background batch was
+# refused and the queue sat undrained for hours with the card empty.
+LOCAL_MODEL = "qwen3.8:27b-mtp-48k-text"
 # Smaller than the draft version's six. Each player now carries ESPN's analyst
 # paragraph as well as the roto wire, and the model is thinking-by-default, so a
 # long request spends minutes reasoning before the first token of output.
@@ -503,6 +510,8 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
     for i in range(0, len(bundles), LOCAL_BATCH):
         chunk = bundles[i:i + LOCAL_BATCH]
         t0 = time.time()
+        messages = [{"role": "system", "content": SYSTEM},
+                    {"role": "user", "content": _prompt(chunk)}]
         try:
             r = requests.post(OLLAMA, json={
                 # ONE MINUTE, NOT THIRTY. The machine-wide default is
@@ -521,12 +530,12 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 # ComfyUI generation gets the VRAM rather than queueing behind
                 # a resident model nobody is using.
                 #
-                # The responder keeps its own 30m, which is the case that
-                # actually wants it -- a human mid-conversation.
+                # The responder keeps its own longer hold (KEEP_ALIVE, a
+                # setting), which is the case that actually wants it -- a human
+                # mid-conversation.
                 "model": model, "stream": False, "keep_alive": "1m",
                 "format": SCHEMA,
-                "messages": [{"role": "system", "content": SYSTEM},
-                             {"role": "user", "content": _prompt(chunk)}],
+                "messages": messages,
             }, headers={"X-Gate-Priority": gate_priority,
                          "X-Gate-Wait": "5" if gate_priority == "background" else "120"},
                timeout=(5, timeout + (5 if gate_priority == "background" else 120)))
@@ -536,7 +545,9 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 raise VramBusyError(out)
             _last_call_at = time.monotonic()
             r.raise_for_status()
-            got = json.loads(r.json()["message"]["content"]).get("verdicts", [])
+            body = r.json()
+            ctx_watch.record("scout", model, messages, body)
+            got = json.loads(body["message"]["content"]).get("verdicts", [])
         except VramBusyError:
             raise
         except Exception as e:
@@ -928,7 +939,7 @@ def arbitrate_dead_heat(add_id: str, drop_id: str, metrics: dict,
 
     When quantitative modeling shows an upgrade is inside the noise margin (< 1.5
     lineup gain or < 5.0 season ROS points) and both players are in the same tier,
-    invokes local Ollama (qwen3.8:27b-mtp-96k) to determine if real-world reporting,
+    invokes local Ollama (LOCAL_MODEL) to determine if real-world reporting,
     scheme changes, or role catalysts justify burning a transaction to cut the incumbent.
 
     PROTECTED AGAINST REDUNDANT QUERIES:
@@ -1066,7 +1077,10 @@ REASONING: [1-3 sentences of crisp football rationale]
             "options": {"temperature": 0.3},
         }, timeout=timeout)
         resp.raise_for_status()
-        content = resp.json().get("message", {}).get("content", "")
+        body = resp.json()
+        ctx_watch.record("arbitration", LOCAL_MODEL,
+                         [{"role": "user", "content": prompt}], body)
+        content = body.get("message", {}).get("content", "")
 
         verdict_m = re.search(r"VERDICT:?\s*\*?\*?\s*(KEEP_INCUMBENT|SWAP_FOR_CANDIDATE)", content, re.I)
         conf_m = re.search(r"CONFIDENCE:?\s*\*?\*?\s*([0-9\.]+)", content, re.I)

@@ -103,7 +103,7 @@ In season (the draft is over; this is what I do now):
   moves.py         adds, drops and FAAB waiver claims execution. Fully live and active,
                    executing real moves on Sleeper based on expected and marginal value
   narrate.py       decision logs and explainability generation for all transactions
-  scout.py         local LLM scout (qwen3.8:27b-mtp-96k) analyzing player news, injury
+  scout.py         local LLM scout (qwen3.8:27b-mtp-48k-text) analyzing player news, injury
                    recovery timelines, and depth chart shakeups (data/news_verdicts.json)
 
 Acting (writes to Sleeper):

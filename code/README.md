@@ -103,6 +103,7 @@ The three public pages and this publisher. Every consequential action writes a r
 | [`devlog.py`](published/devlog.py) | Public dev log — what the bot can do, published with the decision log. |
 | [`status.py`](published/status.py) | Public status dashboard — is the bot alive, and is what it knows current? |
 | [`publish_code.py`](published/publish_code.py) | Publish the bot's Python source to the public site, on an allowlist. |
+| [`ctx_watch.py`](published/ctx_watch.py) | Did a model call overflow its context window? Record every call and say so. |
 
 ## Keeping it running
 

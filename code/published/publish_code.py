@@ -76,7 +76,7 @@ CATEGORIES = [
     ("published", "Showing its work",
      "The three public pages and this publisher. Every consequential action "
      "writes a record before anyone asks for one.",
-     ["decisions", "devlog", "status", "publish_code"]),
+     ["decisions", "devlog", "status", "publish_code", "ctx_watch"]),
     ("running", "Keeping it running",
      "The daily pipeline, the job that puts a decision run in front of every "
      "kickoff, the tunable settings behind both, and the two local apps: one "

@@ -379,8 +379,9 @@ with ai_tabs[1]:
 with ai_tabs[2]:
     st.markdown("### Scout Prose Queue & Processing Backlog")
     st.caption(
-        "One durable, rate-limited queue for all automated prose scouting (news pulse, cascades, daily refresh). "
-        "Drained one batch (8 players) per pulse to manage single-GPU Ollama load."
+        "One durable queue for all automated prose scouting (news pulse, cascades, daily refresh). "
+        "Each pulse drains up to ten batches of eight players within a ten-minute budget, "
+        "as background work that yields the GPU to image generation."
     )
 
     try:
@@ -446,8 +447,11 @@ with ai_tabs[2]:
             if log_rows:
                 df_hist = pd.DataFrame(log_rows)
                 df_hist["Pending in Queue"] = df_hist["Pending in Queue"].ffill().fillna(0).astype(int)
+                # Indexed on the datetime, not the "HH:MM" label: a string axis
+                # is sorted alphabetically, which put yesterday evening's pulses
+                # to the right of this morning's in any window crossing midnight.
                 st.area_chart(
-                    df_hist.set_index("Time")[["Pending in Queue"]],
+                    df_hist.set_index("Timestamp")[["Pending in Queue"]],
                     use_container_width=True,
                     height=230,
                     color="#29B5E8",

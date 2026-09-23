@@ -444,7 +444,7 @@ def render_player_card(player_id: str, week: int | None = None) -> None:
         st.markdown("##### Near-Tie / Dead-Heat Arbitrations")
         st.caption(
             "When quantitative models show near-zero delta (gain <= 1.5 or ROS diff <= 5.0) in the same tier, "
-            "local LLM arbitration (qwen3.8:27b-mtp-96k) evaluates qualitative beat reporting to prevent lateral churn."
+            "local LLM arbitration (qwen3.8:27b-mtp-48k-text) evaluates qualitative beat reporting to prevent lateral churn."
         )
         if arbitrations:
             for arb in arbitrations:

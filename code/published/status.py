@@ -339,7 +339,29 @@ def responder() -> dict:
         "note": hb.get("note") or "",
         "pid": pid, "uptime": uptime,
         "channels": chans, "model": cr.MODEL,
+        "context": _context_use(),
     }
+
+
+def _context_use() -> dict:
+    """Whether any model call overflowed its window this week.
+
+    Ollama truncates an over-long prompt silently (see ctx_watch), so this is
+    the only place it would ever show. Watching, not preventing: the count is
+    what decides whether the 48k tag is enough or the 96k one is needed back.
+    """
+    from robo import ctx_watch
+    s = _safe(ctx_watch.summary, {}) or {}
+    if not s.get("calls"):
+        return {"status": UNK, "why": "no model calls recorded yet", "why_detail": "", **s}
+    if s.get("truncated"):
+        worst = [n for n, c in s["callers"].items() if c["truncated"]]
+        return {"status": WARN, **s,
+                "why": "%d call(s) overflowed the context window this week (%s)"
+                       % (s["truncated"], ", ".join(sorted(worst))),
+                "why_detail": "Ollama cut the front of the prompt -- the system prompt "
+                              "-- without an error. If this recurs, the 96k tag is the fix."}
+    return {"status": OK, "why": "", "why_detail": "", **s}
 
 
 def reply_history() -> dict:
@@ -1460,6 +1482,19 @@ def _responder_html(resp, hist) -> str:
     peak = max(hist.get("hourly") or [0]) or 1
     bars = "".join('<i style="height:%d%%" title="%d"></i>' % (max(6, int(100 * v / peak)), v)
                    for v in (hist.get("hourly") or [0] * 24))
+    ctx = resp.get("context") or {}
+    if ctx.get("calls"):
+        largest = max(ctx["callers"].values(), key=lambda c: c["max_tokens"])
+        window = largest.get("window")
+        body = ('<div class="big num">%d<span style="font-size:.9rem;color:var(--dim)">'
+                ' truncated</span></div>%s%s%s' % (
+                    ctx["truncated"],
+                    _row("largest prompt", "%s%s" % (
+                        format(largest["max_tokens"], ","),
+                        " of %s" % format(window, ",") if window else "")),
+                    _row("near the limit", "%d" % ctx["near"]),
+                    _row("calls, 7 days", "%d" % ctx["calls"])))
+        cards.append(_card("model context", body, ctx.get("status"), why=ctx))
     spark = _card("replies, last 24 hours",
                   '<div class="spark">%s</div>'
                   '<div class="row"><span>oldest</span><span>now</span></div>' % bars)

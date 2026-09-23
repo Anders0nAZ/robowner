@@ -125,7 +125,7 @@ REGISTRY: list[S] = [
     S(RESPONDER, "robo.chat_responder", "HISTORY_MAX", int,
       "Hard cap on how many recent messages go into the prompt.",
       "Count-capped so one blow-up day cannot crowd out the week -- this group's "
-      "busiest day was 153 messages. A week costs ~5k tokens of a 98k window, so "
+      "busiest day was 153 messages. A week costs ~5k tokens of a 48k window, so "
       "the binding limit is the model's attention, not room.",
       bounds=(10, 1000), unit="messages"),
     S(RESPONDER, "robo.chat_responder", "KEEP_ALIVE", str,
@@ -860,7 +860,16 @@ def apply(module_name: str, ns: dict) -> list[str]:
 
     Only touches names that ALREADY exist in the namespace, so a stale or
     misspelled key cannot inject a new global. Returns the names it changed.
+
+    A module launched with `python -m robo.x` runs as "__main__", which no
+    registry entry is keyed on -- so every override for an ENTRY-POINT module
+    was silently ignored in its own process. The responder held the model 30
+    minutes for days after KEEP_ALIVE was set to 5m, and the Tuesday and
+    Wednesday moves runs vetoed at -20 while the pulse, importing the same
+    module, vetoed at -25. `__spec__` still carries the real name.
     """
+    if module_name == "__main__" and getattr(ns.get("__spec__"), "name", None):
+        module_name = ns["__spec__"].name
     changed = []
     over = load()
     for spec in by_module(module_name):
