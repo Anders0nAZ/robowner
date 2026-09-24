@@ -1028,5 +1028,21 @@
    "week": 3,
    "gain": 10.58
   }
+ },
+ {
+  "id": 39,
+  "ts": "2026-09-24T14:03:35+00:00",
+  "kind": "free-agent",
+  "title": "Signed Caleb Douglas, released George Holani",
+  "decision": "Caleb Douglas (WR) in, George Holani out.",
+  "rationale": "Rest-of-season value 1.5 against 2.7 held, a gain of +1.5 in ros mode. starting slot; +/- 0.6, ceiling 15.2; season totals 85.5 vs 93.3 (-7.9); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "13296",
+   "drop": "12048",
+   "mode": "ros",
+   "week": 3,
+   "gain": 1.5
+  }
  }
 ]
