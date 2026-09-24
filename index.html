@@ -16,6 +16,13 @@
  details { color:var(--ink); font-size:.88rem; margin-top:.6rem; }
  summary { cursor:pointer; color:var(--acc); font-weight:500; font-size:.82rem; user-select:none; }
  summary:hover { text-decoration:underline; }
+
+ .rationale-toggle { margin-top:.7rem; font-size:.84rem; color:var(--dim); }
+ .rationale-toggle summary { color:var(--dim); font-size:.80rem; cursor:pointer; user-select:none; padding:.2rem 0; font-weight:normal; }
+ .rationale-toggle summary:hover { color:var(--acc); }
+ .rationale-content { margin-top:.4rem; padding:.6rem .8rem; background:#121826; border:1px solid #1f293d; border-radius:6px; line-height:1.45; font-size:.84rem; }
+ .rationale-decision { margin:0 0 .4rem; color:var(--ink); }
+ .rationale-why { margin:0; color:var(--dim); }
  
  .data-box { background:#121826; border:1px solid #243048; border-radius:6px; padding:.7rem .9rem; margin-top:.5rem; overflow-x:auto; }
  .data-meta-grid { display:flex; flex-wrap:wrap; gap:1.2rem; margin-bottom:.5rem; font-size:.82rem; color:var(--dim); }
@@ -64,362 +71,557 @@ every line of Python that runs it.</p>
       <span class="status">final</span>
       <time>2026-09-24T14:03:35+00:00</time></header>
     <h2>#39 — Signed Caleb Douglas, released George Holani</h2>
-    <p class="decision"><strong>Decision:</strong> Caleb Douglas (WR) in, George Holani out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 1.5 against 2.7 held, a gain of +1.5 in ros mode. starting slot; +/- 0.6, ceiling 15.2; season totals 85.5 vs 93.3 (-7.9); the lineup-marginal figure decides.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Caleb Douglas</strong> <span class="team-tag">WR &middot; MIA</span></td></tr><tr><th>Dropped</th><td>George Holani <span class="team-tag">RB &middot; SEA</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+1.5 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>ros</code></td></tr><tr><th>Week</th><td>3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Caleb Douglas</strong> <span class="team-tag">WR &middot; MIA</span> <span class="dim">&middot; ROS: <strong>1.5 pts</strong></span></td></tr><tr><th>Dropped</th><td>George Holani <span class="team-tag">RB &middot; SEA</span> <span class="dim">&middot; Held ROS: <strong>2.7 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+1.5 pts</span> <span class="dim">(Lineup-marginal figure decides)</span></td></tr><tr><th>Target Role</th><td><strong>Starting slot</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>15.2 pts</strong> (&plusmn;0.6)</td></tr><tr><th>Season Totals</th><td>85.5 vs 93.3 (-7.9)</td></tr><tr><th>Execution Context</th><td><code>ros</code> mode &middot; Week 3</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Caleb Douglas (WR) in, George Holani out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 1.5 against 2.7 held, a gain of +1.5 in ros mode. starting slot; +/- 0.6, ceiling 15.2; season totals 85.5 vs 93.3 (-7.9); the lineup-marginal figure decides.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-23T20:03:31+00:00</time></header>
     <h2>#38 — Signed George Holani, released MarShawn Lloyd</h2>
-    <p class="decision"><strong>Decision:</strong> George Holani (RB) in, MarShawn Lloyd out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 94.7 against 84.1 held, a gain of +10.6 in news mode. weekly-model ROS apples-to-apples; event delta +0.07; coverage preserved.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>George Holani</strong> <span class="team-tag">RB &middot; SEA</span></td></tr><tr><th>Dropped</th><td>MarShawn Lloyd <span class="team-tag">RB &middot; GB</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+10.6 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>news</code></td></tr><tr><th>Week</th><td>3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>George Holani</strong> <span class="team-tag">RB &middot; SEA</span> <span class="dim">&middot; ROS: <strong>94.7 pts</strong></span></td></tr><tr><th>Dropped</th><td>MarShawn Lloyd <span class="team-tag">RB &middot; GB</span> <span class="dim">&middot; Held ROS: <strong>84.1 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+10.6 pts</span></td></tr><tr><th>Target Role</th><td><strong>Roster coverage preserved</strong></td></tr><tr><th>Event Delta</th><td><strong class="pos-gain">+0.07</strong></td></tr><tr><th>Execution Context</th><td><code>news</code> mode &middot; Week 3 &middot; Weekly-model ROS apples-to-apples</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> George Holani (RB) in, MarShawn Lloyd out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 94.7 against 84.1 held, a gain of +10.6 in news mode. weekly-model ROS apples-to-apples; event delta +0.07; coverage preserved.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">lineup</span>
       <span class="status">final</span>
       <time>2026-09-23T13:33:24+00:00</time></header>
     <h2>#37 — Week 3 lineup set</h2>
-    <p class="decision"><strong>Decision:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Brenton Strange; FLEX: Tony Pollard; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Green Bay Packers</p>
-    <p class="rationale"><strong>Why:</strong> Projected 128.9 points under league scoring from Roboner&#x27;s NFL model means for 16 of 17 players, +12.6 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had empty slot.</p>
-    <details><summary>data</summary><div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>3</strong></div><div><span class="meta-label">Projected:</span> <strong>128.9 pts</strong></div><div><span class="meta-label">Modelled:</span> <strong>16 players</strong></div></div><div class="meta-source"><span class="meta-label">Source:</span> Roboner NFL model, 473 players, 0.2h old, anchored on proj_2026_wk03_20260923T132303Z.json (pre-game, 476 players with a game)</div><table class="lineup-table">
+    <div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>3</strong></div><div><span class="meta-label">Projected:</span> <strong>128.9 pts</strong> <span class="pos-gain">(+12.6 vs prev: 116.3)</span></div><div><span class="meta-label">Modelled:</span> <strong>16 players</strong></div></div><div class="meta-source"><span class="meta-label">Lineup Repair:</span> Benched unstartable (empty slot) &middot; <span class="meta-label">Source:</span> Roboner NFL model, 473 players, 0.2h old, anchored on proj_2026_wk03_20260923T132303Z.json (pre-game, 476 players with a game)</div><table class="lineup-table">
   <thead><tr><th>Slot</th><th>Starter</th><th>Previous</th><th>Change</th></tr></thead>
   <tbody><tr><td><strong>QB</strong></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td><span class="dim">&mdash;</span></td></tr><tr class="changed"><td><strong>WR</strong></td><td><strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span></td><td>Terry McLaurin <span class="team-tag">WR &middot; WAS</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr class="changed"><td><strong>WR</strong></td><td><strong>Terry McLaurin</strong> <span class="team-tag">WR &middot; WAS</span></td><td>Emeka Egbuka <span class="team-tag">WR &middot; TB</span></td><td><span class="badge-swap">&harr; Shifted slot</span></td></tr><tr class="changed"><td><strong>TE</strong></td><td><strong>Brenton Strange</strong> <span class="team-tag">TE &middot; JAX</span></td><td>Isaiah Likely <span class="team-tag">TE &middot; NYG</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr class="changed"><td><strong>FLEX</strong></td><td><strong>Tony Pollard</strong> <span class="team-tag">RB &middot; TEN</span></td><td>MarShawn Lloyd <span class="team-tag">RB &middot; GB</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr><td><strong>SUPER_FLEX</strong></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>K</strong></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td><span class="dim">&mdash;</span></td></tr><tr class="changed"><td><strong>DEF</strong></td><td><strong>Green Bay Packers</strong> <span class="team-tag">DEF &middot; GB</span></td><td><span class="dim">(empty)</span></td><td><span class="badge-add">+ Filled empty slot</span></td></tr></tbody>
-</table></div></details>
+</table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Brenton Strange; FLEX: Tony Pollard; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Green Bay Packers</p>
+        <p class="rationale-why"><strong>Why:</strong> Projected 128.9 points under league scoring from Roboner&#x27;s NFL model means for 16 of 17 players, +12.6 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had empty slot.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-23T13:33:20+00:00</time></header>
     <h2>#36 — Signed Green Bay Packers, released J.K. Dobbins</h2>
-    <p class="decision"><strong>Decision:</strong> Green Bay Packers (DEF) in, J.K. Dobbins out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 10.2 against 0.4 held, a gain of +9.8 in patch mode. fills an unfillable starting slot.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Green Bay Packers</strong> <span class="team-tag">DEF &middot; GB</span></td></tr><tr><th>Dropped</th><td>J.K. Dobbins <span class="team-tag">RB &middot; DEN</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+9.8 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>patch</code></td></tr><tr><th>Week</th><td>3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Green Bay Packers</strong> <span class="team-tag">DEF &middot; GB</span> <span class="dim">&middot; ROS: <strong>10.2 pts</strong></span></td></tr><tr><th>Dropped</th><td>J.K. Dobbins <span class="team-tag">RB &middot; DEN</span> <span class="dim">&middot; Held ROS: <strong>0.4 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+9.8 pts</span></td></tr><tr><th>Target Role</th><td><strong>Starting slot</strong></td></tr><tr><th>Execution Context</th><td><code>patch</code> mode &middot; Week 3</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Green Bay Packers (DEF) in, J.K. Dobbins out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 10.2 against 0.4 held, a gain of +9.8 in patch mode. fills an unfillable starting slot.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-23T11:23:26+00:00</time></header>
     <h2>#35 — Roster unblocked</h2>
-    <p class="decision"><strong>Decision:</strong> Activated Nico Collins; released New York Giants (hold 0.0, the cheapest body we could cut).</p>
-    <p class="rationale"><strong>Why:</strong> Nico Collins (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Step 1 (activate)</th><td>Activated: <strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span> <span class="badge-success">landed</span></td></tr><tr><th>Step 2 (drop)</th><td>Dropped: <strong>New York Giants</strong> <span class="team-tag">DEF &middot; NYG</span> <span class="dim">(hold value: 0.0)</span> <span class="badge-success">landed</span></td></tr><tr><th>Roster Compliance</th><td><span class="badge-success">Legal</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Questionable on IR (unblock required)</strong></td></tr><tr><th>Roster Impact</th><td>Roster compliance restored (17-man limit)</td></tr><tr><th>Step 1 (activate)</th><td>Activated: <strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span> <span class="badge-success">landed</span></td></tr><tr><th>Step 2 (drop)</th><td>Dropped: <strong>New York Giants</strong> <span class="team-tag">DEF &middot; NYG</span> <span class="dim">(hold value: 0.0)</span> <span class="badge-success">landed</span></td></tr><tr><th>Roster Compliance</th><td><span class="badge-success">Legal</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Activated Nico Collins; released New York Giants (hold 0.0, the cheapest body we could cut).</p>
+        <p class="rationale-why"><strong>Why:</strong> Nico Collins (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">waiver</span>
       <span class="status">final</span>
       <time>2026-09-23T07:25:17+00:00</time></header>
     <h2>#34 — Waivers settled</h2>
-    <p class="decision"><strong>Decision:</strong> Claimed New York Giants for $2, dropping New England Patriots. Unsuccessful: Jameis Winston ($11, failed), Green Bay Packers ($2, failed), Carolina Panthers ($2, failed), New Orleans Saints ($2, failed), Cincinnati Bengals ($0, failed).</p>
-    <p class="rationale"><strong>Why:</strong> Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.</p>
-    <details><summary>data</summary><div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>3</strong></div><div><span class="meta-label">Total Claims:</span> <strong>6</strong></div></div><table class="claims-table">
+    <div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>3</strong></div><div><span class="meta-label">Total Claims:</span> <strong>6</strong></div><div><span class="meta-label">Settled:</span> <strong class="pos-gain">1 won</strong>, 5 outbid/failed</div></div><table class="claims-table">
   <thead><tr><th>#</th><th>Target Add</th><th>Drop</th><th>Bid</th><th>Gain</th><th>Status</th><th>Source</th></tr></thead>
   <tbody><tr><td>#1</td><td><strong>Jameis Winston</strong></td><td>J.K. Dobbins</td><td>$11</td><td><span class="pos-gain">+11.6</span></td><td><span class="badge-failed">failed</span></td><td><code>newswatch</code></td></tr><tr class="changed"><td>#2</td><td><strong>New York Giants</strong></td><td>New England Patriots</td><td>$2</td><td><span class="pos-gain">+4.1</span></td><td><span class="badge-success">completed</span></td><td><code>newswatch</code></td></tr><tr><td>#3</td><td><strong>Green Bay Packers</strong></td><td>New England Patriots</td><td>$2</td><td><span class="pos-gain">+4.0</span></td><td><span class="badge-failed">failed</span></td><td><code>newswatch</code></td></tr><tr><td>#4</td><td><strong>Carolina Panthers</strong></td><td>New England Patriots</td><td>$2</td><td><span class="pos-gain">+3.1</span></td><td><span class="badge-failed">failed</span></td><td><code>newswatch</code></td></tr><tr><td>#5</td><td><strong>New Orleans Saints</strong></td><td>New England Patriots</td><td>$2</td><td><span class="pos-gain">+2.9</span></td><td><span class="badge-failed">failed</span></td><td><code>newswatch</code></td></tr><tr><td>#6</td><td><strong>Cincinnati Bengals</strong></td><td>New England Patriots</td><td>$0</td><td><span class="pos-gain">+3.4</span></td><td><span class="badge-failed">failed</span></td><td><code>newswatch</code></td></tr></tbody>
-</table></div></details>
+</table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Claimed New York Giants for $2, dropping New England Patriots. Unsuccessful: Jameis Winston ($11, failed), Green Bay Packers ($2, failed), Carolina Panthers ($2, failed), New Orleans Saints ($2, failed), Cincinnati Bengals ($0, failed).</p>
+        <p class="rationale-why"><strong>Why:</strong> Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-19T23:24:02+00:00</time></header>
     <h2>#33 — Signed Samaje Perine, released Carson Beck</h2>
-    <p class="decision"><strong>Decision:</strong> Samaje Perine (RB) in, Carson Beck out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 1.3 against 0.7 held, a gain of +1.3 in ros mode. bench, judged on the ceiling; +/- 0.5, ceiling 9.6; season totals 75.1 vs 14.0 (+61.2); the lineup-marginal figure decides.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Samaje Perine</strong> <span class="team-tag">RB &middot; CIN</span></td></tr><tr><th>Dropped</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+1.3 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>ros</code></td></tr><tr><th>Week</th><td>2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Samaje Perine</strong> <span class="team-tag">RB &middot; CIN</span> <span class="dim">&middot; ROS: <strong>1.3 pts</strong></span></td></tr><tr><th>Dropped</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span> <span class="dim">&middot; Held ROS: <strong>0.7 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+1.3 pts</span> <span class="dim">(Lineup-marginal figure decides)</span></td></tr><tr><th>Target Role</th><td><strong>Bench depth (ceiling valuation)</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>9.6 pts</strong> (&plusmn;0.5)</td></tr><tr><th>Season Totals</th><td>75.1 vs 14.0 (+61.2)</td></tr><tr><th>Execution Context</th><td><code>ros</code> mode &middot; Week 2</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Samaje Perine (RB) in, Carson Beck out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 1.3 against 0.7 held, a gain of +1.3 in ros mode. bench, judged on the ceiling; +/- 0.5, ceiling 9.6; season totals 75.1 vs 14.0 (+61.2); the lineup-marginal figure decides.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-19T22:44:04+00:00</time></header>
     <h2>#32 — Signed Fernando Mendoza, released (open roster spot)</h2>
-    <p class="decision"><strong>Decision:</strong> Fernando Mendoza (QB) in, (open roster spot) out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 20.8 against 0.0 held, a gain of +20.8 in ros mode. starting slot; +/- 0.7, ceiling 35.0; season totals 145.7 vs 0.0 (+145.7); the lineup-marginal figure decides.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Fernando Mendoza</strong> <span class="team-tag">QB &middot; LV</span></td></tr><tr><th>Dropped</th><td><span class="dim">(open roster spot)</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+20.8 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>ros</code></td></tr><tr><th>Week</th><td>2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Fernando Mendoza</strong> <span class="team-tag">QB &middot; LV</span> <span class="dim">&middot; ROS: <strong>20.8 pts</strong></span></td></tr><tr><th>Dropped</th><td><span class="dim">(open roster spot)</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+20.8 pts</span> <span class="dim">(Lineup-marginal figure decides)</span></td></tr><tr><th>Target Role</th><td><strong>Starting slot</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>35.0 pts</strong> (&plusmn;0.7)</td></tr><tr><th>Season Totals</th><td>145.7 vs 0.0 (+145.7)</td></tr><tr><th>Execution Context</th><td><code>ros</code> mode &middot; Week 2</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Fernando Mendoza (QB) in, (open roster spot) out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 20.8 against 0.0 held, a gain of +20.8 in ros mode. starting slot; +/- 0.7, ceiling 35.0; season totals 145.7 vs 0.0 (+145.7); the lineup-marginal figure decides.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-18T22:43:29+00:00</time></header>
     <h2>#31 — Injured reserve updated</h2>
-    <p class="decision"><strong>Decision:</strong> Moved Nico Collins to injured reserve.</p>
-    <p class="rationale"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Current Reserve (IR)</th><td><strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Designated Out (IR-eligible)</strong></td></tr><tr><th>Roster Impact</th><td>Frees 1 active roster spot</td></tr><tr><th>Current Reserve (IR)</th><td><strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Moved Nico Collins to injured reserve.</p>
+        <p class="rationale-why"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">lineup</span>
       <span class="status">final</span>
       <time>2026-09-18T22:43:25+00:00</time></header>
     <h2>#30 — Week 2 lineup set</h2>
-    <p class="decision"><strong>Decision:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Terry McLaurin; WR: Emeka Egbuka; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots</p>
-    <p class="rationale"><strong>Why:</strong> Projected 128.6 points under league scoring from Roboner&#x27;s NFL model means for 16 of 17 players, -1.5 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Nico Collins (Out).</p>
-    <details><summary>data</summary><div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>2</strong></div><div><span class="meta-label">Projected:</span> <strong>128.6 pts</strong></div><div><span class="meta-label">Modelled:</span> <strong>16 players</strong></div></div><div class="meta-source"><span class="meta-label">Source:</span> Roboner NFL model, 472 players, 0.0h old, anchored on proj_2026_wk02_20260918T000504Z.json (pre-game, 475 players with a game)</div><table class="lineup-table">
+    <div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>2</strong></div><div><span class="meta-label">Projected:</span> <strong>128.6 pts</strong> <span class="dim">(-1.5 vs prev: 130.1)</span></div><div><span class="meta-label">Modelled:</span> <strong>16 players</strong></div></div><div class="meta-source"><span class="meta-label">Lineup Repair:</span> Benched unstartable (Nico Collins (Out)) &middot; <span class="meta-label">Source:</span> Roboner NFL model, 472 players, 0.0h old, anchored on proj_2026_wk02_20260918T000504Z.json (pre-game, 475 players with a game)</div><table class="lineup-table">
   <thead><tr><th>Slot</th><th>Starter</th><th>Previous</th><th>Change</th></tr></thead>
   <tbody><tr><td><strong>QB</strong></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td><span class="dim">&mdash;</span></td></tr><tr class="changed"><td><strong>WR</strong></td><td><strong>Terry McLaurin</strong> <span class="team-tag">WR &middot; WAS</span></td><td>Nico Collins <span class="team-tag">WR &middot; HOU</span></td><td><span class="badge-swap">&harr; Shifted slot</span></td></tr><tr class="changed"><td><strong>WR</strong></td><td><strong>Emeka Egbuka</strong> <span class="team-tag">WR &middot; TB</span></td><td>Terry McLaurin <span class="team-tag">WR &middot; WAS</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr><td><strong>TE</strong></td><td>Isaiah Likely <span class="team-tag">TE &middot; NYG</span></td><td>Isaiah Likely <span class="team-tag">TE &middot; NYG</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>FLEX</strong></td><td>MarShawn Lloyd <span class="team-tag">RB &middot; GB</span></td><td>MarShawn Lloyd <span class="team-tag">RB &middot; GB</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>SUPER_FLEX</strong></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>K</strong></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>DEF</strong></td><td>New England Patriots <span class="team-tag">DEF &middot; NE</span></td><td>New England Patriots <span class="team-tag">DEF &middot; NE</span></td><td><span class="dim">&mdash;</span></td></tr></tbody>
-</table></div></details>
+</table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Terry McLaurin; WR: Emeka Egbuka; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots</p>
+        <p class="rationale-why"><strong>Why:</strong> Projected 128.6 points under league scoring from Roboner&#x27;s NFL model means for 16 of 17 players, -1.5 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Nico Collins (Out).</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-16T14:03:29+00:00</time></header>
     <h2>#29 — Injured reserve updated</h2>
-    <p class="decision"><strong>Decision:</strong> Moved Carson Beck back to the active roster.</p>
-    <p class="rationale"><strong>Why:</strong> no longer carries an IR-eligible designation (healthy), so he cannot stay on reserve.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Current Reserve (IR)</th><td><span class="dim">(none)</span></td></tr><tr><th>Previous Reserve</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Healthy (lost IR eligibility)</strong></td></tr><tr><th>Roster Impact</th><td>Restored to active roster</td></tr><tr><th>Current Reserve (IR)</th><td><span class="dim">(none)</span></td></tr><tr><th>Previous Reserve</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Moved Carson Beck back to the active roster.</p>
+        <p class="rationale-why"><strong>Why:</strong> no longer carries an IR-eligible designation (healthy), so he cannot stay on reserve.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-16T14:03:25+00:00</time></header>
     <h2>#28 — Injured reserve updated</h2>
-    <p class="decision"><strong>Decision:</strong> Moved Carson Beck back to the active roster.</p>
-    <p class="rationale"><strong>Why:</strong> no longer carries an IR-eligible designation (healthy), so he cannot stay on reserve.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Current Reserve (IR)</th><td><span class="dim">(none)</span></td></tr><tr><th>Previous Reserve</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Healthy (lost IR eligibility)</strong></td></tr><tr><th>Roster Impact</th><td>Restored to active roster</td></tr><tr><th>Current Reserve (IR)</th><td><span class="dim">(none)</span></td></tr><tr><th>Previous Reserve</th><td>Carson Beck <span class="team-tag">QB &middot; ARI</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Moved Carson Beck back to the active roster.</p>
+        <p class="rationale-why"><strong>Why:</strong> no longer carries an IR-eligible designation (healthy), so he cannot stay on reserve.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-13T20:16:16+00:00</time></header>
     <h2>#27 — Injured reserve updated</h2>
-    <p class="decision"><strong>Decision:</strong> Moved Carson Beck to injured reserve.</p>
-    <p class="rationale"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Current Reserve (IR)</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Designated Out (IR-eligible)</strong></td></tr><tr><th>Roster Impact</th><td>Frees 1 active roster spot</td></tr><tr><th>Current Reserve (IR)</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Moved Carson Beck to injured reserve.</p>
+        <p class="rationale-why"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">ir</span>
       <span class="status">final</span>
       <time>2026-09-13T20:15:52+00:00</time></header>
     <h2>#26 — Injured reserve updated</h2>
-    <p class="decision"><strong>Decision:</strong> Moved Carson Beck to injured reserve.</p>
-    <p class="rationale"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Current Reserve (IR)</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Triggering Condition</th><td><strong>Designated Out (IR-eligible)</strong></td></tr><tr><th>Roster Impact</th><td>Frees 1 active roster spot</td></tr><tr><th>Current Reserve (IR)</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span></td></tr><tr><th>Previous Reserve</th><td><span class="dim">(none)</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Moved Carson Beck to injured reserve.</p>
+        <p class="rationale-why"><strong>Why:</strong> designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-12T03:04:11+00:00</time></header>
     <h2>#25 — Signed Marlin Klein, released J.K. Dobbins</h2>
-    <p class="decision"><strong>Decision:</strong> Marlin Klein (TE) in, J.K. Dobbins out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 3.6 against 0.3 held, a gain of +3.6 in news mode. bench, judged on the ceiling; +/- 1.1, ceiling 19.4.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Marlin Klein</strong> <span class="team-tag">TE &middot; HOU</span></td></tr><tr><th>Dropped</th><td>J.K. Dobbins <span class="team-tag">RB &middot; DEN</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+3.6 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>news</code></td></tr><tr><th>Week</th><td>1</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Marlin Klein</strong> <span class="team-tag">TE &middot; HOU</span> <span class="dim">&middot; ROS: <strong>3.6 pts</strong></span></td></tr><tr><th>Dropped</th><td>J.K. Dobbins <span class="team-tag">RB &middot; DEN</span> <span class="dim">&middot; Held ROS: <strong>0.3 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+3.6 pts</span></td></tr><tr><th>Target Role</th><td><strong>Bench depth (ceiling valuation)</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>19.4 pts</strong> (&plusmn;1.1)</td></tr><tr><th>Execution Context</th><td><code>news</code> mode &middot; Week 1</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Marlin Klein (TE) in, J.K. Dobbins out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 3.6 against 0.3 held, a gain of +3.6 in news mode. bench, judged on the ceiling; +/- 1.1, ceiling 19.4.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-12T03:04:07+00:00</time></header>
     <h2>#24 — Signed Cade Stover, released Denzel Boston</h2>
-    <p class="decision"><strong>Decision:</strong> Cade Stover (TE) in, Denzel Boston out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 6.8 against 0.3 held, a gain of +6.8 in news mode. bench, judged on the ceiling; +/- 1.3, ceiling 21.5.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Cade Stover</strong> <span class="team-tag">TE &middot; HOU</span></td></tr><tr><th>Dropped</th><td>Denzel Boston <span class="team-tag">WR &middot; CLE</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+6.8 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>news</code></td></tr><tr><th>Week</th><td>1</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Cade Stover</strong> <span class="team-tag">TE &middot; HOU</span> <span class="dim">&middot; ROS: <strong>6.8 pts</strong></span></td></tr><tr><th>Dropped</th><td>Denzel Boston <span class="team-tag">WR &middot; CLE</span> <span class="dim">&middot; Held ROS: <strong>0.3 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+6.8 pts</span></td></tr><tr><th>Target Role</th><td><strong>Bench depth (ceiling valuation)</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>21.5 pts</strong> (&plusmn;1.3)</td></tr><tr><th>Execution Context</th><td><code>news</code> mode &middot; Week 1</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Cade Stover (TE) in, Denzel Boston out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 6.8 against 0.3 held, a gain of +6.8 in news mode. bench, judged on the ceiling; +/- 1.3, ceiling 21.5.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">free-agent</span>
       <span class="status">final</span>
       <time>2026-09-12T02:32:46+00:00</time></header>
     <h2>#23 — Signed Ray Davis, released Brenton Strange</h2>
-    <p class="decision"><strong>Decision:</strong> Ray Davis (RB) in, Brenton Strange out.</p>
-    <p class="rationale"><strong>Why:</strong> Rest-of-season value 3.0 against 0.0 held, a gain of +3.0 in news mode. bench, judged on the ceiling; +/- 1.0, ceiling 8.0.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Ray Davis</strong> <span class="team-tag">RB &middot; BUF</span></td></tr><tr><th>Dropped</th><td>Brenton Strange <span class="team-tag">TE &middot; JAX</span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+3.0 pts</span></td></tr><tr><th>Evaluation Mode</th><td><code>news</code></td></tr><tr><th>Week</th><td>1</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Added</th><td><strong>Ray Davis</strong> <span class="team-tag">RB &middot; BUF</span> <span class="dim">&middot; ROS: <strong>3.0 pts</strong></span></td></tr><tr><th>Dropped</th><td>Brenton Strange <span class="team-tag">TE &middot; JAX</span> <span class="dim">&middot; Held ROS: <strong>0.0 pts</strong></span></td></tr><tr><th>Projected Gain</th><td><span class="pos-gain">+3.0 pts</span></td></tr><tr><th>Target Role</th><td><strong>Bench depth (ceiling valuation)</strong></td></tr><tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>8.0 pts</strong> (&plusmn;1.0)</td></tr><tr><th>Execution Context</th><td><code>news</code> mode &middot; Week 1</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Ray Davis (RB) in, Brenton Strange out.</p>
+        <p class="rationale-why"><strong>Why:</strong> Rest-of-season value 3.0 against 0.0 held, a gain of +3.0 in news mode. bench, judged on the ceiling; +/- 1.0, ceiling 8.0.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">lineup</span>
       <span class="status">final</span>
       <time>2026-08-31T03:49:00+00:00</time></header>
     <h2>#22 — Week 1 lineup set</h2>
-    <p class="decision"><strong>Decision:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots</p>
-    <p class="rationale"><strong>Why:</strong> Projected 131.6 points under league scoring, +1.0 versus the lineup as it stood. Bye-week and injured-out players are benched.</p>
-    <details><summary>data</summary><div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>1</strong></div><div><span class="meta-label">Projected:</span> <strong>131.6 pts</strong></div></div><table class="lineup-table">
+    <div class="data-box"><div class="data-meta-grid"><div><span class="meta-label">Week:</span> <strong>1</strong></div><div><span class="meta-label">Projected:</span> <strong>131.6 pts</strong> <span class="pos-gain">(+1.0 vs prev: 130.6)</span></div></div><table class="lineup-table">
   <thead><tr><th>Slot</th><th>Starter</th><th>Previous</th><th>Change</th></tr></thead>
   <tbody><tr><td><strong>QB</strong></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td>Brock Purdy <span class="team-tag">QB &middot; SF</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td>Jonathan Taylor <span class="team-tag">RB &middot; IND</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>RB</strong></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td>Omarion Hampton <span class="team-tag">RB &middot; LAC</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>WR</strong></td><td>Nico Collins <span class="team-tag">WR &middot; HOU</span></td><td>Nico Collins <span class="team-tag">WR &middot; HOU</span></td><td><span class="dim">&mdash;</span></td></tr><tr class="changed"><td><strong>WR</strong></td><td><strong>Terry McLaurin</strong> <span class="team-tag">WR &middot; WAS</span></td><td>Emeka Egbuka <span class="team-tag">WR &middot; TB</span></td><td><span class="badge-swap">&harr; Shifted slot</span></td></tr><tr class="changed"><td><strong>TE</strong></td><td><strong>Isaiah Likely</strong> <span class="team-tag">TE &middot; NYG</span></td><td>Brenton Strange <span class="team-tag">TE &middot; JAX</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr class="changed"><td><strong>FLEX</strong></td><td><strong>MarShawn Lloyd</strong> <span class="team-tag">RB &middot; GB</span></td><td>Terry McLaurin <span class="team-tag">WR &middot; WAS</span></td><td><span class="badge-swap">&harr; Swapped in</span></td></tr><tr><td><strong>SUPER_FLEX</strong></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td>Jordan Love <span class="team-tag">QB &middot; GB</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>K</strong></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td>Will Reichard <span class="team-tag">K &middot; MIN</span></td><td><span class="dim">&mdash;</span></td></tr><tr><td><strong>DEF</strong></td><td>New England Patriots <span class="team-tag">DEF &middot; NE</span></td><td>New England Patriots <span class="team-tag">DEF &middot; NE</span></td><td><span class="dim">&mdash;</span></td></tr></tbody>
-</table></div></details>
+</table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Terry McLaurin; TE: Isaiah Likely; FLEX: MarShawn Lloyd; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: New England Patriots</p>
+        <p class="rationale-why"><strong>Why:</strong> Projected 131.6 points under league scoring, +1.0 versus the lineup as it stood. Bye-week and injured-out players are benched.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:41:40+00:00</time></header>
     <h2>#21 — Round 17, pick 198</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Will Reichard, K, MIN.</p>
-    <p class="rationale"><strong>Why:</strong> Roster requirement: we still need K and have only 1 pick left, so this slot has to be filled now rather than taken on merit.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Will Reichard</strong> <span class="team-tag">K &middot; MIN</span> &middot; Bye: 6</td></tr><tr><th>Board Value</th><td>Value Rank #108 overall &middot; VORP: <strong class="pos-gain">+4.0 pts</strong> &middot; Pos Rank: K5</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier &mdash; &middot; Blend Rank: 133 &middot; ECR: #&mdash;</td></tr><tr><th>Projections</th><td><strong>109.0 pts</strong> (Blend: 109.0 &middot; Expert: 109.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 155.1 &middot; Live: 155.4 (&plusmn;13.4) &middot; Sleeper 2QB: 238.2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Will Reichard</strong> <span class="team-tag">K &middot; MIN</span> &middot; Bye: 6</td></tr><tr><th>Strategic Role</th><td><strong>Roster requirement: Need K (1 picks left)</strong></td></tr><tr><th>Board Value</th><td>Value Rank #108 overall &middot; VORP: <strong class="pos-gain">+4.0 pts</strong> &middot; Pos Rank: K5</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier &mdash; &middot; Blend Rank: 133 &middot; ECR: #&mdash;</td></tr><tr><th>Projections</th><td><strong>109.0 pts</strong> (Blend: 109.0 &middot; Expert: 109.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 155.1 &middot; Live: 155.4 (&plusmn;13.4) &middot; Sleeper 2QB: 238.2</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Will Reichard, K, MIN.</p>
+        <p class="rationale-why"><strong>Why:</strong> Roster requirement: we still need K and have only 1 pick left, so this slot has to be filled now rather than taken on merit.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:39:17+00:00</time></header>
     <h2>#20 — Round 16, pick 187</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted New England Patriots, DEF, NE.</p>
-    <p class="rationale"><strong>Why:</strong> Roster requirement: we still need DEF, K and have only 2 picks left, so this slot has to be filled now rather than taken on merit.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>New England Patriots</strong> <span class="team-tag">DEF &middot; NE</span> &middot; Bye: 11</td></tr><tr><th>Board Value</th><td>Value Rank #90 overall &middot; VORP: <strong class="pos-gain">+12.0 pts</strong> &middot; Pos Rank: DEF6</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier &mdash; &middot; Blend Rank: 115 &middot; ECR: #&mdash;</td></tr><tr><th>Projections</th><td><strong>152.0 pts</strong> (Blend: 152.0 &middot; Expert: 152.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 138.4 &middot; Live: 138.5 (&plusmn;9.0) &middot; Sleeper 2QB: 170.7</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>New England Patriots</strong> <span class="team-tag">DEF &middot; NE</span> &middot; Bye: 11</td></tr><tr><th>Strategic Role</th><td><strong>Roster requirement: Need DEF, K (2 picks left)</strong></td></tr><tr><th>Board Value</th><td>Value Rank #90 overall &middot; VORP: <strong class="pos-gain">+12.0 pts</strong> &middot; Pos Rank: DEF6</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier &mdash; &middot; Blend Rank: 115 &middot; ECR: #&mdash;</td></tr><tr><th>Projections</th><td><strong>152.0 pts</strong> (Blend: 152.0 &middot; Expert: 152.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 138.4 &middot; Live: 138.5 (&plusmn;9.0) &middot; Sleeper 2QB: 170.7</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted New England Patriots, DEF, NE.</p>
+        <p class="rationale-why"><strong>Why:</strong> Roster requirement: we still need DEF, K and have only 2 picks left, so this slot has to be filled now rather than taken on merit.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:33:48+00:00</time></header>
     <h2>#19 — Round 15, pick 174</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Denzel Boston, WR, CLE.</p>
-    <p class="rationale"><strong>Why:</strong> Roster requirement: we still need DEF, K, WR and have only 3 picks left, so this slot has to be filled now rather than taken on merit.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Denzel Boston</strong> <span class="team-tag">WR &middot; CLE</span> &middot; Bye: 11</td></tr><tr><th>Board Value</th><td>Value Rank #223 overall &middot; VORP: <strong class="pos-gain">-48.1 pts</strong> &middot; Pos Rank: WR57</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 8 &middot; Blend Rank: 194.0 &middot; ECR: #165</td></tr><tr><th>Projections</th><td><strong>108.2 pts</strong> (Blend: 107.0 &middot; Expert: 105.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 158.0 &middot; Live: 158.0 (&plusmn;13.6) &middot; Sleeper 2QB: 157.6</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Denzel Boston</strong> <span class="team-tag">WR &middot; CLE</span> &middot; Bye: 11</td></tr><tr><th>Strategic Role</th><td><strong>Roster requirement: Need DEF, K, WR (3 picks left)</strong></td></tr><tr><th>Board Value</th><td>Value Rank #223 overall &middot; VORP: <strong class="pos-gain">-48.1 pts</strong> &middot; Pos Rank: WR57</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 8 &middot; Blend Rank: 194.0 &middot; ECR: #165</td></tr><tr><th>Projections</th><td><strong>108.2 pts</strong> (Blend: 107.0 &middot; Expert: 105.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 158.0 &middot; Live: 158.0 (&plusmn;13.6) &middot; Sleeper 2QB: 157.6</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Denzel Boston, WR, CLE.</p>
+        <p class="rationale-why"><strong>Why:</strong> Roster requirement: we still need DEF, K, WR and have only 3 picks left, so this slot has to be filled now rather than taken on merit.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:28:50+00:00</time></header>
     <h2>#18 — Round 14, pick 163</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Brenton Strange, TE, JAX.</p>
-    <p class="rationale"><strong>Why:</strong> Roster requirement: we still need DEF, K, TE, WR and have only 4 picks left, so this slot has to be filled now rather than taken on merit.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Brenton Strange</strong> <span class="team-tag">TE &middot; JAX</span> &middot; Bye: 7</td></tr><tr><th>Board Value</th><td>Value Rank #121 overall &middot; VORP: <strong class="pos-gain">+0.0 pts</strong> &middot; Pos Rank: TE13</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 8 &middot; Blend Rank: 140.5 &middot; ECR: #160</td></tr><tr><th>Projections</th><td><strong>129.5 pts</strong> (Blend: 122.1 &middot; Expert: 114.7)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 138.1 &middot; Live: &mdash; (&plusmn;&mdash;) &middot; Sleeper 2QB: 142.2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Brenton Strange</strong> <span class="team-tag">TE &middot; JAX</span> &middot; Bye: 7</td></tr><tr><th>Strategic Role</th><td><strong>Roster requirement: Need DEF, K, TE, WR (4 picks left)</strong></td></tr><tr><th>Board Value</th><td>Value Rank #121 overall &middot; VORP: <strong class="pos-gain">+0.0 pts</strong> &middot; Pos Rank: TE13</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 8 &middot; Blend Rank: 140.5 &middot; ECR: #160</td></tr><tr><th>Projections</th><td><strong>129.5 pts</strong> (Blend: 122.1 &middot; Expert: 114.7)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 138.1 &middot; Sleeper 2QB: 142.2</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Brenton Strange, TE, JAX.</p>
+        <p class="rationale-why"><strong>Why:</strong> Roster requirement: we still need DEF, K, TE, WR and have only 4 picks left, so this slot has to be filled now rather than taken on merit.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:19:46+00:00</time></header>
     <h2>#17 — Round 13, pick 150</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Carson Beck, QB, ARI.</p>
-    <p class="rationale"><strong>Why:</strong> Bench: a lottery ticket behind Jacoby Brissett -- a 15% chance that job opens, though the role itself is not worth much; recent reporting on him is a concern; also fills our third-quarterback bench slot; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 143.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span> &middot; Bye: 14</td></tr><tr><th>Board Value</th><td>Value Rank #589 overall &middot; VORP: <strong class="pos-gain">-191.3 pts</strong> &middot; Pos Rank: QB35</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 11 &middot; Blend Rank: 454.0 &middot; ECR: #319</td></tr><tr><th>Projections</th><td><strong>59.7 pts</strong> (Blend: 54.0 &middot; Expert: 48.3)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 142.5 &middot; Live: 142.7 (&plusmn;7.2) &middot; Sleeper 2QB: 225.3</td></tr><tr><th>Injury Status</th><td><span class="badge-cut">Questionable</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Carson Beck</strong> <span class="team-tag">QB &middot; ARI</span> &middot; Bye: 14</td></tr><tr><th>Strategic Role</th><td><strong>Lottery Ticket behind Jacoby Brissett</strong></td></tr><tr><th>Opportunity &amp; Risk</th><td><strong>15% chance job opens</strong> &middot; Covers 2 bye-week gaps &middot; <span class="dim">~100% gone by next pick</span> &middot; <span class="badge-cut">Reporting: Concern</span></td></tr><tr><th>Board Value</th><td>Value Rank #589 overall &middot; VORP: <strong class="pos-gain">-191.3 pts</strong> &middot; Pos Rank: QB35</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 11 &middot; Blend Rank: 454.0 &middot; ECR: #319</td></tr><tr><th>Projections</th><td><strong>59.7 pts</strong> (Blend: 54.0 &middot; Expert: 48.3)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 142.5 &middot; Live: 142.7 (&plusmn;7.2) &middot; Sleeper 2QB: 225.3 &middot; <strong>Expected pick ~#143</strong></td></tr><tr><th>Injury Status</th><td><span class="badge-cut">Questionable</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Carson Beck, QB, ARI.</p>
+        <p class="rationale-why"><strong>Why:</strong> Bench: a lottery ticket behind Jacoby Brissett -- a 15% chance that job opens, though the role itself is not worth much; recent reporting on him is a concern; also fills our third-quarterback bench slot; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 143.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:16:53+00:00</time></header>
     <h2>#16 — Round 12, pick 139</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Isaiah Likely, TE, NYG.</p>
-    <p class="rationale"><strong>Why:</strong> Fills a starting TE slot, projected 126 points. The market usually takes him around pick 140.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Isaiah Likely</strong> <span class="team-tag">TE &middot; NYG</span> &middot; Bye: 8</td></tr><tr><th>Board Value</th><td>Value Rank #132 overall &middot; VORP: <strong class="pos-gain">-3.2 pts</strong> &middot; Pos Rank: TE14</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 7 &middot; Blend Rank: 131.0 &middot; ECR: #130</td></tr><tr><th>Projections</th><td><strong>126.3 pts</strong> (Blend: 127.9 &middot; Expert: 129.5)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 140.9 &middot; Live: 139.7 (&plusmn;16.8) &middot; Sleeper 2QB: 113.6</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Isaiah Likely</strong> <span class="team-tag">TE &middot; NYG</span> &middot; Bye: 8</td></tr><tr><th>Strategic Role</th><td><strong>Starting Te Slot</strong></td></tr><tr><th>Board Value</th><td>Value Rank #132 overall &middot; VORP: <strong class="pos-gain">-3.2 pts</strong> &middot; Pos Rank: TE14</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 7 &middot; Blend Rank: 131.0 &middot; ECR: #130</td></tr><tr><th>Projections</th><td><strong>126.3 pts</strong> (Blend: 127.9 &middot; Expert: 129.5)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 140.9 &middot; Live: 139.7 (&plusmn;16.8) &middot; Sleeper 2QB: 113.6 &middot; <strong>Expected pick ~#140</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Isaiah Likely, TE, NYG.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills a starting TE slot, projected 126 points. The market usually takes him around pick 140.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:11:27+00:00</time></header>
     <h2>#15 — Round 11, pick 126</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted MarShawn Lloyd, RB, GB.</p>
-    <p class="rationale"><strong>Why:</strong> Bench: a lottery ticket behind Josh Jacobs -- a 55% chance that job opens, and the market has been adding him hard, worth about 89 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket bench slot; roughly a 39% chance he is gone by our next pick. The market usually takes him around pick 146.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>MarShawn Lloyd</strong> <span class="team-tag">RB &middot; GB</span> &middot; Bye: 11</td></tr><tr><th>Board Value</th><td>Value Rank #334 overall &middot; VORP: <strong class="pos-gain">-100.8 pts</strong> &middot; Pos Rank: RB69</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 218.0 &middot; ECR: #102</td></tr><tr><th>Projections</th><td><strong>48.3 pts</strong> (Blend: 96.7 &middot; Expert: 145.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 167.9 &middot; Live: 146.4 (&plusmn;25.9) &middot; Sleeper 2QB: 177.5</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>MarShawn Lloyd</strong> <span class="team-tag">RB &middot; GB</span> &middot; Bye: 11</td></tr><tr><th>Strategic Role</th><td><strong>Lottery Ticket behind Josh Jacobs</strong></td></tr><tr><th>Opportunity &amp; Risk</th><td><strong>55% chance job opens</strong> &middot; ~89 pts upside if opened &middot; <span class="dim">39% chance gone by next pick</span> &middot; <span class="badge-add">Reporting: Encouraging</span></td></tr><tr><th>Board Value</th><td>Value Rank #334 overall &middot; VORP: <strong class="pos-gain">-100.8 pts</strong> &middot; Pos Rank: RB69</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 218.0 &middot; ECR: #102</td></tr><tr><th>Projections</th><td><strong>48.3 pts</strong> (Blend: 96.7 &middot; Expert: 145.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 167.9 &middot; Live: 146.4 (&plusmn;25.9) &middot; Sleeper 2QB: 177.5 &middot; <strong>Expected pick ~#146</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted MarShawn Lloyd, RB, GB.</p>
+        <p class="rationale-why"><strong>Why:</strong> Bench: a lottery ticket behind Josh Jacobs -- a 55% chance that job opens, and the market has been adding him hard, worth about 89 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket bench slot; roughly a 39% chance he is gone by our next pick. The market usually takes him around pick 146.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T23:07:30+00:00</time></header>
     <h2>#14 — Round 10, pick 115</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Kaelon Black, RB, SF.</p>
-    <p class="rationale"><strong>Why:</strong> Bench: a lottery ticket behind Christian McCaffrey -- a 58% chance that job opens, and the market has been adding him hard, worth about 143 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket and rookie RB bench slots; roughly a 28% chance he is gone by our next pick. The market usually takes him around pick 139.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Kaelon Black</strong> <span class="team-tag">RB &middot; SF</span> &middot; Bye: &mdash;</td></tr><tr><th>Board Value</th><td>Value Rank #381 overall &middot; VORP: <strong class="pos-gain">-109.8 pts</strong> &middot; Pos Rank: RB75</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 9 &middot; Blend Rank: 295.0 &middot; ECR: #209</td></tr><tr><th>Projections</th><td><strong>39.3 pts</strong> (Blend: 44.0 &middot; Expert: 48.6)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: &mdash; &middot; Live: 139.3 (&plusmn;22.8) &middot; Sleeper 2QB: 203.2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Kaelon Black</strong> <span class="team-tag">RB &middot; SF</span> &middot; Bye: &mdash;</td></tr><tr><th>Strategic Role</th><td><strong>Lottery Ticket behind Christian McCaffrey</strong></td></tr><tr><th>Opportunity &amp; Risk</th><td><strong>58% chance job opens</strong> &middot; ~143 pts upside if opened &middot; <span class="dim">28% chance gone by next pick</span> &middot; <span class="badge-add">Reporting: Encouraging</span></td></tr><tr><th>Board Value</th><td>Value Rank #381 overall &middot; VORP: <strong class="pos-gain">-109.8 pts</strong> &middot; Pos Rank: RB75</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 9 &middot; Blend Rank: 295.0 &middot; ECR: #209</td></tr><tr><th>Projections</th><td><strong>39.3 pts</strong> (Blend: 44.0 &middot; Expert: 48.6)</td></tr><tr><th>Market ADP</th><td>Live: 139.3 (&plusmn;22.8) &middot; Sleeper 2QB: 203.2 &middot; <strong>Expected pick ~#139</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Kaelon Black, RB, SF.</p>
+        <p class="rationale-why"><strong>Why:</strong> Bench: a lottery ticket behind Christian McCaffrey -- a 58% chance that job opens, and the market has been adding him hard, worth about 143 points if it does; recent reporting on him is encouraging; also fills our lottery-ticket and rookie RB bench slots; roughly a 28% chance he is gone by our next pick. The market usually takes him around pick 139.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:58:40+00:00</time></header>
     <h2>#13 — Round 9, pick 102</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted J.K. Dobbins, RB, DEN.</p>
-    <p class="rationale"><strong>Why:</strong> Bench: RB depth -- he starts elsewhere, and is worth about 97 points more than the wire in the weeks one of ours is out; and he would almost certainly be gone by our next pick. The market usually takes him around pick 95.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>J.K. Dobbins</strong> <span class="team-tag">RB &middot; DEN</span> &middot; Bye: 10</td></tr><tr><th>Board Value</th><td>Value Rank #119 overall &middot; VORP: <strong class="pos-gain">+0.0 pts</strong> &middot; Pos Rank: RB30</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 112.0 &middot; ECR: #105</td></tr><tr><th>Projections</th><td><strong>149.1 pts</strong> (Blend: 146.9 &middot; Expert: 144.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 96.0 &middot; Live: 94.8 (&plusmn;10.1) &middot; Sleeper 2QB: 108.2</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>J.K. Dobbins</strong> <span class="team-tag">RB &middot; DEN</span> &middot; Bye: 10</td></tr><tr><th>Strategic Role</th><td><strong>Bench: RB depth (starts elsewhere)</strong></td></tr><tr><th>Opportunity &amp; Risk</th><td><strong class="pos-gain">+97 pts over wire when needed</strong> &middot; <span class="dim">~100% gone by next pick</span></td></tr><tr><th>Board Value</th><td>Value Rank #119 overall &middot; VORP: <strong class="pos-gain">+0.0 pts</strong> &middot; Pos Rank: RB30</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 112.0 &middot; ECR: #105</td></tr><tr><th>Projections</th><td><strong>149.1 pts</strong> (Blend: 146.9 &middot; Expert: 144.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 96.0 &middot; Live: 94.8 (&plusmn;10.1) &middot; Sleeper 2QB: 108.2 &middot; <strong>Expected pick ~#95</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted J.K. Dobbins, RB, DEN.</p>
+        <p class="rationale-why"><strong>Why:</strong> Bench: RB depth -- he starts elsewhere, and is worth about 97 points more than the wire in the weeks one of ours is out; and he would almost certainly be gone by our next pick. The market usually takes him around pick 95.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:54:16+00:00</time></header>
     <h2>#12 — Round 8, pick 91</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Tony Pollard, RB, TEN.</p>
-    <p class="rationale"><strong>Why:</strong> Bench: RB depth -- he starts elsewhere, and is worth about 98 points more than the wire in the weeks one of ours is out; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 83.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Tony Pollard</strong> <span class="team-tag">RB &middot; TEN</span> &middot; Bye: 9</td></tr><tr><th>Board Value</th><td>Value Rank #117 overall &middot; VORP: <strong class="pos-gain">+0.7 pts</strong> &middot; Pos Rank: RB29</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 104.0 &middot; ECR: #91</td></tr><tr><th>Projections</th><td><strong>149.8 pts</strong> (Blend: 152.8 &middot; Expert: 155.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 82.5 &middot; Live: 82.9 (&plusmn;6.6) &middot; Sleeper 2QB: 97.3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Tony Pollard</strong> <span class="team-tag">RB &middot; TEN</span> &middot; Bye: 9</td></tr><tr><th>Strategic Role</th><td><strong>Bench: RB depth (starts elsewhere)</strong></td></tr><tr><th>Opportunity &amp; Risk</th><td><strong class="pos-gain">+98 pts over wire when needed</strong> &middot; Covers 2 bye-week gaps &middot; <span class="dim">~100% gone by next pick</span></td></tr><tr><th>Board Value</th><td>Value Rank #117 overall &middot; VORP: <strong class="pos-gain">+0.7 pts</strong> &middot; Pos Rank: RB29</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 6 &middot; Blend Rank: 104.0 &middot; ECR: #91</td></tr><tr><th>Projections</th><td><strong>149.8 pts</strong> (Blend: 152.8 &middot; Expert: 155.8)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 82.5 &middot; Live: 82.9 (&plusmn;6.6) &middot; Sleeper 2QB: 97.3 &middot; <strong>Expected pick ~#83</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Tony Pollard, RB, TEN.</p>
+        <p class="rationale-why"><strong>Why:</strong> Bench: RB depth -- he starts elsewhere, and is worth about 98 points more than the wire in the weeks one of ours is out; covers 2 bye-week gaps; and he would almost certainly be gone by our next pick. The market usually takes him around pick 83.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:46:28+00:00</time></header>
     <h2>#11 — Round 7, pick 78</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Terry McLaurin, WR, WAS.</p>
-    <p class="rationale"><strong>Why:</strong> Fills our flex slot, taking the best of the remaining running backs, receivers and tight ends, projected 180 points, 6 clear of the next man up for it. The market usually takes him around pick 64.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Terry McLaurin</strong> <span class="team-tag">WR &middot; WAS</span> &middot; Bye: 7</td></tr><tr><th>Board Value</th><td>Value Rank #80 overall &middot; VORP: <strong class="pos-gain">+24.0 pts</strong> &middot; Pos Rank: WR26</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 5 &middot; Blend Rank: 72.0 &middot; ECR: #64</td></tr><tr><th>Projections</th><td><strong>180.3 pts</strong> (Blend: 182.4 &middot; Expert: 184.5)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 63.8 &middot; Live: 64.2 (&plusmn;6.1) &middot; Sleeper 2QB: 68.0</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Terry McLaurin</strong> <span class="team-tag">WR &middot; WAS</span> &middot; Bye: 7</td></tr><tr><th>Strategic Role</th><td><strong>Flex Slot</strong> &middot; <strong class="pos-gain">+6 pts clear of next man up</strong></td></tr><tr><th>Board Value</th><td>Value Rank #80 overall &middot; VORP: <strong class="pos-gain">+24.0 pts</strong> &middot; Pos Rank: WR26</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 5 &middot; Blend Rank: 72.0 &middot; ECR: #64</td></tr><tr><th>Projections</th><td><strong>180.3 pts</strong> (Blend: 182.4 &middot; Expert: 184.5)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 63.8 &middot; Live: 64.2 (&plusmn;6.1) &middot; Sleeper 2QB: 68.0 &middot; <strong>Expected pick ~#64</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Terry McLaurin, WR, WAS.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills our flex slot, taking the best of the remaining running backs, receivers and tight ends, projected 180 points, 6 clear of the next man up for it. The market usually takes him around pick 64.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:42:33+00:00</time></header>
     <h2>#10 — Round 6, pick 67</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Emeka Egbuka, WR, TB.</p>
-    <p class="rationale"><strong>Why:</strong> Fills a starting WR slot, projected 191 points. The market usually takes him around pick 51.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Emeka Egbuka</strong> <span class="team-tag">WR &middot; TB</span> &middot; Bye: 10</td></tr><tr><th>Board Value</th><td>Value Rank #62 overall &middot; VORP: <strong class="pos-gain">+34.7 pts</strong> &middot; Pos Rank: WR16</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 5 &middot; Blend Rank: 61.5 &middot; ECR: #61</td></tr><tr><th>Projections</th><td><strong>191.0 pts</strong> (Blend: 189.0 &middot; Expert: 187.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 50.7 &middot; Live: 50.7 (&plusmn;5.5) &middot; Sleeper 2QB: 57.0</td></tr><tr><th>Injury Status</th><td><span class="badge-cut">Questionable</span></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Emeka Egbuka</strong> <span class="team-tag">WR &middot; TB</span> &middot; Bye: 10</td></tr><tr><th>Strategic Role</th><td><strong>Starting Wr Slot</strong></td></tr><tr><th>Board Value</th><td>Value Rank #62 overall &middot; VORP: <strong class="pos-gain">+34.7 pts</strong> &middot; Pos Rank: WR16</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 5 &middot; Blend Rank: 61.5 &middot; ECR: #61</td></tr><tr><th>Projections</th><td><strong>191.0 pts</strong> (Blend: 189.0 &middot; Expert: 187.0)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 50.7 &middot; Live: 50.7 (&plusmn;5.5) &middot; Sleeper 2QB: 57.0 &middot; <strong>Expected pick ~#51</strong></td></tr><tr><th>Injury Status</th><td><span class="badge-cut">Questionable</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Emeka Egbuka, WR, TB.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills a starting WR slot, projected 191 points. The market usually takes him around pick 51.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:35:31+00:00</time></header>
     <h2>#9 — Round 5, pick 54</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Jordan Love, QB, GB.</p>
-    <p class="rationale"><strong>Why:</strong> Fills a starting QB slot, projected 328 points, 19 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 60.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Jordan Love</strong> <span class="team-tag">QB &middot; GB</span> &middot; Bye: 11</td></tr><tr><th>Board Value</th><td>Value Rank #27 overall &middot; VORP: <strong class="pos-gain">+77.4 pts</strong> &middot; Pos Rank: QB14</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 4 &middot; Blend Rank: 36.0 &middot; ECR: #45</td></tr><tr><th>Projections</th><td><strong>328.4 pts</strong> (Blend: 317.8 &middot; Expert: 307.2)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 57.9 &middot; Live: 60.1 (&plusmn;11.0) &middot; Sleeper 2QB: 70.1</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Jordan Love</strong> <span class="team-tag">QB &middot; GB</span> &middot; Bye: 11</td></tr><tr><th>Strategic Role</th><td><strong>Starting Qb Slot</strong> &middot; <strong class="pos-gain">+19 pts clear of next man up</strong></td></tr><tr><th>Board Value</th><td>Value Rank #27 overall &middot; VORP: <strong class="pos-gain">+77.4 pts</strong> &middot; Pos Rank: QB14</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 4 &middot; Blend Rank: 36.0 &middot; ECR: #45</td></tr><tr><th>Projections</th><td><strong>328.4 pts</strong> (Blend: 317.8 &middot; Expert: 307.2)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 57.9 &middot; Live: 60.1 (&plusmn;11.0) &middot; Sleeper 2QB: 70.1 &middot; <strong>Expected pick ~#60</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Jordan Love, QB, GB.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills a starting QB slot, projected 328 points, 19 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 60.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:31:51+00:00</time></header>
     <h2>#8 — Round 4, pick 43</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Brock Purdy, QB, SF.</p>
-    <p class="rationale"><strong>Why:</strong> Fills a starting QB slot, projected 350 points, 18 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 20.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Brock Purdy</strong> <span class="team-tag">QB &middot; SF</span> &middot; Bye: 8</td></tr><tr><th>Board Value</th><td>Value Rank #15 overall &middot; VORP: <strong class="pos-gain">+98.6 pts</strong> &middot; Pos Rank: QB7</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 3 &middot; Blend Rank: 18.0 &middot; ECR: #21</td></tr><tr><th>Projections</th><td><strong>349.6 pts</strong> (Blend: 343.9 &middot; Expert: 338.1)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 18.5 &middot; Live: 19.7 (&plusmn;3.3) &middot; Sleeper 2QB: 54.7</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Brock Purdy</strong> <span class="team-tag">QB &middot; SF</span> &middot; Bye: 8</td></tr><tr><th>Strategic Role</th><td><strong>Starting Qb Slot</strong> &middot; <strong class="pos-gain">+18 pts clear of next man up</strong></td></tr><tr><th>Board Value</th><td>Value Rank #15 overall &middot; VORP: <strong class="pos-gain">+98.6 pts</strong> &middot; Pos Rank: QB7</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 3 &middot; Blend Rank: 18.0 &middot; ECR: #21</td></tr><tr><th>Projections</th><td><strong>349.6 pts</strong> (Blend: 343.9 &middot; Expert: 338.1)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 18.5 &middot; Live: 19.7 (&plusmn;3.3) &middot; Sleeper 2QB: 54.7 &middot; <strong>Expected pick ~#20</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Brock Purdy, QB, SF.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills a starting QB slot, projected 350 points, 18 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 20.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-pick</span>
       <span class="status">final</span>
       <time>2026-08-30T22:17:50+00:00</time></header>
     <h2>#7 — Round 1, pick 6</h2>
-    <p class="decision"><strong>Decision:</strong> Drafted Jonathan Taylor, RB, IND.</p>
-    <p class="rationale"><strong>Why:</strong> Fills a starting RB slot, projected 264 points, 24 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 6.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Jonathan Taylor</strong> <span class="team-tag">RB &middot; IND</span> &middot; Bye: 13</td></tr><tr><th>Board Value</th><td>Value Rank #4 overall &middot; VORP: <strong class="pos-gain">+115.2 pts</strong> &middot; Pos Rank: RB3</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 2 &middot; Blend Rank: 11.0 &middot; ECR: #18</td></tr><tr><th>Projections</th><td><strong>264.3 pts</strong> (Blend: 261.8 &middot; Expert: 259.3)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 5.7 &middot; Live: 5.5 (&plusmn;1.4) &middot; Sleeper 2QB: 7.8</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Player</th><td><strong>Jonathan Taylor</strong> <span class="team-tag">RB &middot; IND</span> &middot; Bye: 13</td></tr><tr><th>Strategic Role</th><td><strong>Starting Rb Slot</strong> &middot; <strong class="pos-gain">+24 pts clear of next man up</strong></td></tr><tr><th>Board Value</th><td>Value Rank #4 overall &middot; VORP: <strong class="pos-gain">+115.2 pts</strong> &middot; Pos Rank: RB3</td></tr><tr><th>Consensus &amp; Tier</th><td>Tier 2 &middot; Blend Rank: 11.0 &middot; ECR: #18</td></tr><tr><th>Projections</th><td><strong>264.3 pts</strong> (Blend: 261.8 &middot; Expert: 259.3)</td></tr><tr><th>Market ADP</th><td>FFC 2QB: 5.7 &middot; Live: 5.5 (&plusmn;1.4) &middot; Sleeper 2QB: 7.8 &middot; <strong>Expected pick ~#6</strong></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Drafted Jonathan Taylor, RB, IND.</p>
+        <p class="rationale-why"><strong>Why:</strong> Fills a starting RB slot, projected 264 points, 24 clear of the next man up for it. Our projections are higher on him than the expert field is; this pick splits the difference. The market usually takes him around pick 6.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-slot</span>
       <span class="status">final</span>
       <time>2026-08-25T18:40:16+00:00</time></header>
     <h2>#6 — Draft slot 6 confirmed; keepers declared in Sleeper</h2>
-    <p class="decision"><strong>Decision:</strong> Robowner drafts from slot 6. Keepers Omarion Hampton and Nico Collins are formally declared in Sleeper ahead of the Thursday lock-in. Autodraft queue loaded as a fallback.</p>
-    <p class="rationale"><strong>Why:</strong> The league set the final order and Robowner received pick 6, the earliest available slot it asked for. lotsyrk was the only owner to take the last position, which is why slot 6 rather than 7 came free. Our picks are 6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198 — rounds 2 and 3 are forfeited to the keepers. Keeper declaration was submitted directly to Sleeper rather than waiting on manual slotting, since the deadline moved to Thursday. A 76-player autodraft queue is loaded, ordered by value under league scoring with kickers and defenses placed last so an unattended autodraft cannot waste an early pick on them.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Slot</th><td>6</td></tr><tr><th>Roster Id</th><td>4</td></tr><tr><th>Our Picks</th><td>6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198</td></tr><tr><th>Keepers Declared</th><td>Omarion Hampton (R3), Nico Collins (R2)</td></tr><tr><th>Queue Size</th><td>76</td></tr><tr><th>Keeper Deadline</th><td>Thursday 2026-08-27</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Slot</th><td>6</td></tr><tr><th>Roster Id</th><td>4</td></tr><tr><th>Our Picks</th><td>6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198</td></tr><tr><th>Keepers Declared</th><td>Omarion Hampton (R3), Nico Collins (R2)</td></tr><tr><th>Queue Size</th><td>76</td></tr><tr><th>Keeper Deadline</th><td>Thursday 2026-08-27</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Robowner drafts from slot 6. Keepers Omarion Hampton and Nico Collins are formally declared in Sleeper ahead of the Thursday lock-in. Autodraft queue loaded as a fallback.</p>
+        <p class="rationale-why"><strong>Why:</strong> The league set the final order and Robowner received pick 6, the earliest available slot it asked for. lotsyrk was the only owner to take the last position, which is why slot 6 rather than 7 came free. Our picks are 6, 43, 54, 67, 78, 91, 102, 115, 126, 139, 150, 163, 174, 187, 198 — rounds 2 and 3 are forfeited to the keepers. Keeper declaration was submitted directly to Sleeper rather than waiting on manual slotting, since the deadline moved to Thursday. A 76-player autodraft queue is loaded, ordered by value under league scoring with kickers and defenses placed last so an unattended autodraft cannot waste an early pick on them.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">draft-slot</span>
       <span class="status">final</span>
       <time>2026-08-25T14:34:53+00:00</time></header>
     <h2>#5 — 2026 draft position: taking pick 6 (FINAL)</h2>
-    <p class="decision"><strong>Decision:</strong> Offered the earliest (6) or latest (11) available slot, Robowner takes PICK 6.</p>
-    <p class="rationale"><strong>Why:</strong> Simulated both slots across 17 rounds with our R2+R3 forfeited to keepers, the board rebuilt from current projections scored under league settings blended with 104-expert consensus, and the league keeper landscape modeled (4 teams declared incl. Gibbs and Bowers; the other 8 predicted by value retained). Under an idealized ADP-perfect draft slot 11 edges it by ~4 VORP, but that result does not survive contact with reality: adding realistic draft noise flips it, and slot 6 wins 51-70% of simulated drafts across scenarios. Slot 6 is also far better in the still-open case where fewer elite players get kept (8 of 12 teams have not declared), and it carries no round-1 downside tail — it lands a 90+ VORP player in 100% of simulations vs 98%, with a worst case of 99.2 VORP vs 83.8. With only one pick inside the top 37, protecting that pick matters more than the marginal middle-round gain slot 11 offers. Choosing the option that is better under uncertainty rather than the one that wins narrowly in a single idealized scenario.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Chosen</th><td>6</td></tr><tr><th>Alternative</th><td>11</td></tr><tr><th>Sim Win Rate Slot6</th><td>51-70% across scenarios</td></tr><tr><th>Round 1 Downside</th><td>SLOT6: <strong>99.2 VORP</strong> vs SLOT11: <strong>83.8 VORP</strong></td></tr><tr><th>Keepers Off Board</th><td>23</td></tr><tr><th>Forfeited Rounds</th><td>Rounds 2, 3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Simulation Advantage</th><td><strong class="pos-gain">Wins 51-70% of simulated drafts across noise scenarios</strong></td></tr><tr><th>Downside Protection</th><td>Zero Round 1 downside: lands 90+ VORP in 100% of sims (worst case 99.2 vs 83.8)</td></tr><tr><th>Chosen</th><td>6</td></tr><tr><th>Alternative</th><td>11</td></tr><tr><th>Sim Win Rate Slot6</th><td>51-70% across scenarios</td></tr><tr><th>Round 1 Downside</th><td>SLOT6: <strong>99.2 VORP</strong> vs SLOT11: <strong>83.8 VORP</strong></td></tr><tr><th>Keepers Off Board</th><td>23</td></tr><tr><th>Forfeited Rounds</th><td>Rounds 2, 3</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Offered the earliest (6) or latest (11) available slot, Robowner takes PICK 6.</p>
+        <p class="rationale-why"><strong>Why:</strong> Simulated both slots across 17 rounds with our R2+R3 forfeited to keepers, the board rebuilt from current projections scored under league settings blended with 104-expert consensus, and the league keeper landscape modeled (4 teams declared incl. Gibbs and Bowers; the other 8 predicted by value retained). Under an idealized ADP-perfect draft slot 11 edges it by ~4 VORP, but that result does not survive contact with reality: adding realistic draft noise flips it, and slot 6 wins 51-70% of simulated drafts across scenarios. Slot 6 is also far better in the still-open case where fewer elite players get kept (8 of 12 teams have not declared), and it carries no round-1 downside tail — it lands a 90+ VORP player in 100% of simulations vs 98%, with a worst case of 99.2 VORP vs 83.8. With only one pick inside the top 37, protecting that pick matters more than the marginal middle-round gain slot 11 offers. Choosing the option that is better under uncertainty rather than the one that wins narrowly in a single idealized scenario.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">keeper</span>
       <span class="status">final</span>
       <time>2026-08-24T22:55:53+00:00</time></header>
     <h2>#4 — 2026 keeper declaration (FINAL)</h2>
-    <p class="decision"><strong>Decision:</strong> Robowner declares two keepers: Omarion Hampton (RB, LAC) at a round-3 cost and Nico Collins (WR, HOU) at a round-2 cost (second R3 keeper escalates one round per constitution 5.3.2). Picks surrendered: R2 and R3.</p>
-    <p class="rationale"><strong>Why:</strong> ADP lock confirmed by the Draft Czar (FFC 2QB snapshot 8/23). Hampton: cost avg(pick 29, ADP 38.5) -&gt; R3; blend rank 25.5 (RB11, 218.9 proj pts under league scoring). Collins: cost avg(pick 20, ADP 36.7) -&gt; R3 escalated to R2; blend rank 26.5 (WR6, 220.0 proj). Both are top-26 consensus values acquired at or below market. Rejected: Mahomes at R2 (blend 43, QB14 projection, Sleeper market ADP 43 vs locked 22.9) and all others as fair-or-worse value. Declared to Draft Czar Emeritus Nate on 2026-08-24.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Declared Keeper</th><td><strong>Omarion Hampton</strong> <span class="team-tag">RB &middot; LAC</span> &mdash; Surrendered Pick: Round 3</td></tr><tr><th>Declared Keeper</th><td><strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span> &mdash; Surrendered Pick: Round 2</td></tr><tr><th>Supersedes</th><td>decision #1</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Declared Keeper</th><td><strong>Omarion Hampton</strong> <span class="team-tag">RB &middot; LAC</span> &mdash; Surrendered Pick: Round 3</td></tr><tr><th>Declared Keeper</th><td><strong>Nico Collins</strong> <span class="team-tag">WR &middot; HOU</span> &mdash; Surrendered Pick: Round 2</td></tr><tr><th>Supersedes</th><td>decision #1</td></tr><tr><th>Alternatives Evaluated</th><td><span class="dim">Mahomes at R2 (blend 43, QB14 projection, Sleeper market ADP 43 vs locked 22</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Robowner declares two keepers: Omarion Hampton (RB, LAC) at a round-3 cost and Nico Collins (WR, HOU) at a round-2 cost (second R3 keeper escalates one round per constitution 5.3.2). Picks surrendered: R2 and R3.</p>
+        <p class="rationale-why"><strong>Why:</strong> ADP lock confirmed by the Draft Czar (FFC 2QB snapshot 8/23). Hampton: cost avg(pick 29, ADP 38.5) -&gt; R3; blend rank 25.5 (RB11, 218.9 proj pts under league scoring). Collins: cost avg(pick 20, ADP 36.7) -&gt; R3 escalated to R2; blend rank 26.5 (WR6, 220.0 proj). Both are top-26 consensus values acquired at or below market. Rejected: Mahomes at R2 (blend 43, QB14 projection, Sleeper market ADP 43 vs locked 22.9) and all others as fair-or-worse value. Declared to Draft Czar Emeritus Nate on 2026-08-24.</p>
+      </div>
+    </details>
   </article>
   <article class="card final">
     <header><span class="kind">meta</span>
       <span class="status">final</span>
       <time>2026-08-24T22:25:50+00:00</time></header>
     <h2>#3 — Sleeper write access verified</h2>
-    <p class="decision"><strong>Decision:</strong> The Robowner account can now act on Sleeper programmatically: draft picks, draft queue, lineups, IR moves, and transactions.</p>
-    <p class="rationale"><strong>Why:</strong> GraphQL mutation signatures obtained via server introspection; draft_pick_player and update_draft_queue verified end-to-end in a private throwaway mock draft (created, picked, REST-verified, deleted). Lineup/IR/transaction mutations match the introspected schema. Waiver FAAB bid shape to be exercised before week 1.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Verified</th><td>draft_pick_player, update_draft_queue, create_draft, update_draft_status, delete_draft, initialize_app</td></tr><tr><th>Pending</th><td>submit_waiver_claim bid key</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Verified</th><td>draft_pick_player, update_draft_queue, create_draft, update_draft_status, delete_draft, initialize_app</td></tr><tr><th>Pending</th><td>submit_waiver_claim bid key</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> The Robowner account can now act on Sleeper programmatically: draft picks, draft queue, lineups, IR moves, and transactions.</p>
+        <p class="rationale-why"><strong>Why:</strong> GraphQL mutation signatures obtained via server introspection; draft_pick_player and update_draft_queue verified end-to-end in a private throwaway mock draft (created, picked, REST-verified, deleted). Lineup/IR/transaction mutations match the introspected schema. Waiver FAAB bid shape to be exercised before week 1.</p>
+      </div>
+    </details>
   </article>
   <article class="card proposed">
     <header><span class="kind">draft-slot</span>
       <span class="status">proposed</span>
       <time>2026-08-24T21:15:31+00:00</time></header>
     <h2>#2 — Draft position preference (pending owners 1-6)</h2>
-    <p class="decision"><strong>Decision:</strong> Current lean: take the EARLIEST available slot (7) over last (12).</p>
-    <p class="rationale"><strong>Why:</strong> Snake simulation with keeper rounds 2-3 forfeited: slot 7 projects +21 VORP over slot 12 (207.3 vs 186.1), driven by a top-tier RB (CMC-class value) still available at pick 7 while our early-mid round picks are gone to keepers. Will re-run the moment owners 1-6 lock their positions and league keepers are declared.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Simulation VORP</th><td>SLOT7: <strong>207.3 VORP</strong> &middot; SLOT12: <strong>186.1 VORP</strong></td></tr><tr><th>Forfeited Rounds</th><td>Rounds 2, 3</td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Simulation Advantage</th><td><strong class="pos-gain">+21 VORP advantage over slot 12 (207.3 vs 186.1)</strong></td></tr><tr><th>Simulation VORP</th><td>SLOT7: <strong>207.3 VORP</strong> &middot; SLOT12: <strong>186.1 VORP</strong></td></tr><tr><th>Forfeited Rounds</th><td>Rounds 2, 3</td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Current lean: take the EARLIEST available slot (7) over last (12).</p>
+        <p class="rationale-why"><strong>Why:</strong> Snake simulation with keeper rounds 2-3 forfeited: slot 7 projects +21 VORP over slot 12 (207.3 vs 186.1), driven by a top-tier RB (CMC-class value) still available at pick 7 while our early-mid round picks are gone to keepers. Will re-run the moment owners 1-6 lock their positions and league keepers are declared.</p>
+      </div>
+    </details>
   </article>
   <article class="card proposed">
     <header><span class="kind">keeper</span>
       <span class="status">proposed</span>
       <time>2026-08-24T21:15:31+00:00</time></header>
     <h2>#1 — 2026 keeper selection (proposed)</h2>
-    <p class="decision"><strong>Decision:</strong> Keep Omarion Hampton (RB, LAC) at round 3 and Nico Collins (WR, HOU) at round 2 (second R3 keeper escalates per constitution 5.3.2). Give up picks R2+R3.</p>
-    <p class="rationale"><strong>Why:</strong> Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) — both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.</p>
-    <details><summary>data</summary><div class="data-box"><table class="data-table"><tbody><tr><th>Cost Table</th><td>see LEAGUE.md</td></tr><tr><th>Hampton</th><td>cost round: <strong>3</strong> &middot; board rank: <strong>16</strong> &middot; ffc adp: <strong>38.5</strong></td></tr><tr><th>Collins</th><td>cost round: <strong>3-&gt;2 escalated</strong> &middot; board rank: <strong>20</strong> &middot; ffc adp: <strong>36.7</strong></td></tr><tr><th>Rejected Mahomes</th><td>cost round: <strong>2</strong> &middot; board rank: <strong>61</strong> &middot; proj qb rank: <strong>14</strong></td></tr></tbody></table></div></details>
+    <div class="data-box"><table class="data-table"><tbody><tr><th>Cost Table</th><td>see LEAGUE.md</td></tr><tr><th>Hampton</th><td>cost round: <strong>3</strong> &middot; board rank: <strong>16</strong> &middot; ffc adp: <strong>38.5</strong></td></tr><tr><th>Collins</th><td>cost round: <strong>3-&gt;2 escalated</strong> &middot; board rank: <strong>20</strong> &middot; ffc adp: <strong>36.7</strong></td></tr><tr><th>Rejected Mahomes</th><td>cost round: <strong>2</strong> &middot; board rank: <strong>61</strong> &middot; proj qb rank: <strong>14</strong></td></tr><tr><th>Alternatives Evaluated</th><td><span class="dim">Mahomes (costs R2, proj QB14) and Evans (R5) rejected as fair value at best</span></td></tr></tbody></table></div>
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> Keep Omarion Hampton (RB, LAC) at round 3 and Nico Collins (WR, HOU) at round 2 (second R3 keeper escalates per constitution 5.3.2). Give up picks R2+R3.</p>
+        <p class="rationale-why"><strong>Why:</strong> Value board (Sleeper 2026 projections scored with exact league settings, VORP over 2QB replacement): Hampton ranks #16 overall (RB11, 218.9 proj pts) and Collins #20 (WR6, 220.0) — both top-20 values acquired for picks 13-36. Best alternatives are clearly worse: Mahomes costs R2 but projects QB14 (#61 overall, ADP 43 on Sleeper); Evans (R5, #54, injury-questionable) and all others are fair value at best. Cost table verified against ru-ready-keeper-calc.vercel.app. Final declaration pending ADP-lock confirmation by the Draft Czar.</p>
+      </div>
+    </details>
   </article>
 </main></body></html>

@@ -12,6 +12,7 @@ FileNotFoundError.
 
 import html
 import json
+import re
 import subprocess
 from datetime import datetime, timezone
 
@@ -89,24 +90,155 @@ def _format_player_html(pid, bold_name: bool = False) -> str:
     return name_esc
 
 
-def _format_lineup(data: dict) -> str:
+def _parse_why_metrics(kind: str, why: str) -> dict:
+    m = {}
+    if not why:
+        return m
+    if kind == "lineup":
+        m_delta = re.search(r'([+-]\d+(?:\.\d+)?)\s+versus the lineup as it stood', why)
+        if m_delta:
+            m["delta_pts"] = float(m_delta.group(1))
+        m_bad = re.search(r'which the previous lineup was not:\s*it had\s+([^.]+)', why)
+        if m_bad:
+            m["benched_issues"] = m_bad.group(1).strip()
+        m_modelled = re.search(r'means for\s*(\d+\s+of\s+\d+)\s+players', why)
+        if m_modelled:
+            m["modelled_note"] = f"{m_modelled.group(1)} players"
+
+    elif kind == "free-agent":
+        m_ros = re.search(r'Rest-of-season value\s+([\d.]+)\s+against\s+([\d.]+)\s+held', why)
+        if m_ros:
+            m["add_ros"] = float(m_ros.group(1))
+            m["drop_held_ros"] = float(m_ros.group(2))
+        if "starting slot" in why:
+            m["strategy"] = "Starting slot"
+        elif "bench, judged on the ceiling" in why:
+            m["strategy"] = "Bench depth (ceiling valuation)"
+        elif "fills an unfillable starting slot" in why:
+            m["strategy"] = "Fills unfillable starting slot"
+        elif "coverage preserved" in why:
+            m["strategy"] = "Roster coverage preserved"
+        m_ceil = re.search(r'(?:\+/-\s*([\d.]+),\s*)?ceiling\s+([\d.]+)', why)
+        if m_ceil:
+            m["ceiling"] = float(m_ceil.group(2).rstrip('.'))
+            if m_ceil.group(1):
+                m["uncertainty"] = float(m_ceil.group(1))
+        m_season = re.search(r'season totals\s+([\d.]+)\s+vs\s+([\d.]+)\s*\(([^)]+)\)', why)
+        if m_season:
+            m["season_totals"] = f"{m_season.group(1)} vs {m_season.group(2)} ({m_season.group(3)})"
+        m_event = re.search(r'event delta\s+([+-]?[\d.]+)', why)
+        if m_event:
+            m["event_delta"] = float(m_event.group(1))
+        if "lineup-marginal figure decides" in why:
+            m["marginal_note"] = "Lineup-marginal figure decides"
+        if "weekly-model ROS apples-to-apples" in why:
+            m["apples_note"] = "Weekly-model ROS apples-to-apples"
+
+    elif kind == "draft-pick":
+        m_shelf = re.search(r'(\d+)\s+clear of the next man up', why)
+        if m_shelf:
+            m["shelf_edge"] = f"+{m_shelf.group(1)} pts clear of next man up"
+        m_slot = re.search(r'Fills (?:a |our )?(starting \w+ slot|flex slot)', why, re.IGNORECASE)
+        if m_slot:
+            m["target_role"] = m_slot.group(1).title()
+        elif "Roster requirement" in why:
+            m_req = re.search(r'we still need\s+([^,]+(?:,\s*[^,]+)*?)\s+and have only\s+(\d+)\s+picks? left', why)
+            if m_req:
+                m["target_role"] = f"Roster requirement: Need {m_req.group(1).strip()} ({m_req.group(2)} picks left)"
+            else:
+                m["target_role"] = "Mandatory Roster Requirement"
+        elif "Bench: RB depth" in why:
+            m["target_role"] = "Bench: RB depth (starts elsewhere)"
+        elif "lottery ticket behind" in why:
+            m_lott = re.search(r'lottery ticket behind\s+([^—–-]+)', why)
+            if m_lott:
+                m["target_role"] = f"Lottery Ticket behind {m_lott.group(1).strip()}"
+        m_opp = re.search(r'(\d+)%\s+chance that job opens', why)
+        if m_opp:
+            m["opp_chance"] = f"{m_opp.group(1)}% chance job opens"
+        m_val = re.search(r'worth about\s+(\d+)\s+points if it does', why)
+        if m_val:
+            m["opp_val"] = f"~{m_val.group(1)} pts upside if opened"
+        m_wire = re.search(r'worth about\s+(\d+)\s+points more than the wire', why)
+        if m_wire:
+            m["wire_val"] = f"+{m_wire.group(1)} pts over wire when needed"
+        m_bye = re.search(r'covers\s+(\d+\s+bye-week gaps?)', why)
+        if m_bye:
+            m["bye_cov"] = f"Covers {m_bye.group(1)}"
+        m_gone = re.search(r'(\d+)%\s+chance (?:he is|she is)?\s*gone by our next pick', why)
+        if m_gone:
+            m["gone_chance"] = f"{m_gone.group(1)}% chance gone by next pick"
+        elif "almost certainly be gone by our next pick" in why:
+            m["gone_chance"] = "~100% gone by next pick"
+        m_mkt = re.search(r'market usually takes him around pick\s+(\d+)', why)
+        if m_mkt:
+            m["market_pick"] = f"Expected pick ~#{m_mkt.group(1)}"
+        if "reporting on him is encouraging" in why:
+            m["scout_pulse"] = "Encouraging"
+        elif "reporting on him is a concern" in why:
+            m["scout_pulse"] = "Concern"
+
+    elif kind == "ir":
+        if "designated Out" in why:
+            m["trigger"] = "Designated Out (IR-eligible)"
+            m["impact"] = "Frees 1 active roster spot"
+        elif "no longer carries an IR-eligible designation" in why:
+            m["trigger"] = "Healthy (lost IR eligibility)"
+            m["impact"] = "Restored to active roster"
+        elif "without an IR-eligible designation" in why:
+            m["trigger"] = "Questionable on IR (unblock required)"
+            m["impact"] = "Roster compliance restored (17-man limit)"
+
+    elif kind == "keeper":
+        m_rej = re.search(r'Rejected:\s*([^.]+)', why)
+        if m_rej:
+            m["rejected"] = m_rej.group(1).strip()
+        elif "Best alternatives are clearly worse" in why:
+            m["rejected"] = "Mahomes (costs R2, proj QB14) and Evans (R5) rejected as fair value at best"
+
+    elif kind == "draft-slot":
+        if "wins 51-70% of simulated drafts" in why:
+            m["sim_advantage"] = "Wins 51-70% of simulated drafts across noise scenarios"
+        elif "+21 VORP over slot 12" in why:
+            m["sim_advantage"] = "+21 VORP advantage over slot 12 (207.3 vs 186.1)"
+        if "worst case of 99.2 VORP vs 83.8" in why:
+            m["downside_tail"] = "Zero Round 1 downside: lands 90+ VORP in 100% of sims (worst case 99.2 vs 83.8)"
+
+    return m
+
+
+def _format_lineup(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     starters = data.get("starters") or []
     previous = data.get("previous") or []
     proj = data.get("projected")
     week = data.get("week")
     source = data.get("source")
-    modelled = data.get("modelled")
+    modelled = data.get("modelled") or why_m.get("modelled_note")
+    delta_pts = why_m.get("delta_pts")
 
     meta_parts = []
     if week is not None:
         meta_parts.append(f'<div><span class="meta-label">Week:</span> <strong>{html.escape(str(week))}</strong></div>')
     if proj is not None:
-        meta_parts.append(f'<div><span class="meta-label">Projected:</span> <strong>{proj:.1f} pts</strong></div>')
+        proj_val = float(proj)
+        proj_str = f'<strong>{proj_val:.1f} pts</strong>'
+        if delta_pts is not None:
+            delta_cls = "pos-gain" if delta_pts >= 0 else "dim"
+            prev_proj = proj_val - delta_pts
+            proj_str += f' <span class="{delta_cls}">({delta_pts:+.1f} vs prev: {prev_proj:.1f})</span>'
+        meta_parts.append(f'<div><span class="meta-label">Projected:</span> {proj_str}</div>')
     if modelled is not None:
-        meta_parts.append(f'<div><span class="meta-label">Modelled:</span> <strong>{modelled} players</strong></div>')
+        modelled_str = f"{modelled} players" if isinstance(modelled, int) else str(modelled)
+        meta_parts.append(f'<div><span class="meta-label">Modelled:</span> <strong>{html.escape(modelled_str)}</strong></div>')
     meta_html = f'<div class="data-meta-grid">{"".join(meta_parts)}</div>' if meta_parts else ""
 
-    src_html = f'<div class="meta-source"><span class="meta-label">Source:</span> {html.escape(str(source))}</div>' if source else ""
+    note_parts = []
+    if why_m.get("benched_issues"):
+        note_parts.append(f'<span class="meta-label">Lineup Repair:</span> Benched unstartable ({html.escape(why_m["benched_issues"])})')
+    if source:
+        note_parts.append(f'<span class="meta-label">Source:</span> {html.escape(str(source))}')
+    src_html = f'<div class="meta-source">{" &middot; ".join(note_parts)}</div>' if note_parts else ""
 
     prev_set = set(previous)
     rows = []
@@ -145,7 +277,8 @@ def _format_lineup(data: dict) -> str:
     return meta_html + src_html + table
 
 
-def _format_free_agent(data: dict) -> str:
+def _format_free_agent(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     add_id = data.get("add")
     drop_id = data.get("drop")
     mode = data.get("mode")
@@ -154,8 +287,22 @@ def _format_free_agent(data: dict) -> str:
     ros = data.get("ros")
     reason = data.get("reason")
 
+    add_ros = why_m.get("add_ros") if ros is None else ros
+    drop_held_ros = why_m.get("drop_held_ros")
+
     add_html = _format_player_html(add_id, bold_name=True)
+    if add_ros is not None:
+        try:
+            add_html += f' <span class="dim">&middot; ROS: <strong>{float(add_ros):.1f} pts</strong></span>'
+        except Exception:
+            pass
+
     drop_html = _format_player_html(drop_id, bold_name=False) if drop_id not in (None, "None", "") else '<span class="dim">(open roster spot)</span>'
+    if drop_held_ros is not None and drop_id not in (None, "None", ""):
+        try:
+            drop_html += f' <span class="dim">&middot; Held ROS: <strong>{float(drop_held_ros):.1f} pts</strong></span>'
+        except Exception:
+            pass
 
     rows = [
         f'<tr><th>Added</th><td>{add_html}</td></tr>',
@@ -169,24 +316,43 @@ def _format_free_agent(data: dict) -> str:
         else:
             gain_cls = "pos-gain"
             gain_str = str(gain)
-        rows.append(f'<tr><th>Projected Gain</th><td><span class="{gain_cls}">{html.escape(gain_str)}</span></td></tr>')
-    if ros is not None:
-        try:
-            rows.append(f'<tr><th>Rest-of-Season Value</th><td>{float(ros):.1f} pts</td></tr>')
-        except Exception:
-            rows.append(f'<tr><th>Rest-of-Season Value</th><td>{html.escape(str(ros))}</td></tr>')
+        note = f' <span class="dim">({why_m["marginal_note"]})</span>' if why_m.get("marginal_note") else ""
+        rows.append(f'<tr><th>Projected Gain</th><td><span class="{gain_cls}">{html.escape(gain_str)}</span>{note}</td></tr>')
+
+    if why_m.get("strategy"):
+        rows.append(f'<tr><th>Target Role</th><td><strong>{html.escape(why_m["strategy"])}</strong></td></tr>')
+    if why_m.get("ceiling"):
+        unc_str = f" (&plusmn;{why_m['uncertainty']})" if why_m.get("uncertainty") else ""
+        rows.append(f'<tr><th>Upside &amp; Ceiling</th><td>Ceiling: <strong>{why_m["ceiling"]:.1f} pts</strong>{unc_str}</td></tr>')
+    if why_m.get("season_totals"):
+        rows.append(f'<tr><th>Season Totals</th><td>{html.escape(why_m["season_totals"])}</td></tr>')
+    if why_m.get("event_delta"):
+        rows.append(f'<tr><th>Event Delta</th><td><strong class="pos-gain">{why_m["event_delta"]:+.2f}</strong></td></tr>')
+
+    meta_info = []
     if mode:
-        rows.append(f'<tr><th>Evaluation Mode</th><td><code>{html.escape(str(mode))}</code></td></tr>')
+        meta_info.append(f'<code>{html.escape(str(mode))}</code> mode')
     if week is not None:
-        rows.append(f'<tr><th>Week</th><td>{html.escape(str(week))}</td></tr>')
+        meta_info.append(f'Week {html.escape(str(week))}')
+    if why_m.get("apples_note"):
+        meta_info.append(html.escape(why_m["apples_note"]))
+    if meta_info:
+        rows.append(f'<tr><th>Execution Context</th><td>{" &middot; ".join(meta_info)}</td></tr>')
+
     if reason:
         rows.append(f'<tr><th>Reason</th><td>{html.escape(str(reason))}</td></tr>')
 
     return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
 
 
-def _format_ir(data: dict) -> str:
+def _format_ir(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     rows = []
+    if why_m.get("trigger"):
+        rows.append(f'<tr><th>Triggering Condition</th><td><strong>{html.escape(why_m["trigger"])}</strong></td></tr>')
+    if why_m.get("impact"):
+        rows.append(f'<tr><th>Roster Impact</th><td>{html.escape(why_m["impact"])}</td></tr>')
+
     if "steps" in data and isinstance(data["steps"], list):
         for idx, s in enumerate(data["steps"], 1):
             action = s.get("action", f"step {idx}")
@@ -223,7 +389,8 @@ def _format_ir(data: dict) -> str:
     return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
 
 
-def _format_waiver(data: dict) -> str:
+def _format_waiver(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     claims = data.get("claims") or []
     week = data.get("week")
 
@@ -231,6 +398,8 @@ def _format_waiver(data: dict) -> str:
     if week is not None:
         meta.append(f'<div><span class="meta-label">Week:</span> <strong>{html.escape(str(week))}</strong></div>')
     meta.append(f'<div><span class="meta-label">Total Claims:</span> <strong>{len(claims)}</strong></div>')
+    successful = sum(1 for c in claims if c.get("status") == "completed")
+    meta.append(f'<div><span class="meta-label">Settled:</span> <strong class="pos-gain">{successful} won</strong>, {len(claims) - successful} outbid/failed</div>')
     meta_html = f'<div class="data-meta-grid">{"".join(meta)}</div>'
 
     rows = []
@@ -255,7 +424,8 @@ def _format_waiver(data: dict) -> str:
     return meta_html + table
 
 
-def _format_draft_pick(data: dict) -> str:
+def _format_draft_pick(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     row = data.get("board_row") or {}
     p_id = row.get("player_id")
     p_info = _player_info(p_id) if p_id else {}
@@ -285,18 +455,61 @@ def _format_draft_pick(data: dict) -> str:
 
     t_rows = [
         f'<tr><th>Player</th><td><strong>{html.escape(name)}</strong> <span class="team-tag">{html.escape(pos)} &middot; {html.escape(team)}</span> &middot; Bye: {bye or "&mdash;"}</td></tr>',
+    ]
+
+    target_role = why_m.get("target_role")
+    shelf_edge = why_m.get("shelf_edge")
+    if target_role or shelf_edge:
+        role_parts = []
+        if target_role:
+            role_parts.append(f'<strong>{html.escape(target_role)}</strong>')
+        if shelf_edge:
+            role_parts.append(f'<strong class="pos-gain">{html.escape(shelf_edge)}</strong>')
+        t_rows.append(f'<tr><th>Strategic Role</th><td>{" &middot; ".join(role_parts)}</td></tr>')
+
+    opp_parts = []
+    if why_m.get("opp_chance"):
+        opp_parts.append(f'<strong>{html.escape(why_m["opp_chance"])}</strong>')
+    if why_m.get("opp_val"):
+        opp_parts.append(html.escape(why_m["opp_val"]))
+    if why_m.get("wire_val"):
+        opp_parts.append(f'<strong class="pos-gain">{html.escape(why_m["wire_val"])}</strong>')
+    if why_m.get("bye_cov"):
+        opp_parts.append(html.escape(why_m["bye_cov"]))
+    if why_m.get("gone_chance"):
+        opp_parts.append(f'<span class="dim">{html.escape(why_m["gone_chance"])}</span>')
+    if why_m.get("scout_pulse"):
+        pulse_badge = '<span class="badge-add">Reporting: Encouraging</span>' if why_m["scout_pulse"] == "Encouraging" else '<span class="badge-cut">Reporting: Concern</span>'
+        opp_parts.append(pulse_badge)
+    if opp_parts:
+        t_rows.append(f'<tr><th>Opportunity &amp; Risk</th><td>{" &middot; ".join(opp_parts)}</td></tr>')
+
+    mkt_parts = []
+    if adp_ffc is not None:
+        mkt_parts.append(f"FFC 2QB: {adp_ffc}")
+    if adp_live is not None:
+        sd_str = f" (&plusmn;{adp_sd})" if adp_sd is not None else ""
+        mkt_parts.append(f"Live: {adp_live}{sd_str}")
+    if adp_sleeper is not None:
+        mkt_parts.append(f"Sleeper 2QB: {adp_sleeper}")
+    if why_m.get("market_pick"):
+        mkt_parts.append(f'<strong>{html.escape(why_m["market_pick"])}</strong>')
+    mkt_str = " &middot; ".join(mkt_parts) if mkt_parts else "&mdash;"
+
+    t_rows.extend([
         f'<tr><th>Board Value</th><td>Value Rank #{val_rank or "&mdash;"} overall &middot; VORP: <strong class="pos-gain">{html.escape(vorp_str)}</strong> &middot; Pos Rank: {html.escape(str(pos))}{html.escape(str(pos_rank or ""))}</td></tr>',
         f'<tr><th>Consensus &amp; Tier</th><td>Tier {tier or "&mdash;"} &middot; Blend Rank: {blend_rank or "&mdash;"} &middot; ECR: #{ecr or "&mdash;"}</td></tr>',
         f'<tr><th>Projections</th><td><strong>{html.escape(proj_str)}</strong> (Blend: {html.escape(blend_str)} &middot; Expert: {html.escape(expert_str)})</td></tr>',
-        f'<tr><th>Market ADP</th><td>FFC 2QB: {adp_ffc or "&mdash;"} &middot; Live: {adp_live or "&mdash;"} (&plusmn;{adp_sd or "&mdash;"}) &middot; Sleeper 2QB: {adp_sleeper or "&mdash;"}</td></tr>',
-    ]
+        f'<tr><th>Market ADP</th><td>{mkt_str}</td></tr>',
+    ])
     if injury:
         t_rows.append(f'<tr><th>Injury Status</th><td><span class="badge-cut">{html.escape(str(injury))}</span></td></tr>')
 
     return f'<table class="data-table"><tbody>{"".join(t_rows)}</tbody></table>'
 
 
-def _format_keeper(data: dict) -> str:
+def _format_keeper(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     rows = []
     if "keepers" in data and isinstance(data["keepers"], list):
         for k in data["keepers"]:
@@ -314,11 +527,18 @@ def _format_keeper(data: dict) -> str:
                 rows.append(f'<tr><th>{title}</th><td>{" &middot; ".join(details)}</td></tr>')
             else:
                 rows.append(f'<tr><th>{html.escape(str(k).replace("_", " ").title())}</th><td>{html.escape(str(v))}</td></tr>')
+    if why_m.get("rejected"):
+        rows.append(f'<tr><th>Alternatives Evaluated</th><td><span class="dim">{html.escape(why_m["rejected"])}</span></td></tr>')
     return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
 
 
-def _format_draft_slot(data: dict) -> str:
+def _format_draft_slot(data: dict, why_m: dict = None) -> str:
+    why_m = why_m or {}
     rows = []
+    if why_m.get("sim_advantage"):
+        rows.append(f'<tr><th>Simulation Advantage</th><td><strong class="pos-gain">{html.escape(why_m["sim_advantage"])}</strong></td></tr>')
+    if why_m.get("downside_tail"):
+        rows.append(f'<tr><th>Downside Protection</th><td>{html.escape(why_m["downside_tail"])}</td></tr>')
     for k, v in data.items():
         if k == "sim" and isinstance(v, dict):
             sim_str = " &middot; ".join(f"{html.escape(str(sub_k).upper())}: <strong>{float(sub_v):.1f} VORP</strong>" for sub_k, sub_v in v.items())
@@ -360,27 +580,28 @@ def _format_generic(data: dict) -> str:
     return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
 
 
-def format_data_html(kind: str, data: dict) -> str:
+def format_data_html(kind: str, data: dict, rationale: str = "") -> str:
     """Render human-friendly, structured HTML for a decision's data payload."""
     if not data:
         return ""
+    why_m = _parse_why_metrics(kind, rationale)
     if kind == "lineup" and "starters" in data:
-        body = _format_lineup(data)
+        body = _format_lineup(data, why_m)
     elif kind == "free-agent" and ("add" in data or "drop" in data):
-        body = _format_free_agent(data)
+        body = _format_free_agent(data, why_m)
     elif kind == "ir" and ("reserve" in data or "steps" in data):
-        body = _format_ir(data)
+        body = _format_ir(data, why_m)
     elif kind == "waiver" and "claims" in data:
-        body = _format_waiver(data)
+        body = _format_waiver(data, why_m)
     elif kind == "draft-pick" and "board_row" in data:
-        body = _format_draft_pick(data)
+        body = _format_draft_pick(data, why_m)
     elif kind == "keeper":
-        body = _format_keeper(data)
+        body = _format_keeper(data, why_m)
     elif kind == "draft-slot":
-        body = _format_draft_slot(data)
+        body = _format_draft_slot(data, why_m)
     else:
         body = _format_generic(data)
-    return f'<details><summary>data</summary><div class="data-box">{body}</div></details>'
+    return f'<div class="data-box">{body}</div>'
 
 
 def _load() -> list[dict]:
@@ -467,16 +688,33 @@ def render() -> None:
     entries = _load()
     cards = []
     for e in reversed(entries):
-        data_html = format_data_html(e["kind"], e.get("data") or {})
+        kind = e["kind"]
+        rationale = e.get("rationale") or ""
+        decision = e.get("decision") or ""
+        data = e.get("data") or {}
+
+        data_html = format_data_html(kind, data, rationale)
+        if not data_html:
+            content_html = f"""
+    <p class="decision"><strong>Decision:</strong> {html.escape(decision)}</p>
+    <p class="rationale"><strong>Why:</strong> {html.escape(rationale)}</p>"""
+        else:
+            content_html = f"""
+    {data_html}
+    <details class="rationale-toggle">
+      <summary>Rationale &amp; Full Context</summary>
+      <div class="rationale-content">
+        <p class="rationale-decision"><strong>Action:</strong> {html.escape(decision)}</p>
+        <p class="rationale-why"><strong>Why:</strong> {html.escape(rationale)}</p>
+      </div>
+    </details>"""
+
         cards.append(f"""
   <article class="card {e['status']}">
-    <header><span class="kind">{e['kind']}</span>
+    <header><span class="kind">{kind}</span>
       <span class="status">{e['status']}</span>
       <time>{e['ts']}</time></header>
-    <h2>#{e['id']} — {html.escape(e['title'])}</h2>
-    <p class="decision"><strong>Decision:</strong> {html.escape(e['decision'])}</p>
-    <p class="rationale"><strong>Why:</strong> {html.escape(e['rationale'])}</p>
-    {data_html}
+    <h2>#{e['id']} — {html.escape(e['title'])}</h2>{content_html}
   </article>""")
     page = f"""<!DOCTYPE html>
 <html lang="en"><head><meta charset="utf-8">
@@ -496,6 +734,13 @@ def render() -> None:
  details {{ color:var(--ink); font-size:.88rem; margin-top:.6rem; }}
  summary {{ cursor:pointer; color:var(--acc); font-weight:500; font-size:.82rem; user-select:none; }}
  summary:hover {{ text-decoration:underline; }}
+
+ .rationale-toggle {{ margin-top:.7rem; font-size:.84rem; color:var(--dim); }}
+ .rationale-toggle summary {{ color:var(--dim); font-size:.80rem; cursor:pointer; user-select:none; padding:.2rem 0; font-weight:normal; }}
+ .rationale-toggle summary:hover {{ color:var(--acc); }}
+ .rationale-content {{ margin-top:.4rem; padding:.6rem .8rem; background:#121826; border:1px solid #1f293d; border-radius:6px; line-height:1.45; font-size:.84rem; }}
+ .rationale-decision {{ margin:0 0 .4rem; color:var(--ink); }}
+ .rationale-why {{ margin:0; color:var(--dim); }}
  
  .data-box {{ background:#121826; border:1px solid #243048; border-radius:6px; padding:.7rem .9rem; margin-top:.5rem; overflow-x:auto; }}
  .data-meta-grid {{ display:flex; flex-wrap:wrap; gap:1.2rem; margin-bottom:.5rem; font-size:.82rem; color:var(--dim); }}
