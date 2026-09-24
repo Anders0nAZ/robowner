@@ -252,6 +252,14 @@ if slate:
         }
     )
     ui_player_card.attach_player_selection(df_slate, ev_slate, id_col="player_id", week=doc.get("week"))
+    # Each move's reasoning is spread across the trigger, succession, screen
+    # and drop tables below -- and its trigger is often ANOTHER player. Joined
+    # here per move so a row can be read without knowing where to look.
+    for r in slate:
+        trace = decision_audit.move_trace(doc, r.get("add_id"), r.get("drop_id"))
+        with st.expander(f"Why: {r.get('add')} in, {r.get('drop') or 'nobody'} out"):
+            st.markdown("\n".join(f"{i}. **{s['step']}** — {ui.money(s['text'])}"
+                                  for i, s in enumerate(trace, 1)))
 else:
     st.info(f"**This run proposed no moves.** {narrate.slate_absence(doc)}")
 

@@ -178,49 +178,157 @@ def gate_sentence(run: dict) -> str:
     return "Nothing was submitted."
 
 
-def run_story(run: dict) -> list[str]:
-    """Plain-English paragraphs for a decision run of either kind."""
-    out: list[str] = []
-    if run.get("kind") == "news":
-        # The existing narrative is the trigger/room/causal half and is already
-        # derived only from recorded facts. Keep it verbatim.
-        out += news_audit.narrative(run.get("raw") or {})
-    else:
-        out.append(run.get("trigger_story") or "A scheduled roster pass ran.")
-        if run.get("sequence_basis"):
-            out.append("Waiver claims were priced against the "
-                       f"{run['sequence_basis']}, not against the roster as it stood "
-                       "before the free-agent pass — otherwise the same slot would be "
-                       "counted as empty twice.")
+# What a changed field MEANS, for the "what woke it" sentence. The record's
+# field names are exact and unreadable ("espn_body_part", "sleeper_news_content").
+_FIELD_WORDS = {
+    "status": "injury designations", "espn_availability": "ESPN availability",
+    "espn_return_date": "return dates", "espn_body_part": "injury details",
+    "espn_short": "ESPN injury notes", "espn_long": "ESPN injury notes",
+    "sleeper_news_content": "new news stories", "depth_order": "depth-chart moves",
+    "points": "projection changes", "pft": "Pro Football Talk headlines",
+}
 
+
+def _list(names: list[str], limit: int = 3) -> str:
+    names = [n for n in names if n]
+    if len(names) <= limit:
+        return (", ".join(names[:-1]) + " and " + names[-1]) if len(names) > 1 else "".join(names)
+    return ", ".join(names[:limit]) + f" and {len(names) - limit} more"
+
+
+def _sim_verdict(run: dict, add_id, drop_id) -> str | None:
+    """What the lineup simulator said about this exact swap, if it priced it."""
+    for c in run.get("candidates") or []:
+        if c.get("phase") != "simulator":
+            continue
+        raw = c.get("raw") or {}
+        if (str((raw.get("add") or {}).get("player_id") or c.get("player_id")) == str(add_id)
+                and str((raw.get("drop") or {}).get("player_id") or "") == str(drop_id or "")):
+            return c.get("status")
+    return None
+
+
+def _move_story(run: dict, row: dict, submitted: bool) -> str:
+    """One move as sentences, from the same recorded fields as move_trace."""
+    raw = run.get("raw") or {}
+    action = raw.get("action") or {}
+    idx = news_audit.player_index(raw)
+    add, drop = row.get("add") or "?", row.get("drop") or "nobody"
+    add_id, drop_id = str(row.get("add_id") or ""), str(row.get("drop_id") or "")
+    parts = []
+    delta = (action.get("event_deltas") or {}).get(add_id) or {}
+    edge = str(delta.get("causal_edge") or "")
+    change = (f"{float(delta.get('delta_ros') or 0):+.2f} "
+              f"({delta.get('pre_ros')} to {delta.get('post_ros')})")
+    if edge.startswith("successor-of:"):
+        lead = news_audit.label(edge.split(":", 1)[1], idx)
+        parts.append(f"{add} was not in the news himself. He is next in line behind {lead} "
+                     f"in {delta.get('team') or 'his team'}'s {delta.get('pos') or ''} room, "
+                     f"and {lead}'s update moved his rest-of-season value by {change}.")
+    elif edge.startswith("self:"):
+        parts.append(f"{add}'s own news moved his rest-of-season value by {change}.")
+    elif edge.startswith("line_move:"):
+        parts.append(f"A betting-line move in {edge.split(':', 1)[1]} moved {add}'s "
+                      f"rest-of-season value by {change}.")
+    check = next((c for c in action.get("candidate_checks") or []
+                  if str(c.get("player_id")) == add_id
+                  and str(c.get("drop_id") or "") == drop_id), None)
+    if check:
+        parts.append(f"That gave the bot grounds to act on him, and at {check.get('candidate_ros')} "
+                     f"he outvalued {drop} ({check.get('drop_ros')}), the cheapest player it could "
+                     f"cut without leaving a position short: a gain of "
+                     f"{float(check.get('gain') or 0):+.1f} rest-of-season points.")
+    elif row.get("why"):
+        parts.append(f"{add} for {drop}: {row['why']} (gain {float(row.get('gain') or 0):+.1f}).")
+    verdict = _sim_verdict(run, add_id, drop_id)
+    if verdict and verdict != "selected":
+        parts.append(f"The lineup simulator, asked separately whether this swap improves the "
+                     f"lineup we would actually start, rated it '{verdict}'"
+                     + (" — the two checks disagreed, and the move was made on the first."
+                        if submitted else "."))
+    return " ".join(parts)
+
+
+def run_story(run: dict) -> list[str]:
+    """What a run did and why, in plain English, from recorded facts only.
+
+    Leads with the outcome, names the players, says what woke the run in
+    words rather than field names, explains each move through its chain, and
+    says so when the two independent checks disagreed -- the one thing a
+    reader most needs and the old count-by-count version buried.
+    """
+    from robo import decision_audit
+    raw = run.get("raw") or {}
+    moves = decision_audit.slate(run)
+    sent = news_audit.submitted(raw) if run.get("kind") == "news" else run.get("submitted") or []
+    sent_names = {(s.get("add"), s.get("drop")) for s in sent if isinstance(s, dict)}
+    out: list[str] = []
+
+    # 1. What it did.
+    def did(r):
+        add, drop = r.get("add"), r.get("drop")
+        if r.get("channel") == "waiver claim":
+            return (f"put in a ${r.get('bid')} claim for {add}"
+                    + (f" (dropping {drop})" if drop and drop != "(open roster spot)" else ""))
+        return (f"signed {add}" + (f" and released {drop}"
+                                  if drop and drop != "(open roster spot)" else " into an open spot"))
+    done = [r for r in moves if (r.get("add"), r.get("drop")) in sent_names
+            or (r.get("channel") == "waiver claim" and sent)]
+    if done:
+        out.append("This run " + _list([did(r) for r in done], limit=4) + ".")
+    elif moves and not run.get("gated") and not run.get("submission_recorded"):
+        # A scheduled record stores the slate, not the send. Saying "nothing was
+        # sent" here was false: Tuesday's slate went in.
+        out.append("This run built a slate to " + _list([did(r) for r in moves], limit=4)
+                   + ". This record does not store what reached Sleeper — the "
+                     "Transactions page does.")
+    elif moves:
+        out.append("This run wanted to " + _list([did(r) for r in moves], limit=4)
+                   + ", but nothing was sent. " + gate_sentence(run))
+    else:
+        out.append("This run made no roster move. " + slate_absence(run))
+
+    # 2. What woke it.
+    if run.get("kind") == "news":
+        events = raw.get("events") or []
+        # The players whose news actually led to a move go first: they are the
+        # ones a reader is looking for, and a list of eleven buries them.
+        deltas = (raw.get("action") or {}).get("event_deltas") or {}
+        causes = {str(deltas.get(str(r.get("add_id")), {}).get("lead_id") or r.get("add_id"))
+                  for r in moves}
+        ordered = sorted(events, key=lambda e: str(e.get("player_id")) not in causes)
+        names = [e.get("name") for e in ordered]
+        kinds = sorted({_FIELD_WORDS.get(c.get("field"), c.get("field"))
+                        for e in events for c in e.get("changes") or []})
+        lines = raw.get("line_events") or []
+        woke = []
+        if events:
+            woke.append(f"fresh reports on {len(events)} player(s) — {_list(names)} "
+                        f"({_list(kinds, limit=8)})")
+        if lines:
+            woke.append(f"betting-line moves in {_list([e.get('game_id') for e in lines])}")
+        if woke:
+            out.append("It was woken by " + " and ".join(woke) + ".")
+    else:
+        from robo.decision_audit import MODE_STORY
+        out.append(MODE_STORY.get(run.get("mode"), "A scheduled roster pass ran."))
+
+    # 3. Each move, through its chain.
+    for r in moves:
+        story = _move_story(run, r, (r.get("add"), r.get("drop")) in sent_names)
+        if story:
+            out.append(story)
+
+    # 4. Everything it looked at and passed on.
     sim = [c for c in run.get("candidates") or [] if c.get("phase") == "simulator"]
     if sim:
-        selected = sum(c["status"] == "selected" for c in sim)
-        cleared = sum(c["status"] == "cleared, not offered" for c in sim)
-        out.append(
-            f"The simulator then priced {len(sim)} add/drop pairing(s) against our own "
-            f"optimal lineup: {selected} taken, {cleared} worth making but beaten by a "
-            f"better move or by a position we are shorter at, and "
-            f"{len(sim) - selected - cleared} short of a bar. This is a separate question "
-            f"from the screen above — that one asks "
-            f"{PHASE_PURPOSE['causal screen']}, this one asks "
-            f"{PHASE_PURPOSE['simulator']}.")
-
-    moves = (run.get("free_moves") or []) + (run.get("claims") or [])
-    if moves:
-        free_n, claim_n = len(run.get("free_moves") or []), len(run.get("claims") or [])
-        bits = []
-        if free_n:
-            bits.append(f"{free_n} free-agent move(s)")
-        if claim_n:
-            worst = run.get("worst_case_faab")
-            bits.append(f"{claim_n} waiver claim(s)"
-                        + (f" at a worst case of ${worst}" if worst is not None else ""))
-        out.append("This run proposes " + " and ".join(bits) + ".")
-    out.append(gate_sentence(run))
+        taken = sum(c["status"] == "selected" for c in sim)
+        out.append(f"Separately, the lineup simulator priced {len(sim)} possible add/drop "
+                   f"swaps against the lineup we would actually start and found "
+                   + ("none worth making." if not taken else f"{taken} worth making."))
     if run.get("source_errors"):
-        out.append("Source failures suppressed live authority: "
-                   + "; ".join(run["source_errors"]))
+        out.append("Some data sources failed this run, so it was not allowed to act: "
+                   + "; ".join(str(e) for e in run["source_errors"]) + ".")
     return out
 
 

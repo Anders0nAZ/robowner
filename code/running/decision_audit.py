@@ -27,6 +27,7 @@ A corrupt record is skipped rather than allowed to sink the page.
 from __future__ import annotations
 
 import bisect
+import re
 import time
 
 from robo import news_audit, waiver_audit
@@ -417,6 +418,101 @@ def slate(run: dict) -> list[dict]:
                      "gain": c.get("gain"), "ceiling": c.get("ceiling"),
                      "why": c.get("why"), "raw": c})
     return rows
+
+
+def move_trace(run: dict, add_id, drop_id) -> list[dict]:
+    """One move, front to back, as the steps that led to it.
+
+    WHY THIS EXISTS. A run record holds every piece of a move's reasoning, but
+    each lives in a different table: the trigger in `events`, the room
+    succession in `event_deltas` (71 rows on 23 Sep), the screen in
+    `candidate_checks` (102), the drop in `drop_checks`, the result in
+    `free_submitted`. A move whose trigger was ANOTHER player -- George Holani,
+    signed because Jadarian Price's practice note moved the Seattle backfield --
+    mentioned neither player anywhere a reader would look. This joins them for
+    one (add, drop) pair and quotes the record's own words; it decides nothing.
+
+    Each step is {"step", "text"}; a step the record cannot support is omitted
+    rather than guessed.
+    """
+    raw = run.get("raw") or {}
+    action = raw.get("action") or {}
+    idx = news_audit.player_index(raw)
+    add_id = str(add_id) if add_id is not None else None
+    drop_id = str(drop_id) if drop_id is not None else None
+    name = lambda pid: news_audit.label(pid, idx) if pid else "(open roster spot)"
+    steps = []
+
+    # 1. What set it off, followed through the causal edge to its trigger.
+    delta = (action.get("event_deltas") or {}).get(add_id) or {}
+    edge = str(delta.get("causal_edge") or "")
+    lead = None
+    if edge.startswith("self:"):
+        lead = add_id
+    elif edge.startswith("successor-of:"):
+        lead = edge.split(":", 1)[1]
+    elif edge.startswith("line_move:"):
+        game = edge.split(":", 1)[1]
+        ev = next((e for e in raw.get("line_events") or [] if e.get("game_id") == game), {})
+        moved = "; ".join(f"{f} {v[0]} → {v[1]}" for f, v in (ev.get("changes") or {}).items())
+        steps.append({"step": "Trigger", "text":
+                      f"The betting line for {game} moved ({moved or ev.get('board') or 'board change'})."})
+    if lead:
+        ev = next((e for e in raw.get("events") or [] if str(e.get("player_id")) == lead), None)
+        if ev:
+            # A content fingerprint says a story changed, not what it said.
+            said = [f"{c.get('field')}: {str(c.get('after'))[:160]}"
+                    for c in ev.get("changes") or [] if c.get("after") not in (None, "")
+                    and not re.fullmatch(r"[0-9a-f]{12,64}", str(c.get("after")))]
+            steps.append({"step": "Trigger", "text":
+                          f"News on {name(lead)}" + (f" — {'; '.join(said[:2])}" if said else "") + "."})
+        if lead != add_id:
+            steps.append({"step": "Room", "text":
+                          f"{name(add_id)} is next in {name(lead)}'s room "
+                          f"({delta.get('pos') or ''} {delta.get('team') or ''}), so the "
+                          f"news reaches him too."})
+    if delta:
+        steps.append({"step": "Value", "text":
+                      f"{name(add_id)}'s rest-of-season value moved "
+                      f"{delta.get('pre_ros')} → {delta.get('post_ros')} "
+                      f"({float(delta.get('delta_ros') or 0):+.2f}) on the event; "
+                      f"he is a {delta.get('ownership') or 'player'}."})
+
+    # 2. The screen that passed it: the causal channel's check, if it ran.
+    check = next((c for c in action.get("candidate_checks") or []
+                  if str(c.get("player_id")) == add_id
+                  and str(c.get("drop_id") or "") == (drop_id or "")), None)
+    if check:
+        steps.append({"step": "Screen", "text":
+                      f"{check.get('stage')}: {check.get('outcome')} — {check.get('reason')}. "
+                      f"{name(add_id)} {check.get('candidate_ros')} against "
+                      f"{check.get('drop_name') or name(drop_id)} {check.get('drop_ros')}, "
+                      f"gain {float(check.get('gain') or 0):+.2f}."})
+    else:
+        plan = next((r["raw"] for r in slate(run)
+                     if str(r.get("add_id")) == add_id
+                     and str(r.get("drop_id") or "") == (drop_id or "")), None)
+        if plan and plan.get("why"):
+            steps.append({"step": "Screen", "text": f"{plan['why']} (gain {float(plan.get('gain') or 0):+.2f})."})
+    if drop_id:
+        dc = next((c for c in action.get("drop_checks") or []
+                   if str(c.get("drop_id")) == drop_id and str(c.get("candidate_id")) == add_id),
+                  None) or next((c for c in action.get("drop_checks") or []
+                                 if str(c.get("drop_id")) == drop_id), None)
+        if dc:
+            steps.append({"step": "Drop", "text":
+                          f"{dc.get('drop_name') or name(drop_id)} was "
+                          f"{'eligible' if dc.get('eligible') else 'NOT eligible'} to cut: "
+                          f"{dc.get('reason')}."})
+
+    # 3. What happened to it.
+    add_name, drop_name = name(add_id), name(drop_id)
+    sent = any(s.get("add") == add_name and (s.get("drop") in (drop_name, None) or not drop_id)
+               for s in news_audit.submitted(raw))
+    steps.append({"step": "Result", "text":
+                  "Submitted to Sleeper this run." if sent else
+                  "Proposed, not submitted (gated, pending, or refused at the write)."})
+    return steps
 
 
 def _trigger_ids(run: dict) -> set:

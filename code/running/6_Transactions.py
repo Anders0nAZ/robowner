@@ -20,7 +20,7 @@ from __future__ import annotations
 import pandas as pd
 import streamlit as st
 
-from robo import evidence, news_audit, transactions, ui, ui_player_card
+from robo import decision_audit, evidence, news_audit, transactions, ui, ui_player_card
 
 st.title("📜 Transactions")
 ui.gate_banner(st)
@@ -34,6 +34,11 @@ ui_player_card.check_query_params_player()
 @st.cache_data(ttl=120, show_spinner="Reading Sleeper's transaction record…")
 def _ledger():
     return transactions.ledger()
+
+
+@st.cache_data(ttl=120, show_spinner=False)
+def _run(fingerprint: str):
+    return decision_audit.find(fingerprint)
 
 
 if st.button("Refresh from Sleeper", help="The ledger is cached for two minutes."):
@@ -121,6 +126,14 @@ if r.get("entry"):
     st.caption(f"Process entry point: `{r['entry']}`")
 if r.get("reason"):
     st.markdown(ui.money(r["reason"]))
+if r.get("run_fingerprint"):
+    run = _run(r["run_fingerprint"])
+    trace = decision_audit.move_trace(run, (r["add_ids"] or [None])[0],
+                                      (r["drop_ids"] or [None])[0]) if run else []
+    if trace:
+        st.markdown("##### How the run reached it")
+        st.markdown("\n".join(f"{i}. **{s['step']}** — {ui.money(s['text'])}"
+                              for i, s in enumerate(trace, 1)))
 if r["origin"] == transactions.NOT_BOT:
     st.warning("No bot record explains this transaction: it was made on Sleeper by "
                "someone else (a commissioner edit or a change by hand).")
