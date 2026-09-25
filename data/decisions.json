@@ -1171,5 +1171,21 @@
     "13296"
    ]
   }
+ },
+ {
+  "id": 45,
+  "ts": "2026-09-25T16:03:25+00:00",
+  "kind": "free-agent",
+  "title": "Signed Jaylen Wright, released (open roster spot)",
+  "decision": "Jaylen Wright (RB) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 30.2 against 0.0 held, a gain of +30.2 in news mode. weekly-model ROS apples-to-apples; event delta +15.77; coverage preserved.",
+  "status": "final",
+  "data": {
+   "add": "11643",
+   "drop": null,
+   "mode": "news",
+   "week": 3,
+   "gain": 30.18
+  }
  }
 ]
