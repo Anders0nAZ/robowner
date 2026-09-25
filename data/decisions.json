@@ -1187,5 +1187,25 @@
    "week": 3,
    "gain": 30.18
   }
+ },
+ {
+  "id": 46,
+  "ts": "2026-09-25T16:23:25+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Jaylen Wright to injured reserve.",
+  "rationale": "designated Doubtful, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "13296",
+    "7569",
+    "11643"
+   ],
+   "previous": [
+    "13296",
+    "7569"
+   ]
+  }
  }
 ]
