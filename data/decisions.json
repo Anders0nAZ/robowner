@@ -1153,5 +1153,23 @@
    "source": "Roboner NFL model, 469 players, 0.0h old, anchored on proj_2026_wk03_20260925T160042Z.json (per-game anchors, newest of 2; pre-game for every game, 472 players with a game)",
    "modelled": 14
   }
+ },
+ {
+  "id": 44,
+  "ts": "2026-09-25T16:01:23+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Nico Collins to injured reserve.",
+  "rationale": "designated Doubtful, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "13296",
+    "7569"
+   ],
+   "previous": [
+    "13296"
+   ]
+  }
  }
 ]
