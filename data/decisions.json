@@ -1207,5 +1207,21 @@
     "7569"
    ]
   }
+ },
+ {
+  "id": 47,
+  "ts": "2026-09-25T16:23:59+00:00",
+  "kind": "free-agent",
+  "title": "Signed Justice Hill, released (open roster spot)",
+  "decision": "Justice Hill (RB) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 2.8 against 0.0 held, a gain of +2.8 in ros mode. bench, judged on the ceiling; +/- 0.4, ceiling 9.7; season totals 69.0 vs 0.0 (+69.0); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "5995",
+   "drop": null,
+   "mode": "ros",
+   "week": 3,
+   "gain": 2.8
+  }
  }
 ]
