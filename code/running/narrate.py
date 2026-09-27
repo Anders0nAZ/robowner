@@ -63,6 +63,11 @@ def option_story(cand: dict, thresholds: dict | None = None) -> str:
         return (f"{who} looks like {_n(gain)}, but the simulator's own error on that "
                 f"comparison is ±{_n(se, '{:.2f}')}. The gain is not distinguishable "
                 f"from noise, so it is not a reason to touch the roster.")
+    if native == "below minimum-gain bar":
+        bar = t.get("minimum_gain", t.get("starting_gain"))
+        return (f"{who} would cost us a rostered player, and any move that cuts "
+                f"somebody has to be worth at least {_n(bar, '{:.2f}')}. He is "
+                f"worth {_n(gain)}.")
     if native == "below starting-gain bar":
         bar = t.get("starting_gain")
         return (f"{who} would start, and a move into a starting slot has to be worth at "
@@ -249,6 +254,70 @@ def _move_story(run: dict, row: dict, submitted: bool) -> str:
     return " ".join(parts)
 
 
+def _cancel_reasons(txids: list[str]) -> dict:
+    """txid -> the reason its cancellation recorded, from the lifecycle log."""
+    import json
+    from robo import waiver_manager
+    out = {}
+    try:
+        for line in waiver_manager.JOURNAL.read_text(encoding="utf-8").splitlines():
+            r = json.loads(line)
+            if r.get("kind") == "cancelled" and str(r.get("transaction_id")) in txids:
+                spec = r.get("spec") or {}
+                out[str(r["transaction_id"])] = (spec.get("add_name"), r.get("reason"))
+    except (OSError, ValueError):
+        pass
+    return out
+
+
+def _repricing_story(run: dict) -> str | None:
+    """How the waiver claims were re-priced after the free-agent half, if at all.
+
+    The evidence that the claim slate was rebuilt for a new roster lives in the
+    waiver record's `sequence_basis`; without saying so here, a pickup followed
+    by a quiet claims pass looked like the board had never been looked at.
+    """
+    clock = run.get("raw") if run.get("kind") == "clock" else run.get("paired_raw")
+    clock = clock or {}
+    basis = clock.get("sequence_basis") or ""
+    if not basis:
+        return None
+    free = (clock.get("free_plans") or [{}])[0]
+    fadd = (free.get("add") or {}).get("name")
+    fdrop = (free.get("drop") or {}).get("name")
+    if "after the completed free-agent move" in basis:
+        head = (f"After signing {fadd}" + (f" for {fdrop}" if fdrop else "")
+                + ", the waiver claims were repriced against the new roster")
+    elif "did not complete" in basis:
+        head = (f"The move for {fadd} did not go through, so the waiver claims were "
+                f"repriced against the roster as it stood")
+    else:
+        head = "The waiver claims were priced against the current roster"
+    options = (clock.get("claims_audit") or {}).get("options") or []
+    kept = [o for o in options if o.get("selected")]
+    if kept:
+        head += f": {len(kept)} claim(s) in the new slate."
+    elif options:
+        best = max(options, key=lambda o: float(o.get("gain") or 0))
+        head += (f": no claim cleared (the closest, {(best.get('add') or {}).get('name')} "
+                 f"for {(best.get('drop') or {}).get('name')}, "
+                 f"{float(best.get('gain') or 0):+.2f}: {best.get('verdict')}).")
+    else:
+        head += ": nothing on waivers to price."
+    parts = [head]
+    if "retried once" in basis:
+        parts.append("Its own pending claim blocked the free move at first; that claim was "
+                     "cancelled and the move retried in the same run.")
+    cancelled = (clock.get("reconciliation") or {}).get("cancelled") or []
+    if cancelled:
+        reasons = _cancel_reasons([str(t) for t in cancelled])
+        for t in cancelled:
+            name, why = reasons.get(str(t), (None, None))
+            parts.append(f"Cancelled the pending claim for {name or t}"
+                         + (f": {why}." if why else "."))
+    return " ".join(parts)
+
+
 def run_story(run: dict) -> list[str]:
     """What a run did and why, in plain English, from recorded facts only.
 
@@ -265,13 +334,14 @@ def run_story(run: dict) -> list[str]:
     out: list[str] = []
 
     # 1. What it did.
-    def did(r):
+    def did(r, past=True):
         add, drop = r.get("add"), r.get("drop")
         if r.get("channel") == "waiver claim":
             return (f"put in a ${r.get('bid')} claim for {add}"
                     + (f" (dropping {drop})" if drop and drop != "(open roster spot)" else ""))
-        return (f"signed {add}" + (f" and released {drop}"
-                                  if drop and drop != "(open roster spot)" else " into an open spot"))
+        sign, release = ("signed", "released") if past else ("sign", "release")
+        return (f"{sign} {add}" + (f" and {release} {drop}"
+                                   if drop and drop != "(open roster spot)" else " into an open spot"))
     done = [r for r in moves if (r.get("add"), r.get("drop")) in sent_names
             or (r.get("channel") == "waiver claim" and sent)]
     if done:
@@ -279,11 +349,11 @@ def run_story(run: dict) -> list[str]:
     elif moves and not run.get("gated") and not run.get("submission_recorded"):
         # A scheduled record stores the slate, not the send. Saying "nothing was
         # sent" here was false: Tuesday's slate went in.
-        out.append("This run built a slate to " + _list([did(r) for r in moves], limit=4)
+        out.append("This run built a slate to " + _list([did(r, past=False) for r in moves], limit=4)
                    + ". This record does not store what reached Sleeper — the "
                      "Transactions page does.")
     elif moves:
-        out.append("This run wanted to " + _list([did(r) for r in moves], limit=4)
+        out.append("This run wanted to " + _list([did(r, past=False) for r in moves], limit=4)
                    + ", but nothing was sent. " + gate_sentence(run))
     else:
         out.append("This run made no roster move. " + slate_absence(run))
@@ -318,6 +388,11 @@ def run_story(run: dict) -> list[str]:
         story = _move_story(run, r, (r.get("add"), r.get("drop")) in sent_names)
         if story:
             out.append(story)
+
+    # 3b. The waiver half, re-priced after the free half.
+    repriced = _repricing_story(run)
+    if repriced:
+        out.append(repriced)
 
     # 4. Everything it looked at and passed on.
     sim = [c for c in run.get("candidates") or [] if c.get("phase") == "simulator"]

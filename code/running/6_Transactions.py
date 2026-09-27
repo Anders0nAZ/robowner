@@ -83,7 +83,9 @@ table = pd.DataFrame([{
     "Bid": f"${r['bid']}" if r.get("bid") is not None else "",
     "Status": r.get("status") or "",
     "Initiated by": r["initiated_by"],
-    "Why": r.get("reason") or r.get("decision") or r.get("sleeper_note") or "",
+    # A withdrawn claim's live question is why it was withdrawn.
+    "Why": (f"withdrawn: {r['cancel_reason']}" if r.get("cancel_reason") else
+            r.get("reason") or r.get("decision") or r.get("sleeper_note") or ""),
     "Record": r["provenance"],
 } for r in shown])
 
@@ -126,6 +128,14 @@ if r.get("entry"):
     st.caption(f"Process entry point: `{r['entry']}`")
 if r.get("reason"):
     st.markdown(ui.money(r["reason"]))
+if r.get("cancel_reason") or r.get("cancelled_at"):
+    st.markdown("##### Withdrawn")
+    when = news_audit.local_time(r["cancelled_at"]) if r.get("cancelled_at") else "at an unknown time"
+    st.markdown(f"Cancelled {when}"
+                + (f" by `{r['cancelled_by']}`" if r.get("cancelled_by") else "")
+                + f": {ui.money(r.get('cancel_reason') or 'no reason recorded')}.")
+    if r.get("cancel_run"):
+        st.markdown(f"[Open the run whose slate replaced it →](Moves?run={r['cancel_run']})")
 if r.get("run_fingerprint"):
     run = _run(r["run_fingerprint"])
     trace = decision_audit.move_trace(run, (r["add_ids"] or [None])[0],

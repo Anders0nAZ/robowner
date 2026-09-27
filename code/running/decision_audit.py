@@ -201,10 +201,14 @@ def _clock(doc: dict) -> dict:
                      claims_audit.get("options") or []])
     gated = bool(doc.get("gated"))
     roster = list(doc.get("roster") or [])
-    # A scheduled record does not persist what was sent -- only whether the
-    # gate was shut. A closed gate settles it; an open one does not, and
-    # printing "0 submissions" for the open case would be a claim this record
-    # cannot support.
+    # Records from 24 Sep are written after reconcile and carry what it did,
+    # plus the free half the sequence sent. Older ones persist only whether
+    # the gate was shut: a closed gate settles it, an open one does not, and
+    # printing "0 submissions" there would be a claim the record cannot make.
+    recorded = "reconciliation" in doc
+    submitted = (list(doc.get("free_submitted") or [])
+                 + list((doc.get("reconciliation") or {}).get("submitted_claims") or [])
+                 if recorded else [])
     return {
         "kind": CLOCK,
         "at": doc.get("at"),
@@ -244,8 +248,8 @@ def _clock(doc: dict) -> dict:
         "blackout": doc.get("blackout"),
         "control_block": doc.get("control_block"),
         "sequence_basis": doc.get("sequence_basis"),
-        "submitted": [],
-        "submission_recorded": gated,
+        "submitted": submitted,
+        "submission_recorded": gated or recorded,
         "source_errors": [],
         "provenance": {},
         "worst_case_faab": doc.get("worst_case_faab"),
@@ -285,6 +289,17 @@ def _clock_outcome(doc: dict, free: list, claims: list) -> str:
         return "No move cleared"
     if doc.get("gated"):
         return "Proposal only"
+    if "reconciliation" in doc:
+        recon = doc.get("reconciliation") or {}
+        if doc.get("free_submitted") or recon.get("submitted_claims"):
+            return "Submitted"
+        if recon.get("error"):
+            return "Submission failed"
+        if recon.get("blocked"):
+            return "Held: waiver automation blocked"
+        if claims and not recon.get("changed"):
+            return "Already pending (unchanged)"
+        return "Not submitted"
     if not free and claims and _clock_claims_already_pending(claims):
         return "Already pending (unchanged)"
     return "Proposed, submission not recorded"

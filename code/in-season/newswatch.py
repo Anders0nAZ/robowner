@@ -948,14 +948,23 @@ def rebuild_and_move(affected: set[str], apply: bool,
                      pre_expected: dict | None = None,
                      events: list[dict] | None = None,
                      fingerprint: str | None = None) -> dict:
-    from robo import cascade, expected, marginal, moves, refresh
+    from robo import cascade, expected, marginal, moves, refresh, ros
     started = time.monotonic()
     week = season.current_week()
     capture_ok, capture = cascade.capture_week(week)
     export_ok, export = cascade.export_week(week)
     model = refresh.pull_model() if export_ok else "kept prior model"
+    # A decision based on a failed capture can use an old model cache even when
+    # export itself exits successfully. Keep the audit, but withhold writes.
+    if not (capture_ok and export_ok):
+        apply = False
     ex = expected.build(league_id=LEAGUE_ID_2026)
     expected.save(ex)
+    from robo import dependencies
+    dependencies.record("expected")
+    rs = ros.build(league_id=LEAGUE_ID_2026)
+    ros.CACHE.write_text(json.dumps(rs), encoding="utf-8")
+    dependencies.record("ros")
     pre_expected = pre_expected or {"players": {}, "weights": ex.get("weights") or {}}
     deltas = event_deltas(pre_expected, ex, affected, events or [])
     # expected.json is the roster engine. ros.json is the slower legacy/public
@@ -1468,7 +1477,10 @@ def poll(apply: bool = True, _debounced: bool = False,
         try:
             construction = roster_construction.ensure(
                 week=week, league_id=LEAGUE_ID_2026, apply=True,
-                trigger="news pulse", statuses=_statuses(weekly))
+                trigger="news pulse", statuses=_statuses(weekly),
+                # A pickup this pulse made re-sets the lineup; a quiet pulse
+                # only repairs.
+                reoptimize=roster_construction.pending_write())
         except Exception as e:
             construction = {"status": "failed", "error": f"{type(e).__name__}: {e}"}
             errors.append(f"roster construction: {str(e)[:120]}")

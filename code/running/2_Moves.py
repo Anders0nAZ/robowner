@@ -211,15 +211,21 @@ if not filtered_runs:
     st.stop()
 
 # Select specific run
+# Chosen BY POSITION. A fingerprint hashes the events, not the run, so two
+# pulses on the same events share one; keyed on it, the dropdown gave every
+# run with that fingerprint one label and opened the same record for all.
 wanted_run = st.query_params.get("run")
-run_keys = [d["fingerprint"] for d in filtered_runs]
-run_labels = {
-    d["fingerprint"]: f"{news_audit.local_time(d.get('at'))} · {d['kind'].upper()} ({d.get('mode') or 'pulse'}) · {d['outcome']}"
-    for d in filtered_runs
-}
-default_idx = run_keys.index(wanted_run) if wanted_run in run_keys else 0
-chosen_fp = st.selectbox("Select a Decision Run to Audit Front-to-Back:", run_keys, index=default_idx, format_func=run_labels.get)
-doc = next((d for d in filtered_runs if d["fingerprint"] == chosen_fp), filtered_runs[0])
+default_idx = next((i for i, d in enumerate(filtered_runs)
+                    if wanted_run and wanted_run in (d["fingerprint"],
+                                                     d.get("paired_fingerprint"))), 0)
+chosen = st.selectbox(
+    "Select a Decision Run to Audit Front-to-Back:", range(len(filtered_runs)),
+    index=default_idx,
+    format_func=lambda i: (f"{news_audit.local_time(filtered_runs[i].get('at'))} · "
+                           f"{filtered_runs[i]['kind'].upper()} "
+                           f"({filtered_runs[i].get('mode') or 'pulse'}) · "
+                           f"{filtered_runs[i]['outcome']}"))
+doc = filtered_runs[chosen]
 raw = doc.get("raw") or {}
 idx = news_audit.player_index(raw, _name_fallback())
 

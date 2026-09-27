@@ -1218,7 +1218,7 @@ def preflight(resp, ing, tsk, slp, drf, brain) -> list:
     for name in inseason_tasks:
         t = by_name.get(name)
         add("%s scheduled" % name,
-            bool(t and str(t.get("state", "")).lower() == "ready"),
+            bool(t and str(t.get("state", "")).lower() in ("ready", "running")),
             ("next run %s" % _clock((t or {}).get("next"))) if t else "task not found")
 
     # Pass/fail only. No VRAM figure, no load, no model size.

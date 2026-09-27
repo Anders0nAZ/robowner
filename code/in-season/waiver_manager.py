@@ -88,6 +88,19 @@ def pending_spec(row: dict, order: int = 0) -> dict:
             "group_id": None, "kind": None, "submit_order": int(order)}
 
 
+def owned_claim_dropping(drop_id: str) -> str | None:
+    """The txid of a BOT-OWNED pending claim that names this drop, or None.
+
+    Read from the ownership manifest, never from Sleeper's pending list: a
+    claim someone else placed on our roster is not ours to cancel, so it must
+    never be reported as a blocker the bot may clear.
+    """
+    for txid, saved in (load().get("active") or {}).items():
+        if str((saved.get("spec") or {}).get("drop_id") or "") == str(drop_id):
+            return str(txid)
+    return None
+
+
 def normalize_spec(spec: dict, order: int = 0) -> dict:
     out = dict(spec)
     add_val = spec.get("add_id")
@@ -378,11 +391,26 @@ def _alert(message: str, key: str) -> None:
         pass
 
 
+def _cancel_reason(saved: dict, desired: list[dict], why: dict | None) -> str:
+    """Why this pending claim is being withdrawn, in the pass's own words.
+
+    A changed portfolio cancels EVERY owned claim and resubmits the desired
+    set, so "portfolio replaced" covered two opposite cases: a claim that is
+    still wanted and is only being resubmitted, and one the new slate dropped.
+    """
+    spec = saved.get("spec") or {}
+    pair = (str(spec.get("add_id")), str(spec.get("drop_id") or ""))
+    if any((str(d.get("add_id")), str(d.get("drop_id") or "")) == pair for d in desired):
+        return "resubmitted in the new slate (still claimed)"
+    verdict = (why or {}).get(pair)
+    return f"no longer in the slate: {verdict}" if verdict else "no longer in the slate"
+
+
 def _cancel(txid: str, saved: dict, doc: dict, league_id: str,
-            roster_id: int, reason: str) -> dict:
+            roster_id: int, reason: str, run_id: str | None = None) -> dict:
     from robo import sleeper_write as sw
     row = sw.cancel_waiver_claim(txid, int(saved.get("leg") or 0), league_id,
-                                 reason=f"reconcile: {reason}")
+                                 reason=f"reconcile: {reason}", run_id=run_id)
     remaining = {str(x["transaction_id"])
                  for x in sw.pending_waiver_claims(roster_id, league_id)}
     if str(txid) in remaining:
@@ -393,14 +421,14 @@ def _cancel(txid: str, saved: dict, doc: dict, league_id: str,
                                                       "reason": reason},
                                            "left_pending_at": time.time()})
     _write(doc)
-    _event("cancelled", transaction_id=txid, reason=reason,
+    _event("cancelled", transaction_id=txid, reason=reason, run_id=run_id,
            spec=old.get("spec"), response=row)
     return row
 
 
 def _submit(spec: dict, roster_id: int, league_id: str, source: str,
             fingerprint: str, doc: dict, batch_id: str | None = None,
-            week: int | None = None) -> dict:
+            week: int | None = None, run_id: str | None = None) -> dict:
     from robo import sleeper_write as sw
     before = {str(x["transaction_id"])
               for x in sw.pending_waiver_claims(roster_id, league_id)}
@@ -411,7 +439,8 @@ def _submit(spec: dict, roster_id: int, league_id: str, source: str,
         reason=f"{source} slate: ${spec['bid']} for {spec.get('add_name') or spec['add_id']}"
                + (f", simulated gain {spec['gain']:+.1f}"
                   if spec.get("gain") is not None else "")
-               + f" [run {fingerprint}]")
+               + f" [run {run_id or fingerprint}]",
+        run_id=run_id)
     txid = str(row.get("transaction_id") or "")
     if not txid:
         raise RuntimeError("Sleeper returned no transaction_id for submitted claim")
@@ -513,7 +542,8 @@ def portfolio_summary(specs: list[dict]) -> dict:
 
 def reconcile(desired: list[dict], *, league_id: str, roster_id: int,
               week: int, source: str, apply: bool,
-              fingerprint: str | None = None) -> dict:
+              fingerprint: str | None = None, why: dict | None = None,
+              run_id: str | None = None) -> dict:
     """Make Sleeper's bot-owned pending queue equal ``desired``.
 
     This is transactional-style rather than falsely atomic: every mutation is
@@ -573,11 +603,11 @@ def reconcile(desired: list[dict], *, league_id: str, roster_id: int,
                             key=lambda x: (x.get("spec") or {}).get("submit_order", 0)):
             txid = str(saved["transaction_id"])
             _cancel(txid, saved, doc, league_id, roster_id,
-                    "portfolio replaced")
+                    _cancel_reason(saved, desired, why), run_id=run_id)
             result["cancelled"].append(txid)
         for spec in desired:
             saved = _submit(spec, roster_id, league_id, source, fingerprint, doc,
-                            batch_id=batch_id, week=week)
+                            batch_id=batch_id, week=week, run_id=run_id)
             new_ids.append(saved["transaction_id"])
             result["submitted"].append(saved)
         result["applied"] = True

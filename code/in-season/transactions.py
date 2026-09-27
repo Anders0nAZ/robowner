@@ -41,6 +41,10 @@ from pathlib import Path
 from robo import DATA, LEAGUE_ID_2026, ROOT
 
 JOURNAL = DATA / "transaction_journal.jsonl"
+# The live file, captured at import. Only the real league may write to it: a
+# test run outside pytest skips conftest's isolation, and on 24 Sep 2026 that
+# put thirteen rows for league "L" into the ledger the audit app reads.
+_LIVE_JOURNAL = JOURNAL
 DECISIONS = ROOT / "decision-log" / "data" / "decisions.json"
 NEWS_LOG = ROOT / "news-watch.log"
 ROSTER_ID = 4
@@ -82,9 +86,15 @@ def journal(kind: str, *, league_id: str = LEAGUE_ID_2026,
             bid: int | None = None, reserve: list | None = None,
             reserve_before: list | None = None, transaction_id: str | None = None,
             ok: bool = True, error: str | None = None,
-            reason: str | None = None, path: list | None = None) -> None:
-    """Record one roster write. Never raises."""
+            reason: str | None = None, path: list | None = None,
+            run_id: str | None = None) -> None:
+    """Record one roster write. Never raises.
+
+    `run_id` ties a claim cancellation to the pass whose slate replaced it.
+    """
     try:
+        if JOURNAL == _LIVE_JOURNAL and league_id != LEAGUE_ID_2026:
+            return
         if path is None:
             from robo import construction
             path = construction.path()
@@ -93,7 +103,7 @@ def journal(kind: str, *, league_id: str = LEAGUE_ID_2026,
                "bid": bid, "reserve": reserve, "reserve_before": reserve_before,
                "transaction_id": str(transaction_id) if transaction_id else None,
                "ok": ok, "error": (error or None) and str(error)[:300],
-               "path": path, "entry": _entry(), "reason": reason}
+               "path": path, "entry": _entry(), "reason": reason, "run_id": run_id}
         JOURNAL.parent.mkdir(parents=True, exist_ok=True)
         with JOURNAL.open("a", encoding="utf-8") as fh:
             fh.write(json.dumps(row, sort_keys=True, default=str) + "\n")
@@ -287,7 +297,9 @@ def ledger(season: str = "2026", weeks=None, league_id: str = LEAGUE_ID_2026,
         at = (t.get("created") or 0) / 1000 or None
         settled = (t.get("status_updated") or 0) / 1000 or None
         adds, drops = _ours(t.get("adds")), _ours(t.get("drops"))
-        jr = (by_txn.get(txn) or [None])[0]
+        # The SUBMISSION row says who instructed it; a cancel row is a second,
+        # later journal entry for the same transaction and never replaces it.
+        jr = _submission_row(by_txn.get(txn))
         lc = lifecycle.get(txn) or []
         submitted = next((r for r in lc if r.get("kind") == "submitted"), None)
         dec = decision_by_txn.get(txn)
@@ -336,6 +348,52 @@ def ledger(season: str = "2026", weeks=None, league_id: str = LEAGUE_ID_2026,
             "rationale": (dec or {}).get("rationale"),
             "run_fingerprint": (run or {}).get("fingerprint"),
             "transaction_id": txn, "sleeper": t, "journal": jr,
+            **_cancel_fields(_cancel_info(txn, by_txn, lifecycle), runs),
+        })
+
+    # CLAIMS SLEEPER NEVER LISTS. A claim cancelled before it settled is absent
+    # from Sleeper's transaction feed entirely, so our own records are its only
+    # trace: the journal (from 23 Sep) or the waiver lifecycle log (before).
+    seen = {r["transaction_id"] for r in rows}
+    claim_txns = ({txn for txn, rs in by_txn.items()
+                   if any(x.get("kind") == "claim" and x.get("ok", True) for x in rs)}
+                  | {txn for txn, evs in lifecycle.items()
+                     if any(e.get("kind") == "submitted" for e in evs)})
+    for txn in sorted(claim_txns - seen):
+        jr = _submission_row(by_txn.get(txn))
+        sub = next((e for e in lifecycle.get(txn) or [] if e.get("kind") == "submitted"), None)
+        spec = (sub or {}).get("spec") or {}
+        add_id = (jr or {}).get("adds", [None])[0] if jr and jr.get("adds") else spec.get("add_id")
+        drop_id = (jr or {}).get("drops", [None])[0] if jr and jr.get("drops") else spec.get("drop_id")
+        cancel = _cancel_info(txn, by_txn, lifecycle)
+        at = (jr or sub or {}).get("at")
+        if jr:
+            path, prov, reason, entry = jr.get("path") or [], "journal", jr.get("reason"), jr.get("entry")
+        else:
+            src = (sub or {}).get("source")
+            path = ["news pulse" if src == "newswatch" else (src or "waivers")]
+            prov, reason, entry = "lifecycle", _claim_reason(sub or {}), None
+        fp = (sub or {}).get("fingerprint")
+        run = next((r for r in runs if fp and r.get("fingerprint") == fp), None)
+        if run is None and at:
+            run = _nearest(runs, at, RUN_MATCH_S, key=lambda r: r.get("at"), after_only=True)
+        rows.append({
+            "when": at, "settled_at": (cancel or {}).get("at"),
+            "type": "claim cancelled" if cancel else "claim (not on Sleeper)",
+            "week": None,
+            "adds": [name(add_id)] if add_id else [],
+            "drops": [f"{name(drop_id)} (not executed)"] if drop_id else [],
+            "add_ids": [str(add_id)] if add_id else [], "drop_ids": [],
+            "bid": (jr or {}).get("bid") if jr else spec.get("bid"),
+            "status": "cancelled" if cancel else "unknown",
+            "sleeper_note": None,
+            "initiated_by": " > ".join(path) if path else "unrecorded",
+            "origin": _origin(path, True), "path": path, "entry": entry,
+            "reason": reason, "provenance": prov, "decision_id": None,
+            "decision": None, "rationale": None,
+            "run_fingerprint": (run or {}).get("fingerprint"),
+            "transaction_id": txn, "sleeper": None, "journal": jr,
+            **_cancel_fields(cancel, runs),
         })
 
     # IR moves are not Sleeper transactions; the journal is their only record.
@@ -378,6 +436,46 @@ def ledger(season: str = "2026", weeks=None, league_id: str = LEAGUE_ID_2026,
             r["week"] = min(dated, key=lambda d: abs(d["when"] - r["when"]))["week"]
     rows.sort(key=lambda r: r["when"] or 0, reverse=True)
     return rows
+
+
+def _submission_row(rows: list | None) -> dict | None:
+    """The row that CREATED a transaction: never its cancel, landed if any."""
+    subs = [r for r in rows or [] if r.get("kind") != "cancel"]
+    return next((r for r in subs if r.get("ok", True)), subs[0] if subs else None)
+
+
+def _cancel_info(txn: str, by_txn: dict, lifecycle: dict) -> dict | None:
+    """Why and when a claim was withdrawn: the journal's cancel row, else the
+    lifecycle log's `cancelled` event (claims from before the journal)."""
+    jc = next((r for r in by_txn.get(txn) or []
+               if r.get("kind") == "cancel" and r.get("ok", True)), None)
+    lc = next((e for e in lifecycle.get(txn) or [] if e.get("kind") == "cancelled"), None)
+    if not jc and not lc:
+        return None
+    return {"at": (jc or lc).get("at"),
+            "reason": (jc or {}).get("reason") or (lc or {}).get("reason"),
+            "path": (jc or {}).get("path") or [],
+            "run_id": (jc or {}).get("run_id") or (lc or {}).get("run_id")}
+
+
+def _cancel_fields(cancel: dict | None, runs: list) -> dict:
+    """Row fields for a withdrawal, with the run whose slate replaced it."""
+    if not cancel:
+        return {}
+    rid = cancel.get("run_id")
+    # Exact first: the id reconcile stamped, carried by the waiver record the
+    # pass wrote (directly, or through the news run it was paired into).
+    run = next((r for r in runs if rid and rid in (
+        r.get("fingerprint"), r.get("paired_fingerprint"),
+        (r.get("raw") or {}).get("run_id"), (r.get("paired_raw") or {}).get("run_id"))),
+        None)
+    if run is None and cancel.get("at"):
+        run = _nearest(runs, cancel["at"], RUN_MATCH_S, key=lambda r: r.get("at"),
+                       after_only=True)
+    return {"cancelled_at": cancel.get("at"),
+            "cancelled_by": " > ".join(cancel.get("path") or []) or None,
+            "cancel_reason": cancel.get("reason"),
+            "cancel_run": (run or {}).get("fingerprint")}
 
 
 def _ir_row(at, kind, pid, pname, path, prov, reason, entry, jr) -> dict:

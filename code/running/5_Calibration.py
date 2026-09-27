@@ -50,8 +50,9 @@ def load():
 
 fit, table, streaming_fit, returns_fit = load()
 
-roles_tab, stream_tab, returns_tab = st.tabs(
-    ["Who inherits a job", "Streaming a defence", "When a man comes back"]
+roles_tab, stream_tab, returns_tab, score_tab = st.tabs(
+    ["Who inherits a job", "Streaming a defence", "When a man comes back",
+     "Forecast scorecard"]
 )
 
 # ------------------------------------------------------------------ roles
@@ -259,3 +260,72 @@ with returns_tab:
                 )
             with right:
                 st.line_chart(rdf.set_index("weeks out"), height=300)
+
+# ------------------------------------------------------------------ scorecard
+with score_tab:
+    from robo import scorecard
+
+    ledger = scorecard.read_ledger()
+    if not ledger:
+        st.info("No scorecard yet. RobonerScorecard runs Tuesdays at 10:30; "
+                "`python -m robo.scorecard --backfill` scores every completed week.")
+    else:
+        st.caption(
+            "Every forecast the bot held **before each player's own game**, scored "
+            "against what he scored. This measures only — nothing here changes a "
+            "setting. `reconstructed` means the pre-game forecast was not kept for "
+            "that week and a later file stood in for it; `first_observed` means a "
+            "scout verdict's time is when it was first seen, not proof it was in "
+            "force from then. Compare like-labelled rows."
+        )
+        df = pd.DataFrame(ledger)
+
+        def fmt(r):
+            if r.get("se") is not None and not pd.isna(r.get("se")):
+                return f"{r['mean']:+.2f} ± {r['se']:.2f}"
+            return "" if pd.isna(r.get("mean")) else f"{r['mean']:+.2f}"
+
+        st.subheader("Kickoff accuracy — MAE by source")
+        acc = df[df.metric == "kickoff_accuracy"].copy()
+        acc["source"] = acc["source"] + " (" + acc["label"] + ")"
+        groups = ["all", "flagged", "never_flagged", "status:questionable", "status:out",
+                  "pos:QB", "pos:RB", "pos:WR", "pos:TE"]
+        piv = acc[acc.group.isin(groups)].pivot_table(
+            index=["week", "group"], columns="source", values="mae", aggfunc="first")
+        st.dataframe(piv.round(2), use_container_width=True)
+        n = acc[acc.group.isin(groups)].pivot_table(
+            index=["week", "group"], columns="source", values="n", aggfunc="first")
+        with st.expander("players behind each cell"):
+            st.dataframe(n, use_container_width=True)
+
+        left, right = st.columns(2)
+        with left:
+            st.subheader("Persistent error")
+            st.caption("The part of a miss that repeats week to week — σ for the "
+                       "optimizer's-curse correction. Per-week noise does not repeat.")
+            pe = df[df.metric == "persistent_error"][["week", "source", "n", "corr", "sigma_e"]]
+            st.dataframe(pe.sort_values(["week", "source"]), use_container_width=True, hide_index=True)
+        with right:
+            st.subheader("Sleeper reprice lag (hours)")
+            lg = df[df.metric == "sleeper_reprice_lag_h"][["week", "group", "n", "mean", "p90"]]
+            st.dataframe(lg.rename(columns={"mean": "median"}).sort_values(["week", "group"]),
+                         use_container_width=True, hide_index=True)
+
+        st.subheader("Scout verdicts — actual minus Sleeper at kickoff")
+        sc = df[df.metric == "scout_residual_vs_sleeper"].copy()
+        sc["residual"] = sc.apply(fmt, axis=1)
+        st.dataframe(sc[["week", "group", "label", "n", "residual"]]
+                     .sort_values(["week", "label", "group"]),
+                     use_container_width=True, hide_index=True)
+
+        other = df[df.metric.isin(["model_coverage_p10_p90", "executed_move_points",
+                                   "scout_return_week"])].copy()
+        if not other.empty:
+            st.subheader("Coverage, return weeks, executed moves")
+            other["value"] = other.apply(fmt, axis=1)
+            st.dataframe(other[["week", "metric", "group", "label", "n", "value"]]
+                         .sort_values(["week", "metric"]),
+                         use_container_width=True, hide_index=True)
+            st.caption("Executed moves are a sanity check — added minus dropped "
+                       "player's points — not the simulator's lineup gain, which "
+                       "also depends on who would have started.")

@@ -45,6 +45,36 @@ MAX_AGE_H = 30.0
 settings.apply(__name__, globals())
 
 
+VINTAGES = DATA / "nflmodel" / "out" / "vintages"
+
+
+def vintage_before(season_yr, week: int, t: float,
+                   vdir=None) -> dict | None:
+    """The newest kept model forecast generated strictly before `t` (epoch).
+
+    nflmodel.export keeps one gzipped vintage per distinct simulation, because
+    the weekly file is overwritten by every export and on Tuesday says nothing
+    about what the model believed before Thursday's game. Read here, as a file,
+    for the same reason as everything else in this module. None is an answer:
+    weeks exported before vintages existed have nothing to return, and the
+    caller must label whatever it falls back to.
+    """
+    import gzip
+    best = None
+    for p in sorted((vdir or VINTAGES).glob(f"weekly_{season_yr}_wk{int(week):02d}_*.json.gz")):
+        stamp = datetime.strptime(p.name.rsplit("_", 1)[-1][:16],
+                                  "%Y%m%dT%H%M%SZ").replace(tzinfo=timezone.utc)
+        if stamp.timestamp() < t:
+            best = p
+    if best is None:
+        return None
+    try:
+        with gzip.open(best, "rt", encoding="utf-8") as fh:
+            return json.load(fh)
+    except (OSError, ValueError):
+        return None
+
+
 def _age_hours(stamp: str) -> float:
     t = datetime.fromisoformat(stamp)
     if t.tzinfo is None:

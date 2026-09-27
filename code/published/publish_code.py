@@ -75,13 +75,17 @@ CATEGORIES = [
       "curate_media", "export_chat", "pull_chat_history"]),
     ("published", "Showing its work",
      "The three public pages and this publisher. Every consequential action "
-     "writes a record before anyone asks for one.",
-     ["decisions", "devlog", "status", "publish_code", "ctx_watch"]),
+     "writes a record before anyone asks for one, and every forecast is scored "
+     "against what actually happened.",
+     ["decisions", "devlog", "status", "publish_code", "ctx_watch",
+      "scorecard", "sleeper_lag"]),
     ("running", "Keeping it running",
      "The daily pipeline, the job that puts a decision run in front of every "
-     "kickoff, the tunable settings behind both, and the two local apps: one "
-     "that edits the settings, one that explains the decisions.",
-     ["__init__", "refresh", "prekick", "settings", "runlock", "admin_gui",
+     "kickoff, the guard that retries a job that failed or was missed, the "
+     "tunable settings behind them, and the two local apps: one that edits the "
+     "settings, one that explains the decisions.",
+     ["__init__", "refresh", "prekick", "settings", "runlock", "job_run",
+      "job_guard", "dependencies", "ops_alerts", "admin_gui",
       "audit_gui", "ui", "ui_player_card", "decision_audit", "narrate",
       "evidence", "value_backfill", "0_Now", "1_Lineups", "2_Moves",
       "3_Projections", "4_AI_Scout", "5_Calibration", "6_Transactions"]),

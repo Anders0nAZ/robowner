@@ -14,17 +14,28 @@ Used in two directions:
 
 from __future__ import annotations
 
+import bisect
 import math
+import statistics
 from functools import lru_cache
 from typing import Any
 
 from robo import DATA, settings
 
-# Benchmark baselines by position for superflex / 2QB scoring.
-# Wire base is roughly what a replacement-level free agent provides.
-# Starter base is roughly what an established starter provides.
-WIRE_BASE = {"QB": 2.0, "RB": 4.0, "WR": 5.0, "TE": 3.0, "K": 6.0, "DEF": 5.0}
-STARTER_BASE = {"QB": 17.0, "RB": 13.0, "WR": 13.0, "TE": 9.5, "K": 8.0, "DEF": 8.0}
+# Production, ceiling and ROS are scored as a PERCENTILE WITHIN POSITION over
+# the pool the league actually trades in: every rostered man plus the best
+# POOL_WIRE_DEPTH unrostered. Hand-set wire/starter baselines put a 7.1-point
+# TE at 0.63 and a 7.2-point WR at 0.0 on the same week; this league's own
+# distribution puts them at 0.47 and 0.29. The simulator's wire floor cannot
+# anchor the scale instead -- at QB it is one backup's single spot start.
+POOL_WIRE_DEPTH = 15
+# Without a believable roster read, the pool is the top FALLBACK_POOL per
+# position by rate -- about what the league holds plus the wire's best.
+MIN_ROSTERED_SEEN = 100
+FALLBACK_POOL = 60
+# Weeks ahead the production rate is read over. A bye or a one-week
+# Questionable dip is a week, not the player.
+FORWARD_WEEKS = 5
 
 # Quality weights summing to 1.0.
 Q_WEIGHT_PROJ = 0.25
@@ -103,6 +114,84 @@ def _players_dump() -> dict[str, dict[str, Any]]:
         return {}
 
 
+def _fwd_rate(row: dict, week: int) -> float:
+    """Median points in the weeks he plays over the next FORWARD_WEEKS.
+
+    Read through `marginal.weekly_points`, the simulator's own per-week figure.
+    A man out for the whole window falls back to the median of every week he
+    is projected to play -- his healthy rate, not his best week.
+    """
+    from robo import marginal
+    by_w = row.get("by_week") or {}
+
+    def pts(w: int) -> float:
+        d = by_w.get(str(w)) or {}
+        cell = (float(d.get("s1") or 0.0), 0.0, 0.0, 0.0, 0.0, 0.0, None,
+                float(d.get("provider") or 0.0))
+        return marginal.weekly_points({"weeks": {w: cell}}, w)
+
+    near = [v for v in (pts(w) for w in range(week, week + FORWARD_WEEKS)) if v > 0]
+    if near:
+        return statistics.median(near)
+    every = [v for v in (pts(int(w)) for w in by_w) if v > 0]
+    return statistics.median(every) if every else 0.0
+
+
+def _ros_rate(row: dict, week: int, weeks_left: int) -> float:
+    """ROS points per week he is expected to be available."""
+    ros_pts = float(row.get("ros") or 0.0)
+    active = sum(1 for w, b in (row.get("by_week") or {}).items()
+                 if int(w) >= week and float(b.get("a") or 0.0) > 0.2)
+    return ros_pts / active if active else ros_pts / max(1, weeks_left)
+
+
+_POOL: dict = {}
+
+
+def _pool(table: dict, week: int, weeks_left: int, model_week: dict) -> dict:
+    """{pos: {"rate"|"ros"|"p90": sorted values}} over rostered + top of the wire."""
+    # Identity, not id(): the cache holds both objects, so a recycled id can
+    # never hand one table's pool to another.
+    hit = _POOL.get("key")
+    if hit and hit[0] is table and hit[1] is model_week and hit[2] == week:
+        return _POOL["out"]
+    try:
+        from robo import season
+        held = {str(p) for p in season.rostered_ids()}
+    except Exception:
+        held = set()
+    # A roster read that misses most of a 12-team league would shrink the pool
+    # to a handful of men and inflate every percentile; rank by rate instead.
+    if len(held & set(table.get("players") or {})) < MIN_ROSTERED_SEEN:
+        held = set()
+    by_pos: dict[str, list[tuple]] = {}
+    for pid, row in (table.get("players") or {}).items():
+        pos = row.get("pos")
+        if pos not in ("QB", "RB", "WR", "TE"):
+            continue
+        p90 = (model_week.get(pid) or {}).get("p90")
+        by_pos.setdefault(pos, []).append(
+            (pid in held, _fwd_rate(row, week), _ros_rate(row, week, weeks_left),
+             None if p90 is None else float(p90)))
+    out = {}
+    for pos, rows in by_pos.items():
+        if held:
+            wire = sorted((r for r in rows if not r[0]), key=lambda r: -r[1])
+            members = [r for r in rows if r[0]] + wire[:POOL_WIRE_DEPTH]
+        else:
+            members = sorted(rows, key=lambda r: -r[1])[:FALLBACK_POOL]
+        out[pos] = {"rate": sorted(r[1] for r in members),
+                    "ros": sorted(r[2] for r in members),
+                    "p90": sorted(r[3] for r in members if r[3] is not None)}
+    _POOL.update(key=(table, model_week, week), out=out)
+    return out
+
+
+def _pct(vals: list[float], x: float) -> float:
+    """Share of the pool strictly below x."""
+    return bisect.bisect_left(vals, x) / len(vals) if vals else 0.0
+
+
 def score(player_id: str,
           week: int | None = None,
           league_id: str | None = None,
@@ -140,13 +229,19 @@ def score(player_id: str,
 
     inj_status = row.get("injury_status") or p_meta.get("injury_status")
     is_injured = inj_status in ("IR", "IR-R", "PUP-P", "PUP-R", "NFI-R", "Out", "OUT", "SUS")
-    floor_src = str(row.get("floor_source") or "").lower()
-    scout_basis = str(row.get("scout_basis") or "").lower()
-    is_out_for_season = "season" in floor_src or "season" in scout_basis
+    # Structured markers only. A substring match on "season" caught a scout
+    # basis reading "out-for-season prose conflicts with ACTIVE" -- a man
+    # explicitly NOT ruled out -- and a "4-6 week rehab ... season" note.
+    try:
+        from robo import injuries
+        feed_out = injuries.out_for_season(pid)
+    except Exception:
+        feed_out = False
+    is_out_for_season = feed_out or row.get("floor_source") == "espn (out for the season)"
 
     by_w = row.get("by_week") or {}
-    s1_vals = [float(b.get("s1") or 0.0) for b in by_w.values() if float(b.get("s1") or 0.0) > 0]
-    healthy_s1 = max(s1_vals) if s1_vals else 0.0
+    remaining = sum(1 for w in by_w if int(w) >= week)
+    weeks_left = remaining or max(1, 17 - week + 1)
 
     # 2. Weekly projection & ceiling from model_week
     if model_week is None:
@@ -157,6 +252,7 @@ def score(player_id: str,
         except Exception:
             model_week = {}
     m_info = model_week.get(pid) or {}
+    pool = _pool(table, week, weeks_left, model_week).get(pos) or {}
 
     # 3. Buzz & Ownership Combo
     # Search rank as global ownership proxy (100% owned for top 120, gradual decay)
@@ -186,69 +282,42 @@ def score(player_id: str,
     f_buzz = min(1.0, owned_est + f_net_adds * (1.0 - owned_est))
     f_buzz = round(f_buzz, 3)
 
-    w_base = WIRE_BASE.get(pos, 4.0)
-    s_base = STARTER_BASE.get(pos, 12.0)
-    denom = max(1.0, s_base - w_base)
+    # Component A: production rate over the next FORWARD_WEEKS, percentile
+    # within position.
+    eval_proj = 0.0 if is_out_for_season else _fwd_rate(row, week)
+    f_proj = _pct(pool.get("rate") or [], eval_proj) if eval_proj > 0 else 0.0
 
-    # Component A: Current week projection (with healthy baseline fallback for non-season-ending injuries)
-    wk_cell = by_w.get(str(week)) or {}
-    wk_pts = m_info.get("mean")
-    if wk_pts is None:
-        wk_pts = wk_cell.get("pts") or wk_cell.get("final") or 0.0
-    wk_pts = float(wk_pts)
-
-    if is_out_for_season:
-        eval_proj = 0.0
-    elif is_injured and healthy_s1 > 0:
-        eval_proj = healthy_s1
-    else:
-        eval_proj = wk_pts
-    f_proj = max(0.0, min(1.0, (eval_proj - w_base) / denom))
-
-    # Component B: Distributional ceiling (p90)
+    # Component B: this week's p90, percentile within position. No game or no
+    # model row this week falls back to the production percentile.
     p90 = m_info.get("p90")
     if is_out_for_season:
-        eval_ceil = 0.0
-    elif is_injured and healthy_s1 > 0:
-        eval_ceil = float(p90) if p90 is not None and float(p90) > healthy_s1 else healthy_s1 * 1.5
+        eval_ceil, f_ceil = 0.0, 0.0
+    elif p90 is not None and float(p90) > 0 and not is_injured:
+        eval_ceil = float(p90)
+        f_ceil = _pct(pool.get("p90") or [], eval_ceil)
     else:
-        if p90 is not None:
-            eval_ceil = float(p90)
-        else:
-            eval_ceil = wk_pts * 1.5 if wk_pts > 0 else 0.0
-    f_ceil = max(0.0, min(1.0, (eval_ceil - 9.0) / 14.0))
+        eval_ceil, f_ceil = None, f_proj
 
-    # Component C: Rest-of-season baseline (normalized across active projected games)
-    total_weeks = 17
-    weeks_left = max(1, total_weeks - week + 1)
+    # Component C: ROS per available week, percentile within position.
     ros_pts = float(row.get("ros") or 0.0)
-    ros_per_wk = ros_pts / weeks_left
-
-    active_weeks = sum(1 for w, b in by_w.items() if int(w) >= week and float(b.get("a") or 0.0) > 0.2)
-    if is_out_for_season or ros_pts <= 0:
-        f_ros = 0.0
-    elif active_weeks > 0:
-        ros_rate = ros_pts / active_weeks
-        f_ros = max(0.0, min(1.0, (ros_rate - w_base) / denom))
-    else:
-        f_ros = max(0.0, min(1.0, (ros_per_wk - w_base) / denom))
+    ros_per_wk = _ros_rate(row, week, weeks_left)
+    f_ros = (0.0 if is_out_for_season or ros_pts <= 0
+             else _pct(pool.get("ros") or [], ros_per_wk))
 
     # Component D: Role, inheritance & takeover potential
     rank = row.get("rank")
     absorbs = float(row.get("absorbs") or 0.0)
+    wk_cell = by_w.get(str(week)) or {}
     s2 = float(wk_cell.get("s2") or 0.0)
-    takeover = 0.0
-    try:
-        from robo import roles
-        takeover = float(roles.takeover_rate(pos, 0, None)[0])
-    except Exception:
-        takeover = 0.0
 
     if is_out_for_season:
         f_role = 0.15
-    elif rank == 1 or (rank is None and is_injured and healthy_s1 >= s_base):
+    elif rank == 1 or (rank is None and is_injured and f_proj >= 0.5):
         f_role = 1.0
-    elif rank is None and is_injured and healthy_s1 > w_base:
+    elif pos == "WR" and rank in (2, 3):
+        # Three-receiver sets: WR2 and WR3 are jobs, not a wait for a vacancy.
+        f_role = 1.0
+    elif rank is None and is_injured and f_proj > 0:
         f_role = 0.65
     elif s2 > 3.0:
         # High inherited opportunity from an injured lead
@@ -257,6 +326,17 @@ def score(player_id: str,
         f_role = 0.35 + 0.40 * absorbs
     else:
         f_role = 0.15
+    # His own takeover prior (draft capital, experience, usage), called the way
+    # the simulator calls it and for the same heirs only.
+    takeover = 0.0
+    try:
+        from robo import marginal, roles, season as _season
+        if (rank is not None and 2 <= rank <= marginal.TAKEOVER_MAX_RANK
+                and pos in roles.OPPORTUNITY):
+            takeover = float(roles.takeover_prior(
+                pid, pos, _season.SEASON, team=team or None, week=week).get("p") or 0.0)
+    except Exception:
+        takeover = 0.0
     if takeover > 0.10:
         f_role = min(1.0, f_role + 0.20 * (takeover / 0.20))
 
@@ -300,9 +380,10 @@ def score(player_id: str,
     else:
         option_value = 0.0
 
+    ceil_txt = f"p90 {eval_ceil:.1f}" if eval_ceil is not None else "p90 n/a"
     reason = (
-        f"{tier} (Q={q:.2f}): proj {eval_proj:.1f}pts ({f_proj:.2f}), "
-        f"p90 {eval_ceil:.1f} ({f_ceil:.2f}), ROS {ros_per_wk:.1f}/wk ({f_ros:.2f}), "
+        f"{tier} (Q={q:.2f}): rate {eval_proj:.1f}pts ({f_proj:.2f}), "
+        f"{ceil_txt} ({f_ceil:.2f}), ROS {ros_per_wk:.1f}/wk ({f_ros:.2f}), "
         f"buzz {f_buzz:.2f}, role {f_role:.2f}; rival bid mult {rival_bid_mult:.2f}x"
     )
 

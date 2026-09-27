@@ -52,6 +52,7 @@ import re
 import time
 from datetime import datetime
 from email.utils import parsedate_to_datetime
+from pathlib import Path
 
 from robo import DATA, ctx_watch, injuries, roles, season, settings
 from robo import sleeper_read as api
@@ -620,10 +621,83 @@ def write_verdicts(verdicts: list[dict], model: str,
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "judged_now": len(fresh), "reused": len(reuse or {}),
            "verdicts": merged}
+    # Reused rows are not new judgements, so only the fresh ones are history.
+    _publish(out, list(fresh.values()), "write_verdicts")
+    return out
+
+
+def history_path() -> Path:
+    """Beside VERDICTS, resolved per call, so a test that patches VERDICTS
+    moves the history with it."""
+    return VERDICTS.with_name("news_verdicts_history.jsonl")
+
+
+def _publish(out: dict, changed: list[dict], writer: str) -> None:
+    """THE ONE WRITER of the verdict store, and the history hook.
+
+    The store keeps each player's LATEST verdict only, so without this every
+    re-judge erased the one before it and there was no way to check whether a
+    call came true -- Jayden Reed's "avoid, may miss the season" would have been
+    unscoreable the moment he was judged again. Every changed row is appended to
+    news_verdicts_history.jsonl after the atomic publish. The append never
+    raises: losing a history row is better than failing a publish.
+    """
     tmp = VERDICTS.with_suffix(".json.tmp")
     tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
     tmp.replace(VERDICTS)
-    return out
+    try:
+        now = time.time()
+        with history_path().open("a", encoding="utf-8") as fh:
+            for row in changed:
+                fh.write(json.dumps({**row, "logged_at": now, "writer": writer,
+                                     "model": out.get("model")},
+                                    sort_keys=True, default=str) + "\n")
+    except Exception:
+        pass
+
+
+def backfill_history(events_dir: Path | None = None) -> int:
+    """Seed the history from the verdicts the news pulse embedded in its records.
+
+    Every pulse record since 13 Sep 2026 carries the verdicts it consulted
+    under timing.advisory_reviews; stamped with the record's own time, they are
+    the only history that exists from before the log did. Consecutive identical
+    judgements of one player collapse to the first. Runs once: it refuses if a
+    backfill is already in the file, and keeps any live rows, re-sorted by time.
+    """
+    events_dir = events_dir or (DATA / "news_events")
+    path = history_path()
+    live = []
+    if path.exists():
+        live = [json.loads(l) for l in path.read_text(encoding="utf-8").splitlines()
+                if l.strip()]
+        if any(str(r.get("writer", "")).startswith("backfill") for r in live):
+            raise SystemExit(f"{path.name} already holds a backfill; refusing to double it")
+    seeded, last = [], {}
+    for f in sorted(events_dir.glob("*.json")):
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        at = float(doc.get("at") or 0)
+        for row in ((doc.get("timing") or {}).get("advisory_reviews") or []):
+            pid = str(row.get("player_id") or "")
+            if not pid:
+                continue
+            key = row.get("fingerprint") or json.dumps(
+                [row.get(k) for k in ("verdict", "confidence", "return_week",
+                                      "role_week", "reason")], default=str)
+            if last.get(pid) == key:
+                continue
+            last[pid] = key
+            seeded.append({**row, "logged_at": at, "writer": "backfill:news_events",
+                           "model": row.get("model")})
+    rows = sorted(seeded + live, key=lambda r: float(r.get("logged_at") or 0))
+    tmp = path.with_suffix(".jsonl.tmp")
+    tmp.write_text("".join(json.dumps(r, sort_keys=True, default=str) + "\n"
+                           for r in rows), encoding="utf-8")
+    tmp.replace(path)
+    return len(seeded)
 
 
 def load_verdicts() -> dict:
@@ -818,9 +892,7 @@ def merge_timing(player_id: str, name: str, bounds: dict,
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "judged_now": 1, "reused": max(0, len(rows) - 1),
            "verdicts": rows}
-    tmp = VERDICTS.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
-    tmp.replace(VERDICTS)
+    _publish(out, [old], "merge_timing")
     return old
 
 
@@ -839,9 +911,7 @@ def clear_timing(player_id: str, name: str, reason: str) -> dict:
     out = {**prior, "written": time.time(),
            "written_iso": time.strftime("%Y-%m-%d %H:%M:%S"),
            "verdicts": rows}
-    tmp = VERDICTS.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
-    tmp.replace(VERDICTS)
+    _publish(out, [old], "clear_timing")
     return old
 
 
@@ -1150,9 +1220,14 @@ def main():
     ap.add_argument("--limit", type=int)
     ap.add_argument("--force", action="store_true",
                     help="re-judge everyone, ignoring unchanged news")
+    ap.add_argument("--backfill-history", action="store_true",
+                    help="seed the verdict history from news-pulse records (once)")
     a = ap.parse_args()
 
-    if a.pool:
+    if a.backfill_history:
+        n = backfill_history()
+        print(f"backfilled {n} verdict rows into {history_path().name}")
+    elif a.pool:
         players = api.players()
         pool = decision_pool()
         pool = pool[:a.limit] if a.limit else pool

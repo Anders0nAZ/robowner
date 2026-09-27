@@ -542,7 +542,7 @@ REGISTRY: list[S] = [
       "would do and changes nothing. It never fills the slot it frees; signing "
       "somebody is a separate decision the bot cannot make yet."),
     S(ROSTER, "robo.moves", "MIN_GAIN_TO_ADD", float,
-      "Extra gain a starting upgrade must show, beyond beating the noise.",
+      "Gain any move that cuts a rostered player must show, beyond beating the noise.",
       "In SIMULATED LINEUP POINTS -- how much our optimal starting lineup gains "
       "across robo/marginal.py's seasons, not a difference of two season "
       "totals. Those are different scales: the same proposal reads 51 the old "
@@ -582,6 +582,16 @@ REGISTRY: list[S] = [
       "noise; higher waits for a bigger move before the player projections "
       "follow the market. data/lines_moves.jsonl records every move for tuning.",
       bounds=(0.5, 7.0), unit="points"),
+    S(ROSTER, "robo.moves", "NEWS_MIN_EVENT_DELTA", float,
+      "How far news must move a player's rest-of-season value to justify acting on him.",
+      "A tunable POLICY ASSUMPTION, not a measured noise floor. Below it, news "
+      "grants no standing to act on him at all; above it, the move must still "
+      "clear the simulator and every screen, like any other. It exists because "
+      "George Holani was signed on +0.07 (23 Sep 2026) -- news about somebody "
+      "else. Lower lets small nudges open moves; higher waits for news that "
+      "clearly changes his outlook. Each news candidate check records it beside "
+      "the measured delta, which is what to tune it from.",
+      bounds=(0.0, 20.0), unit="points"),
     S(ROSTER, "robo.moves", "DIRECT_ROS_VETO", float,
       "How far the season-total comparator may disagree before it refuses.",
       "In REST-OF-SEASON points and NEGATIVE, like DIRECT_ROS_FLAG. Sized "
@@ -589,11 +599,11 @@ REGISTRY: list[S] = [
       "moves that give up more than 20 season points to prevent bad bench swaps "
       "while preserving genuine lottery tickets. At -200 it is off.",
       bounds=(-200.0, 0.0), unit="points"),
-    S(ROSTER, "robo.moves", "CLAIM_DROP_MIN_QUALITY", float,
-      "Minimum quality score Q to justify dropping an active rostered player on waivers.",
-      "Below 0.25 is T4_REPLACEMENT: bottom-tier replacement players who cannot "
-      "displace an established roster asset. An open roster spot allows adding anyone "
-      "for depth, but dropping an asset for a T4 player is refused. Set to 0.0 to disable.",
+    S(ROSTER, "robo.quality", "TIER_T3", float,
+      "Quality score Q below which a player is T4_REPLACEMENT.",
+      "A claim that drops a rostered player for a T4 add is refused; an open roster "
+      "spot allows anyone. Raising it widens T4 and refuses more drop claims; 0.0 "
+      "disables the refusal.",
       bounds=(0.0, 1.0), unit="quality score"),
     S(ROSTER, "robo.moves", "TIEBREAKER_DEAD_HEAT_BIN", float,
       "Points bin width within which moves are considered a dead heat.",

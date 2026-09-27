@@ -156,6 +156,7 @@ def plan_day(season_yr=None, week: int | None = None, lead_min: int = LEAD_MIN,
 
     print(f"\n{len(queued)} kickoff slot(s) left today "
           f"(week {week}, lead {lead_min} min, local time):")
+    failed = []
     for name, fire, local in queued:
         print(f"  {fire:%H:%M} local  ->  slot {local:%H:%M}   {name}")
         if not install:
@@ -166,11 +167,17 @@ def plan_day(season_yr=None, week: int | None = None, lead_min: int = LEAD_MIN,
             capture_output=True, text=True)
         if r.returncode != 0:
             print("    FAILED: " + (r.stderr or r.stdout).strip()[:160])
+            failed.append(name)
             continue
-        print("    registered" + ("" if _cap_runtime(name) else
+        capped = _cap_runtime(name)
+        print("    registered" + ("" if capped else
                                   " (WARNING: runtime limit not set)"))
+        if not capped:
+            failed.append(name)
     if queued and not install:
         print("  (dry run -- pass --install to register these)")
+    if install and failed:
+        raise RuntimeError("pre-kickoff task registration failed: " + ", ".join(failed))
     return queued
 
 

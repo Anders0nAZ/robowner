@@ -91,7 +91,13 @@ REFRESH_RECOVERY_TIMEOUT_S = 600
 # A failed odds recompute is soft: playoffs.py already reads the cached file
 # under its own MAX_AGE_H, so ros falls back to the last good odds rather than
 # to nothing, and losing the whole cascade over it would cost the lineup.
-SOFT_STEPS = ("scout", "capture", "export", "stream", "waivers", "odds")
+SOFT_STEPS = ("pull", "scout", "capture", "export", "model", "odds",
+              "rebuild", "stream", "waivers")
+# Soft so the lineup below still gets set, but a failure in any of them leaves
+# the valuation untrustworthy: fill and stream are skipped and the process
+# exits EXIT_DEGRADED rather than 0.
+VALUATION_STEPS = ("pull", "capture", "export", "model", "rebuild")
+EXIT_DEGRADED = 3
 
 settings.apply(__name__, globals())
 
@@ -362,8 +368,12 @@ def _run(apply: bool, league_id: str, verbose: bool, pregame: bool) -> dict:
     def step(name: str, fn):
         t0 = time.time()
         try:
-            detail = fn()
-            ok = True
+            result = fn()
+            if (isinstance(result, tuple) and len(result) == 2
+                    and isinstance(result[0], bool)):
+                ok, detail = result
+            else:
+                detail, ok = result, True
         except Exception as e:
             detail, ok = f"FAILED: {str(e)[:160]}", False
         log.append({"step": name, "ok": ok, "detail": detail,
@@ -382,14 +392,22 @@ def _run(apply: bool, league_id: str, verbose: bool, pregame: bool) -> dict:
               f"{'APPLYING' if apply else 'dry run'}\n")
 
     prec: dict = {}
-    step("pull", lambda: _fmt_pull(pull(record=prec)))
+    # A failed ESPN line read is not a failed pull: the per-game nflverse
+    # fallback is written and the pulse re-reads the board every 20 minutes.
+    def pull_checked():
+        got = pull(record=prec)
+        errors = [key for key in ("projections_error", "injuries_error") if got.get(key)]
+        if str(got.get("schedules", "")).startswith(("MISSING", "KEPT OLD")):
+            errors.append("schedules")
+        return not errors, _fmt_pull(got)
+    step("pull", pull_checked)
     # Named and logged rather than silently absent: a step that vanishes from
     # the output looks identical to one that never ran, and this is the log
     # somebody reads when a lineup went wrong.
     step("scout", (lambda: "skipped: pregame run, no decision here reads it")
          if pregame else (lambda: _scout(prec)))
-    step("capture", lambda: capture_week(wk)[1])
-    step("export", lambda: export_week(wk)[1])
+    step("capture", lambda: capture_week(wk))
+    step("export", lambda: export_week(wk))
     step("model", lambda: refresh.pull_model())
 
     # BEFORE rebuild, because ros.py reads these odds to weight weeks 15-17 and
@@ -404,18 +422,15 @@ def _run(apply: bool, league_id: str, verbose: bool, pregame: bool) -> dict:
 
     # Rebuilt here so every decision below reads ONE vintage. Cheap enough that
     # there is no reason not to: expected.build() measures about two seconds.
-    def _rebuild():
-        d = expected.build(league_id=league_id)
-        expected.save(d)
-        r = ros.build(league_id=league_id)
-        ros.CACHE.write_text(json.dumps(r), encoding="utf-8")
-        # The simulator caches a Board per process and it was built from the
-        # PREVIOUS artifacts; dropping it here is what stops the roster steps
-        # below pricing against the numbers we just replaced.
-        from robo import marginal
-        marginal.board.cache_clear()
-        return f"{len(d['players'])} expected, {len(r['players'])} ros"
-    step("rebuild", _rebuild)
+    # rebuild_values() also drops the simulator's per-process Board, which was
+    # built from the PREVIOUS artifacts -- that is what stops the roster steps
+    # below pricing against the numbers just replaced.
+    from robo import dependencies
+    step("rebuild", lambda: dependencies.rebuild_values(league_id))
+    degraded = [s["step"] for s in log
+                if not s["ok"] and s["step"] in VALUATION_STEPS]
+    values_hold = "" if degraded else dependencies.hold_reason(week=wk)
+    values_ready = not degraded and not values_hold
 
     # BEFORE ANY ROSTER OR LINEUP WRITE. A man left on reserve without an
     # IR-eligible designation makes Sleeper refuse everything -- the lineup
@@ -444,19 +459,25 @@ def _run(apply: bool, league_id: str, verbose: bool, pregame: bool) -> dict:
         step("lineup2", lambda: _lineup(lineup, wk, apply))
         step("patch", lambda: _moves(moves, "patch", apply))
         step("ir2", lambda: _ir(ir, apply))
-        step("fill", lambda: _moves(moves, "fill", apply))
-        step("stream", lambda: _stream(moves, wk, apply, league_id))
+        step("fill", (lambda: _moves(moves, "fill", apply)) if values_ready else
+             (lambda: "skipped: upstream valuation incomplete"))
+        step("stream", (lambda: _stream(moves, wk, apply, league_id)) if values_ready else
+             (lambda: "skipped: upstream valuation incomplete"))
     # LAST roster step on every branch, frozen and Monday included: whatever
     # the steps above did or could not do, the run ends Sleeper-legal with
     # every starting slot filled, or says why not.
     step("construction", lambda: _construction(
         construction.ensure(week=wk, league_id=league_id, apply=apply,
-                            trigger="cascade")))
+                            trigger="cascade",
+                            # The old lineup3: re-set the lineup after this
+                            # run's own patch / fill / stream writes.
+                            reoptimize=construction.pending_write())))
     step("waivers", lambda: _waiver_watch(league_id))
 
     prov = model_proj.week_projections(wk)[1]
     return {"week": wk, "applied": bool(apply), "steps": log,
-            "pull": prec, "weekly_projection": prov}
+            "pull": prec, "weekly_projection": prov,
+            "degraded": degraded, "values_hold": values_hold}
 
 
 def _scout(pulled: dict) -> str:
@@ -560,6 +581,8 @@ def _construction(out: dict) -> str:
     text = out["status"]
     if done:
         text += f" ({done})"
+    if out.get("lineup"):
+        text += f"; lineup {out['lineup']['status']}"
     if open_:
         text += " -- " + "; ".join(
             f"{k}: {issues[k]}" if k != "frozen" else "roster frozen"
@@ -686,8 +709,14 @@ def refresh_completed_today(today_str: str | None = None, log_path=None) -> bool
         with lp.open("r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
         for line in reversed(lines[-200:]):
-            if f"[{target_date} " in line and "=== refresh done:" in line:
+            if f"[{target_date} " in line and "=== refresh critical OK ===" in line:
                 return True
+            if f"[{target_date} " in line and "=== refresh critical failure:" in line:
+                return False
+            if f"[{target_date} " in line and "=== refresh done:" in line:
+                import re
+                match = re.search(r"=== refresh done: (\d+)/(\d+) steps OK ===", line)
+                return bool(match and match.group(1) == match.group(2))
     except Exception:
         pass
     return False
@@ -797,6 +826,14 @@ def main():
     if bad:
         print(f"{len(bad)} soft step(s) failed: "
               + ", ".join(s["step"] for s in bad))
+    # The lineup still got set, but the run did not produce a valuation the
+    # roster steps could trust. Exit non-zero so the job receipt says so and
+    # the job guard retries, instead of recording a success.
+    if d.get("degraded") or d.get("values_hold"):
+        print("valuation incomplete: " + (
+            ("failed " + ", ".join(d["degraded"])) if d.get("degraded")
+            else d["values_hold"]))
+        raise SystemExit(EXIT_DEGRADED)
 
 
 if __name__ == "__main__":

@@ -231,6 +231,8 @@ def rebuild_expected():
     from robo import expected
     d = expected.build()
     expected.save(d)
+    from robo import dependencies
+    dependencies.record("expected")
     dated = sum(1 for r in d["players"].values() if r.get("scout_return"))
     return f"{len(d['players'])} players, {dated} carrying a reported return"
 
@@ -249,6 +251,8 @@ def rebuild_ros():
     top = max((r["mean"] for r in rows.values()), default=0.0)
     import json as _json
     ros.CACHE.write_text(_json.dumps(d), encoding="utf-8")
+    from robo import dependencies
+    dependencies.record("ros")
     return f"{len(rows)} players from week {d['week']}, top {top:.0f}"
 
 
@@ -257,7 +261,10 @@ MODEL_OUT = MODEL_DATA / "out"
 
 @step("model")
 def refresh_model():
-    return pull_model()
+    result = pull_model()
+    if "horizon unavailable" in result:
+        raise RuntimeError("model horizon was not produced")
+    return result
 
 
 def pull_model() -> str:
@@ -453,15 +460,32 @@ def main():
         # meaning anything the moment the board filled, and nothing in season reads
         # it. Put it back with the draft-prep tasks next August; data/adp_live.json
         # simply holds its last pre-draft values until then.
-        ok = [refresh_players(), refresh_projections(), refresh_ecr(),
-              refresh_buzz(), refresh_model(), rebuild_board(),
-              capture_projections(), refresh_lines(), refresh_playoff_odds(),
-              refresh_injuries(), refresh_scout(), rebuild_expected(), rebuild_ros(),
-              ingest_chat(), sync_media_pool(), harvest_history(), rebuild_kb(),
-              refresh_selfdoc(), publish_code(), publish_devlog(), publish_status()]
+        jobs = [("players", refresh_players), ("projections", refresh_projections),
+                ("ecr", refresh_ecr), ("buzz", refresh_buzz),
+                ("model", refresh_model), ("board", rebuild_board),
+                ("proj-archive", capture_projections), ("lines", refresh_lines),
+                ("playoff-odds", refresh_playoff_odds),
+                ("injuries", refresh_injuries), ("scout", refresh_scout),
+                ("expected", rebuild_expected), ("ros", rebuild_ros),
+                ("chat-memory", ingest_chat), ("media-pool", sync_media_pool),
+                ("history", harvest_history), ("kb", rebuild_kb),
+                ("selfdoc", refresh_selfdoc), ("code", publish_code),
+                ("devlog", publish_devlog), ("status", publish_status)]
         if not args.no_restart:
-            ok.append(restart_responder())
-        _log(f"=== refresh done: {sum(ok)}/{len(ok)} steps OK ===")
+            jobs.append(("restart-responder", restart_responder))
+        outcomes = {name: fn() for name, fn in jobs}
+        good = sum(outcomes.values())
+        _log(f"=== refresh done: {good}/{len(outcomes)} steps OK ===")
+        # Not lines: a failed ESPN read still writes the nflverse fallback,
+        # and the 20-minute pulse re-reads the board, so it does not justify
+        # the job guard rerunning this whole pipeline.
+        critical = ("players", "projections", "model", "injuries",
+                    "expected", "ros")
+        failed = [name for name in critical if not outcomes[name]]
+        if failed:
+            _log("=== refresh critical failure: " + ", ".join(failed) + " ===")
+            raise SystemExit(1)
+        _log("=== refresh critical OK ===")
 
 
 if __name__ == "__main__":

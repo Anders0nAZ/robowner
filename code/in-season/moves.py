@@ -80,9 +80,10 @@ import argparse
 import inspect
 import json
 import time
+import uuid
 from datetime import datetime
 
-from robo import LEAGUE_ID_2026, faab, lineup, season, settings, value, vegas
+from robo import LEAGUE_ID_2026, faab, lineup, quality, season, settings, value, vegas
 from robo import sleeper_read as api
 
 def _quote_claim(gain: float, week: int, budget: int, pos: str | None,
@@ -98,10 +99,12 @@ def _quote_claim(gain: float, week: int, budget: int, pos: str | None,
         return faab.quote(gain, week, budget, pos, field, quality=quality)
     return faab.quote(gain, week, budget, pos, field)
 
-# How much a candidate must add to our STARTING LINEUP, across simulated
-# seasons, before a transaction is worth making -- ON TOP of being larger than
-# the simulator's own error. At zero, NOISE_MULTIPLE x se is the only filter and
-# the rule is simply: make the move when the gain is real.
+# How much a move that CUTS SOMEBODY must add to our starting lineup, across
+# simulated seasons -- starting slot or bench, one churn bar -- ON TOP of being
+# larger than the simulator's own error. Filling an open spot is exempt. At
+# zero, NOISE_MULTIPLE x se is the only filter and the rule is simply: make the
+# move when the gain is real. It is a transaction cost the operator chooses,
+# not a fitted number (data/settings.json sets it).
 #
 # IT WAS 15.0, WHICH WAS THE OLD UNITS, and at that level it was not a bar but
 # an off switch. `gain` used to be a difference of two absolute season totals --
@@ -169,11 +172,6 @@ CLAIM_OVER_FREE_MIN = 0.0
 DIRECT_ROS_FLAG = -20.0
 DIRECT_ROS_VETO = -20.0
 
-# Minimum player quality score Q to justify dropping an active rostered player
-# on a waiver claim. Below this is T4_REPLACEMENT (Q < 0.25) -- bottom-tier
-# replacement players who cannot displace an established roster asset.
-CLAIM_DROP_MIN_QUALITY = 0.25
-
 # Gain bin width within which moves are considered a dead heat. When two
 # waiver wire options share the same FAAB bid and coverage priority, simulated
 # gains inside this margin (< standard error) are arbitrated by the local LLM
@@ -216,6 +214,11 @@ ROS_MOVE_BLACKOUT_H = 1.5
 # (Thursday-Sunday) sees only the locked Thursday players and is blacked out.
 CLAIMS_SETTLEMENT_MAX_AHEAD_H = 48.0
 
+# Sleeper's refusal when a free-agent drop is committed to a pending claim
+# ("the player you are trying to drop is involved in a pending waiver claim",
+# 24 Sep 2026: our own Lloyd claim blocked Douglas-for-Holani for a pulse).
+PENDING_CLAIM_REFUSAL = "involved in a pending waiver claim"
+
 # How far ahead to look for a week we cannot field a legal lineup in. Three is
 # about how far a bye is worth pre-empting -- further out and the wire will have
 # turned over before it matters.
@@ -225,6 +228,11 @@ BYE_LOOKAHEAD_WEEKS = 3
 # reported paired SE make 48 worlds enough to refuse a noisy result rather than
 # pretending it is precise; the ordinary weekly ROS run keeps marginal.SIMS=200.
 NEWS_SIMS = 48
+# How far news must move a player's rest-of-season value before it grants
+# standing to act on him at all. A TUNABLE POLICY ASSUMPTION, not a measured
+# noise floor: George Holani was signed on +0.07 (23 Sep 2026), which is not
+# news about him. Each news candidate check records it beside the delta.
+NEWS_MIN_EVENT_DELTA = 0.5
 
 # The event path rebuilds immediately before it evaluates, so fifteen minutes
 # is already generous there.  Scheduled ROS has two hand-offs: Wednesday's free
@@ -1006,8 +1014,17 @@ def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
         if not delta.get("complete"):
             reject("pre_post", "pre/post event series is incomplete")
             continue
+        check["event_delta_min"] = NEWS_MIN_EVENT_DELTA
         if not delta.get("causal_edge") or float(delta.get("delta_ros") or 0) <= 0:
             reject("causal_delta", "no positive causal event delta")
+            continue
+        if float(delta.get("delta_ros") or 0) < NEWS_MIN_EVENT_DELTA:
+            # Standing, not merit: news that barely moved him does not open a
+            # move whose real case is something else (Holani, +0.07).
+            reject("causal_delta",
+                   f"event delta {float(delta['delta_ros']):+.2f} is under the "
+                   f"{NEWS_MIN_EVENT_DELTA:g}-point minimum (a tunable policy "
+                   f"assumption, not a measured noise floor)")
             continue
         cand_ros = float(erows[pid]["ros"])
         if ctx["slots"]["open"] > 0:
@@ -1036,26 +1053,24 @@ def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
                    drop_name=drop["row"].get("name"), drop_ros=drop["ros"],
                    gain=round(gain, 2), coverage=drop.get("coverage"))
             continue
-        if drop["player_id"] is not None:
-            try:
-                from robo import quality
-                q_info = quality.score(pid, week=ctx.get("week"), ctx=ctx, table=table)
-            except Exception:
-                q_info = None
-            if q_info:
-                q_val = float(q_info.get("q") or 0.0)
-                q_tier = q_info.get("tier") or "T4_REPLACEMENT"
-                if q_val < CLAIM_DROP_MIN_QUALITY or q_tier == "T4_REPLACEMENT":
-                    reject("quality_tier",
-                           f"replacement tier (cannot cut a rostered player for T4: Q={q_val:.2f})",
-                           candidate_ros=cand_ros, drop_id=drop["player_id"],
-                           drop_name=drop["row"].get("name"), drop_ros=drop["ros"])
-                    continue
-        approved = {**check, "stage": "ros_comparison", "outcome": "proposed",
-                    "reason": "positive event delta and candidate beats the cheapest coverage-safe incumbent",
-                    "candidate_ros": cand_ros, "drop_id": drop["player_id"],
-                    "drop_name": drop["row"].get("name"), "drop_ros": drop["ros"],
-                    "gain": round(gain, 2), "coverage": drop.get("coverage")}
+        # THE SAME JUDGE AS EVERY OTHER CHANNEL. The causal screen above gave
+        # the news standing to look at this pair; whether the move is worth
+        # making is the simulator's bar plus every _claim_screens() screen,
+        # exactly as best_free applies them. Both always run, so a refusal
+        # records every reason. This replaced a home-made check on the incoming
+        # player's tier alone, which never compared him to the man being cut.
+        verdict = _news_judge(ctx, pid, drop["player_id"])
+        judged = {"candidate_ros": cand_ros, "drop_id": drop["player_id"],
+                  "drop_name": drop["row"].get("name"), "drop_ros": drop["ros"],
+                  "gain": round(gain, 2), "coverage": drop.get("coverage"),
+                  **verdict["record"]}
+        if not verdict["clears"]:
+            reject("judge", "; ".join(verdict["verdicts"]), **judged)
+            continue
+        approved = {**check, "stage": "judge", "outcome": "proposed",
+                    "reason": ("event gives standing and the move clears the simulator "
+                               "and every screen"),
+                    **judged}
         candidates.append(approved)
         options.append({"add": identity,
                         "drop": drop["row"], "gain": round(gain, 2),
@@ -1073,6 +1088,32 @@ def plan_news(ctx: dict, waivers: bool | None = None) -> list[dict]:
     ctx["_news_drop_checks"] = drop_checks
     return sorted(options, key=lambda p: (-p["gain"], -p["event_delta"],
                                           p["add"]["player_id"]))[:1]
+
+
+def _news_judge(ctx: dict, add_id: str, drop_id) -> dict:
+    """Price one news pair on the simulator and run it through judge().
+
+    The same paired-board pricing the news claim path already used for bids
+    (NEWS_SIMS), so a news free add and a news claim face one bar.
+    """
+    from robo import marginal
+    b = marginal.Board(ctx["league_id"], sims=NEWS_SIMS, extra=[str(add_id)],
+                       roster_ids=list(ctx["roster"].get("players") or []))
+    options = marginal.price_options(b, [drop_id], [str(add_id)])
+    if not options:
+        return {"clears": False, "verdicts": ["the simulator could not price this swap"],
+                "record": {"sim_verdict": "unpriced"}}
+    j = judge(ctx, b, options[0], fill=drop_id is None)
+    sim = j["simulator"]
+    return {"clears": j["clears"], "verdicts": j["verdicts"],
+            "record": {"sim_gain": sim["gain"], "sim_se": sim["se"],
+                       "sim_ceiling": sim["ceiling"], "sim_starter": sim["starter"],
+                       "noise_margin": sim["noise_margin"],
+                       "policy_margin": sim["policy_margin"],
+                       "sim_verdict": sim["verdict"],
+                       "screens": [{"name": s.get("name"), "refused": s.get("refused"),
+                                    "verdict": s.get("verdict"), "detail": s.get("detail")}
+                                   for s in j["screens"]]}}
 
 
 def _news_channel_plans(ctx: dict, channel: str):
@@ -1296,6 +1337,18 @@ def submit_free(ctx: dict, plans: list[dict], out: dict,
                        f" (gain {p.get('gain', 0):+.1f})")
         except Exception as e:
             print(f"  ** ADD FAILED {add['name']}: {type(e).__name__}: {e}")
+            # THE CAUSE IS KEPT, so a caller can tell one refusal from another.
+            # Only Sleeper's pending-claim refusal naming OUR OWN claim on this
+            # drop is a conflict the ROS sequence may clear and retry; a foreign
+            # claim, or any other failure, is never retried.
+            failure = {"add_id": add.get("player_id"), "drop_id": drop.get("player_id"),
+                       "add": add.get("name"), "drop": drop.get("name"),
+                       "error": f"{type(e).__name__}: {str(e)[:200]}"}
+            if (PENDING_CLAIM_REFUSAL in str(e).lower() and drop.get("player_id")):
+                from robo import waiver_manager
+                failure["blocking_claim"] = waiver_manager.owned_claim_dropping(
+                    str(drop["player_id"]))
+            out.setdefault("failures", []).append(failure)
             continue
         out["submitted"].append({"add": add["name"], "drop": drop["name"]})
         if mode == "ir_fill":
@@ -1574,6 +1627,15 @@ def _option_row(ctx: dict, board, o: dict, why: str = "") -> dict:
                                    table=_expected_table(ctx))
         except Exception:
             q_info = None
+    # The drop is scored on the same week and table as the add, or the tier
+    # comparison in _claim_screens reads two different vintages.
+    if o["drop"] is not None and "quality" not in drop_row:
+        try:
+            drop_row = {**drop_row, "quality": quality.score(
+                str(o["drop"]), week=ctx.get("week"), ctx=ctx,
+                table=_expected_table(ctx))}
+        except Exception:
+            pass
     horizon = o.get("priced_weeks")
     return {"add": add_row, "drop": drop_row,
             "gain": round(o["gain"], 1),
@@ -1878,28 +1940,81 @@ def _priced(ctx: dict) -> dict:
 def clears(o: dict, fill: bool = False) -> bool:
     """Is this option worth a transaction at all?
 
-    Two bars, and which applies depends on the slot. A STARTING upgrade is judged
-    on the mean, and must beat MIN_GAIN_TO_ADD. A BENCH spot is judged on the
-    ceiling against HIT_POINTS -- the median realised contribution of an add in
-    this league -- because down there the mean is ranking noise and would always
-    prefer a safe body to a man who might become something.
+    EVERY MOVE THAT CUTS SOMEBODY must add MIN_GAIN_TO_ADD to our simulated
+    lineup, starting slot or bench -- one churn bar, whichever slot the man
+    lands in. A BENCH spot must ALSO show a ceiling of HIT_POINTS, the median
+    realised contribution of an add in this league, so a safe body that can
+    never become anything does not clear either.
 
-    Both are also required to beat the simulator's own noise. A gap inside its
+    Every move must also beat the simulator's own noise. A gap inside its
     standard error is not a ranking, whatever it is a ranking of.
 
-    FILLING AN EMPTY SPOT IS NOT AN UPGRADE and does not face the upgrade bar.
+    FILLING AN EMPTY SPOT IS NOT AN UPGRADE and does not face the gain bar.
     Nobody is being displaced, so there is no incumbent to beat and no cost to
     weigh -- an empty roster spot scores zero every week it stays empty. The
     ceiling bar still applies, because the question of WHICH man to put there is
     still a bench question, and the noise gate still applies because a number
     inside its own error is not a reason.
     """
+    return simulator_verdict(o, fill=fill)["clears"]
+
+
+def simulator_verdict(o: dict, fill: bool = False) -> dict:
+    """The simulator's bar for one priced option, with its margins and words.
+
+    THE ONE PLACE this bar is computed. clears() answered only yes or no, so
+    the audit snapshot re-derived the same margins to explain itself, and the
+    news channel had no way to record why the simulator refused it.
+    """
     from robo import marginal
-    if o["gain"] <= NOISE_MULTIPLE * o["se"]:
-        return False
-    if fill or not o["starter"]:
-        return o["ceiling"] >= marginal.HIT_POINTS
-    return o["gain"] >= MIN_GAIN_TO_ADD
+    gain, se = float(o.get("gain") or 0), float(o.get("se") or 0)
+    ceiling, starter = float(o.get("ceiling") or 0), bool(o.get("starter"))
+    bench = fill or not starter
+    # ONE GAIN BAR FOR EVERY MOVE THAT CUTS SOMEBODY, starting slot or bench.
+    # The bench used to answer only to its ceiling, so a +1.5 swap with one
+    # good world in ten cleared while the same +1.5 into a starting slot did
+    # not. Filling an open spot displaces nobody and answers to the ceiling
+    # alone.
+    cuts = not fill and o.get("drop") is not None
+    noise_margin = gain - NOISE_MULTIPLE * se
+    gain_margin = (gain - MIN_GAIN_TO_ADD) if cuts else None
+    ceiling_margin = (ceiling - marginal.HIT_POINTS) if bench else None
+    bars = [m for m in (gain_margin, ceiling_margin) if m is not None]
+    policy_margin = min(bars) if bars else 0.0
+    if noise_margin <= 0:
+        verdict = "below simulator noise"
+    elif gain_margin is not None and gain_margin < 0:
+        verdict = "below minimum-gain bar"
+    elif ceiling_margin is not None and ceiling_margin < 0:
+        verdict = "below bench-ceiling bar"
+    else:
+        verdict = "clears"
+    return {"verdict": verdict, "clears": verdict == "clears",
+            "gain": round(gain, 3), "se": round(se, 3), "ceiling": round(ceiling, 3),
+            "starter": starter, "noise_margin": round(noise_margin, 3),
+            "gain_margin": None if gain_margin is None else round(gain_margin, 3),
+            "ceiling_margin": None if ceiling_margin is None else round(ceiling_margin, 3),
+            "policy_margin": round(policy_margin, 3)}
+
+
+def judge(ctx: dict, board, o: dict, fill: bool = False) -> dict:
+    """Is this move worth making? ONE JUDGE for every channel.
+
+    The simulator's bar and every _claim_screens() screen (quality tier with no
+    downgrades, the direct-ROS veto, ...), ALWAYS both, so a refusal records
+    every reason rather than the first one to fire. best_free and the news
+    channel both come through here; before this the news channel judged on its
+    own subset and signed George Holani (T3) for MarShawn Lloyd (T2) on a swap
+    the simulator put inside its own noise.
+    """
+    sim = simulator_verdict(o, fill=fill)
+    row = _option_row(ctx, board, o)
+    screens = _claim_screens(row, arbitrate=sim["clears"])
+    refused = [s for s in screens if s.get("refused")]
+    return {"clears": sim["clears"] and not refused, "simulator": sim,
+            "screens": screens, "row": row,
+            "verdicts": ([sim["verdict"]] if not sim["clears"] else [])
+                        + [s.get("verdict") for s in refused]}
 
 
 def best_free(opts: list[dict], drop, fill: bool = False,
@@ -1907,18 +2022,18 @@ def best_free(opts: list[dict], drop, fill: bool = False,
     """The best thing available for nothing, for this slot."""
     fits = []
     for o in opts:
-        if o["drop"] != drop or not clears(o, fill=fill):
+        if o["drop"] != drop:
             continue
         if ctx is not None and board is not None:
-            row = _option_row(ctx, board, o)
-            screens = _claim_screens(row)
-            if any(s.get("refused") for s in screens):
+            if not judge(ctx, board, o, fill=fill)["clears"]:
                 continue
+        elif not clears(o, fill=fill):
+            continue
         fits.append(o)
     return max(fits, key=lambda o: o["ceiling"] if fill else o["gain"]) if fits else None
 
 
-def _claim_screens(row: dict) -> list[dict]:
+def _claim_screens(row: dict, arbitrate: bool = True) -> list[dict]:
     """Every screen's verdict on one claim, none of them short-circuited.
 
     EVALUATE ALL, RECORD ALL, REFUSE IF ANY FIRED. Stopping at the first
@@ -1980,10 +2095,9 @@ def _claim_screens(row: dict) -> list[dict]:
         q_val = float(q_info.get("q") or 0.0)
         tier = q_info.get("tier") or "T4_REPLACEMENT"
         if drop_id is not None and str(drop_id).strip() not in ("", "(open roster spot)"):
-            is_t4 = (q_val < CLAIM_DROP_MIN_QUALITY) or (tier == "T4_REPLACEMENT")
+            is_t4 = tier == "T4_REPLACEMENT"
             if drop_q is None and drop_id:
                 try:
-                    from robo import quality
                     drop_q = quality.score(str(drop_id), week=row.get("priced_weeks", [None])[0] if isinstance(row.get("priced_weeks"), list) else None)
                 except Exception:
                     drop_q = None
@@ -1996,7 +2110,7 @@ def _claim_screens(row: dict) -> list[dict]:
             refused = is_t4 or is_downgrade
             if is_t4:
                 verdict = "refused: replacement tier (cannot cut a rostered player for T4)"
-                detail = f"{add_name} is tier {tier} (Q={q_val:.2f}) < {CLAIM_DROP_MIN_QUALITY:.2f}"
+                detail = f"{add_name} is tier {tier} (Q={q_val:.2f}) < {quality.TIER_T3:.2f}"
             elif is_downgrade:
                 verdict = f"refused: quality tier downgrade (cannot drop {drop_tier} for {tier})"
                 detail = f"{add_name} ({tier}, Q={q_val:.2f}) downgrades from {drop_name} ({drop_tier}, Q={drop_q.get('q', 0.0):.2f})"
@@ -2007,16 +2121,16 @@ def _claim_screens(row: dict) -> list[dict]:
                 "name": "quality_tier",
                 "refused": refused,
                 "verdict": verdict,
-                "margin": round(q_val - CLAIM_DROP_MIN_QUALITY, 3),
-                "threshold": CLAIM_DROP_MIN_QUALITY,
+                "margin": round(q_val - quality.TIER_T3, 3),
+                "threshold": quality.TIER_T3,
                 "detail": detail})
         else:
             out.append({
                 "name": "quality_tier",
                 "refused": False,
                 "verdict": f"cleared: open slot allows {tier}",
-                "margin": round(q_val - CLAIM_DROP_MIN_QUALITY, 3),
-                "threshold": CLAIM_DROP_MIN_QUALITY,
+                "margin": round(q_val - quality.TIER_T3, 3),
+                "threshold": quality.TIER_T3,
                 "detail": f"open roster spot: {tier} (Q={q_val:.2f}) permitted"})
 
     # Proposal 2B: LLM Arbitration on Near-Tie / Dead-Heat Moves.
@@ -2043,7 +2157,17 @@ def _claim_screens(row: dict) -> list[dict]:
             or (direct_diff is not None and direct_diff <= ARBITRATION_MAX_ROS_DIFF)
         ))
 
-        if is_dead_heat and add_id and drop_id:
+        if is_dead_heat and add_id and drop_id and not arbitrate:
+            # The only screen that costs a model call, and it cannot change a
+            # verdict the simulator has already made. judge() runs every
+            # screen on refused options so the record has every reason; paying
+            # the LLM for a move already refused would slow every pulse.
+            out.append({
+                "name": "llm_arbitration", "refused": False,
+                "verdict": "skipped: the simulator already refused",
+                "margin": None, "threshold": ARBITRATION_MAX_GAIN,
+                "detail": "dead heat, not arbitrated for a refused move"})
+        elif is_dead_heat and add_id and drop_id:
             try:
                 from robo import scout
                 arb_metrics = {
@@ -2570,10 +2694,10 @@ def render_free(ctx: dict, plans: list[dict]) -> str:
                  "must beat the cheapest coverage-safe incumbent")
     if not plans:
         from robo import marginal
-        L.append("  nothing clears the bar: a starting upgrade must add "
+        L.append("  nothing clears the bar: a move that cuts somebody must add "
                  f"{MIN_GAIN_TO_ADD:g}+ points to the simulated lineup, a bench "
-                 f"spot must reach a ceiling of {marginal.HIT_POINTS:g}, and both "
-                 f"must beat {NOISE_MULTIPLE:g}x the simulator's own error"
+                 f"spot must also reach a ceiling of {marginal.HIT_POINTS:g}, and "
+                 f"all must beat {NOISE_MULTIPLE:g}x the simulator's own error"
                  if ctx["mode"] == "ros" else "  nothing to do in this mode")
         if ctx["mode"] == "news":
             for x in (ctx.get("_news_rejections") or [])[:12]:
@@ -2835,10 +2959,58 @@ def run_ros_sequence(apply: bool = False, league_id: str = LEAGUE_ID_2026,
     claims_ctx["_sequence_basis"] = basis
     claims_ctx["_sequence_free_audit"] = free.get("decision_audit") or {}
     claims_ctx["_sequence_free_plans"] = free.get("plans") or []
+    claims_ctx["_sequence_free_submitted"] = free.get("submitted") or []
     claims = run("claims", apply=apply, league_id=league_id, mode="ros",
                  verbose=verbose, _ctx=claims_ctx, source=source)
+
+    # ONE RETRY, ONLY FOR A CONFIRMED CONFLICT WITH OUR OWN CLAIM. The free move
+    # is written before claims reconcile, so when its drop was committed to one
+    # of our pending claims Sleeper refused it, and the claims pass above may
+    # then have cancelled that very claim -- which used to leave the free move
+    # waiting a whole pulse (24 Sep: Douglas-for-Holani, 20 minutes). Retried
+    # only when the failure named a bot-owned blocking claim, the reconcile
+    # cancelled exactly that claim, and a fresh read confirms it is gone.
+    retry = None
+    if proposed and apply and value.may_submit() and not free.get("submitted"):
+        failed = [f for f in free.get("failures") or [] if f.get("blocking_claim")]
+        blockers = {str(f["blocking_claim"]) for f in failed}
+        drops = {str(f["drop_id"]) for f in failed if f.get("drop_id")}
+        recon = claims.get("reconciliation") or {}
+        cancelled = {str(t) for t in recon.get("cancelled") or []}
+        # A finished reconcile, not a failed or blocked one that may have
+        # restored the old claim; and the DROP free across the whole fresh
+        # queue, not just the old txid gone -- the new slate can name it too.
+        clean = recon.get("applied") and not recon.get("error") and not recon.get("blocked")
+        if blockers and blockers <= cancelled and clean:
+            from robo import sleeper_write as sw
+            pending = sw.pending_waiver_claims(ctx["roster"]["roster_id"], league_id)
+            still = {str(x.get("transaction_id")) for x in pending}
+            committed = {str(p) for x in pending for p in (x.get("drops") or {})}
+            if not blockers & still and not drops & committed:
+                season.invalidate_live()
+                first_failures = free.get("failures")
+                again = run("free", apply=apply, league_id=league_id, mode="ros",
+                            verbose=verbose, _ctx=_context(league_id, mode="ros"))
+                retry = {"blocking_claims": sorted(blockers),
+                         "first_failures": first_failures,
+                         "submitted": again.get("submitted") or []}
+                if again.get("submitted"):
+                    free = again
+                    season.invalidate_live()
+                    claims_ctx = _context(league_id, mode="ros")
+                    basis = ("live roster after the completed free-agent move "
+                             f"(retried once the blocking claim {', '.join(sorted(blockers))} "
+                             "was cancelled)")
+                    if verbose:
+                        print(f"\nWAIVER RE-EVALUATION - {basis}")
+                    claims_ctx["_sequence_basis"] = basis
+                    claims_ctx["_sequence_free_audit"] = again.get("decision_audit") or {}
+                    claims_ctx["_sequence_free_plans"] = again.get("plans") or []
+                    claims_ctx["_sequence_free_submitted"] = again.get("submitted") or []
+                    claims = run("claims", apply=apply, league_id=league_id, mode="ros",
+                                 verbose=verbose, _ctx=claims_ctx, source=source)
     return {"mode": "ros-sequence", "week": ctx["week"], "basis": basis,
-            "free": free, "claims": claims,
+            "free": free, "claims": claims, "retry": retry,
             "applied": bool(free.get("applied") or claims.get("applied")),
             "submitted": list(free.get("submitted") or [])
                          + list(claims.get("submitted") or [])}
@@ -2957,9 +3129,8 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         se = float(option.get("se") or 0)
         ceiling = float(option.get("ceiling") or 0)
         starter = bool(option.get("starter"))
-        noise_margin = gain - NOISE_MULTIPLE * se
-        policy_margin = (gain - MIN_GAIN_TO_ADD if starter
-                         else ceiling - marginal.HIT_POINTS)
+        sim = simulator_verdict(option)
+        noise_margin, policy_margin = sim["noise_margin"], sim["policy_margin"]
         picked = (add_id, drop_id) in selected
         cov_priority = int(option.get("coverage_priority") or 0)
         best_priority = min((int(o.get("coverage_priority") or 0)
@@ -2973,11 +3144,8 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
             verdict = refusal.get("verdict") or "refused"
         elif picked:
             verdict = "selected"
-        elif noise_margin <= 0:
-            verdict = "below simulator noise"
-        elif policy_margin < 0:
-            verdict = ("below starting-gain bar" if starter
-                       else "below bench-ceiling bar")
+        elif not sim["clears"]:
+            verdict = sim["verdict"]
         elif cov_priority > best_priority:
             # NOT THE SAME THING AS LOSING ON VALUE, and the old text said it
             # was. Since the coverage floor became an ordering rather than a
@@ -2992,6 +3160,8 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                      "ceiling": round(ceiling, 3), "starter": starter,
                      "noise_margin": round(noise_margin, 3),
                      "policy_margin": round(policy_margin, 3),
+                     "gain_margin": sim["gain_margin"],
+                     "ceiling_margin": sim["ceiling_margin"],
                      "selected": picked, "verdict": verdict,
                      "coverage": option.get("coverage"),
                      "coverage_priority": cov_priority,
@@ -3016,6 +3186,7 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
         "channel": channel,
         "thresholds": {"noise_multiple": NOISE_MULTIPLE,
                        "starting_gain": MIN_GAIN_TO_ADD,
+                       "minimum_gain": MIN_GAIN_TO_ADD,
                        "bench_ceiling": marginal.HIT_POINTS,
                        "drop_floor": DROP_FLOOR,
                        "skill_drop_limit": ROS_MAX_MUTATIONS,
@@ -3023,7 +3194,7 @@ def _ordinary_audit_snapshot(ctx: dict, plans: list[dict], channel: str) -> dict
                        "claim_over_free_min": CLAIM_OVER_FREE_MIN,
                        "direct_ros_flag": DIRECT_ROS_FLAG,
                        "direct_ros_veto": DIRECT_ROS_VETO,
-                       "claim_drop_min_quality": CLAIM_DROP_MIN_QUALITY,
+                       "claim_drop_min_quality": quality.TIER_T3,
                        "tiebreaker_dead_heat_bin": TIEBREAKER_DEAD_HEAT_BIN,
                        "coverage_floor": dict(MIN_ROSTER_COVERAGE)},
         "claim_horizon": ctx.get("_claim_horizon"),
@@ -3093,13 +3264,11 @@ def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
            "roster_control_checks": ctx.get("_ros_control_checks") or []}
     if mode == "ros":
         out["decision_audit"] = _ordinary_audit_snapshot(ctx, plans, channel)
-    if channel == "claims" and mode == "ros":
-        try:
-            from robo import waiver_audit
-            path = waiver_audit.record(ctx, plans, out)
-            out["audit_path"] = str(path) if path else None
-        except Exception as e:
-            out["audit_error"] = f"{type(e).__name__}: {e}"
+    # The waiver record is written at EVERY exit of the claims path and, when a
+    # reconcile happens, AFTER it, so the record holds what actually happened
+    # to the pending queue rather than only what was wanted.
+    audit = (lambda: _record_claims_audit(ctx, plans, out)) \
+        if channel == "claims" and mode == "ros" else (lambda: None)
 
     if not value.may_submit():
         # The gate. Not a flag, not a setting -- a constant in value.py, so
@@ -3111,9 +3280,25 @@ def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
             print("\n  ** " + value.GATE_MESSAGE)
             if apply:
                 print("  ** --apply was requested and is REFUSED.")
+        audit()
         return out
     if not apply or block or (not plans and channel == "free"):
+        audit()
         return out
+    if mode == "ros":
+        # An ordinary move is priced on expected + ros, so it is sent only when
+        # both are receipted against the inputs on disk right now. Checked
+        # here, after planning and immediately before the write, because the
+        # entry points validate BEFORE taking the decision lock and a cascade
+        # can replace the valuation while they wait for it.
+        from robo import dependencies
+        held = dependencies.hold_reason(week=ctx["week"])
+        if held:
+            out["held"] = held
+            if verbose:
+                print(f"\n  ** HELD: valuation not validated -- {held}")
+            audit()
+            return out
 
     if channel == "free":
         return submit_free(ctx, plans, out, league_id)
@@ -3123,6 +3308,7 @@ def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
     if stop:
         print(f"  ** CLAIMS SKIPPED: {stop}")
         out["control_block"] = stop
+        audit()
         return out
     rid = ctx["roster"]["roster_id"]
     desired = []
@@ -3145,11 +3331,18 @@ def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
     from robo import waiver_manager
     relevant = {s.get("add_id") for s in desired} | {s.get("drop_id") for s in desired}
     fp = waiver_manager.context_fingerprint(ctx, relevant)
+    # THE RUN'S OWN ID, minted before reconcile so every cancel and submit it
+    # makes carries it, and stored in the waiver record this pass writes. The
+    # context fingerprint above is not an identity: two passes over the same
+    # roster share it, so it cannot say which one withdrew a claim.
+    run_id = f"{time.strftime('%Y%m%dT%H%M%S', time.gmtime())}-{uuid.uuid4().hex[:8]}"
     rec = waiver_manager.reconcile(
         desired, league_id=league_id, roster_id=rid, week=ctx["week"],
         source=source or ("weekly" if mode == "ros" else mode),
-        apply=True, fingerprint=fp)
+        apply=True, fingerprint=fp, run_id=run_id,
+        why=_claim_verdicts(out.get("decision_audit") or {}))
     out["reconciliation"] = rec
+    out["run_id"] = run_id
     out["submitted"] = rec.get("submitted") or []
     out["applied"] = bool(rec.get("applied"))
     if rec.get("blocked"):
@@ -3161,6 +3354,35 @@ def _run(channel, apply, league_id, mode, verbose, affected, _ctx,
     # waivers ran. waiver_manager retains the full local audit and publishes
     # the confirmed outcomes only after every claim in the submitted batch has
     # left Sleeper's pending queue. Replaced/cancelled claims are never public.
+    audit()
+    return out
+
+
+def _record_claims_audit(ctx: dict, plans: list, out: dict) -> None:
+    try:
+        from robo import waiver_audit
+        path = waiver_audit.record(ctx, plans, out)
+        out["audit_path"] = str(path) if path else None
+    except Exception as e:
+        out["audit_error"] = f"{type(e).__name__}: {e}"
+
+
+def _claim_verdicts(audit: dict) -> dict:
+    """{(add_id, drop_id): this pass's verdict} -- why a pending claim left.
+
+    Reconcile only sees the desired portfolio, so every cancellation used to
+    read "portfolio replaced". The verdict that removed it is right here in the
+    same pass's audit, including the free agent that beat it when that is why.
+    """
+    out = {}
+    for o in audit.get("options") or []:
+        add, drop = o.get("add") or {}, o.get("drop") or {}
+        verdict = o.get("verdict") or "not in the slate"
+        alt = o.get("over_free") or {}
+        if alt.get("name") and "free agent" in verdict:
+            verdict += (f" ({alt['name']} for {drop.get('name') or 'the same drop'}, "
+                        f"available now, scored {abs(float(o.get('over_free_gain') or 0)):.2f} higher)")
+        out[(str(add.get("player_id")), str(drop.get("player_id") or ""))] = verdict
     return out
 
 
@@ -3236,6 +3458,11 @@ def main():
     args = ap.parse_args()
     affected = {p.strip() for p in args.affected.split(",") if p.strip()}
     channel = "free" if args.free else "claims"
+    if args.apply and args.mode == "ros":
+        from robo import dependencies
+        ready, reason = dependencies.ensure_values()
+        if not ready:
+            raise SystemExit("ROS transaction withheld: " + reason)
     if args.apply:
         from robo import ir
         ir.unblock(apply=True, league_id=args.league)
@@ -3265,6 +3492,9 @@ def main():
         rec = (claim_result or {}).get("reconciliation") or {}
         if rec.get("error") or rec.get("blocked"):
             raise SystemExit(1)
+        parts = [res.get("free"), res.get("claims")] if args.sequence else [res]
+        if any((p or {}).get("held") for p in parts):
+            raise SystemExit("ROS transaction held: valuation not validated")
 
 
 if __name__ == "__main__":

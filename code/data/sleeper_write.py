@@ -213,7 +213,7 @@ def set_draft_queue(draft_id: str, player_ids: list[str]) -> list[str]:
 
 def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
                         league_id: str = LEAGUE_ID_2026,
-                        reason: str | None = None) -> dict:
+                        reason: str | None = None, run_id: str | None = None) -> dict:
     """Submit one FAAB claim and return its transaction object.
 
     A no-drop claim sends EMPTY drop arrays, the same as league_create_transaction
@@ -244,11 +244,12 @@ def submit_waiver_claim(adds: dict[str, int], drops: dict[str, int], bid: int,
         out = gql("submit_waiver_claim", q, v)["submit_waiver_claim"]
     except Exception as e:
         transactions.journal("claim", league_id=league_id, adds=adds, drops=drops,
-                             bid=bid, ok=False, error=str(e), reason=reason)
+                             bid=bid, ok=False, error=str(e), reason=reason,
+                             run_id=run_id)
         raise
     transactions.journal("claim", league_id=league_id, adds=adds, drops=drops,
                          bid=bid, transaction_id=(out or {}).get("transaction_id"),
-                         reason=reason)
+                         reason=reason, run_id=run_id)
     return out
 
 
@@ -338,7 +339,7 @@ def waiver_claim_history(roster_id: int,
 
 def cancel_waiver_claim(transaction_id: str, leg: int,
                         league_id: str = LEAGUE_ID_2026,
-                        reason: str | None = None) -> dict:
+                        reason: str | None = None, run_id: str | None = None) -> dict:
     """Cancel one pending waiver claim. Signature verified by introspection."""
     q = f"""
     mutation cancel_waiver_claim {{
@@ -353,10 +354,10 @@ def cancel_waiver_claim(transaction_id: str, leg: int,
     except Exception as e:
         transactions.journal("cancel", league_id=league_id,
                              transaction_id=transaction_id, ok=False,
-                             error=str(e), reason=reason)
+                             error=str(e), reason=reason, run_id=run_id)
         raise
     transactions.journal("cancel", league_id=league_id,
-                         transaction_id=transaction_id, reason=reason)
+                         transaction_id=transaction_id, reason=reason, run_id=run_id)
     return out
 
 

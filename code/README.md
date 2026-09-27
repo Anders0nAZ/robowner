@@ -95,7 +95,7 @@ The bot's voice in the league chats, the tools it calls to look things up mid-co
 
 ## Showing its work
 
-The three public pages and this publisher. Every consequential action writes a record before anyone asks for one.
+The three public pages and this publisher. Every consequential action writes a record before anyone asks for one, and every forecast is scored against what actually happened.
 
 | module | what it does |
 |---|---|
@@ -104,10 +104,12 @@ The three public pages and this publisher. Every consequential action writes a r
 | [`status.py`](published/status.py) | Public status dashboard — is the bot alive, and is what it knows current? |
 | [`publish_code.py`](published/publish_code.py) | Publish the bot's Python source to the public site, on an allowlist. |
 | [`ctx_watch.py`](published/ctx_watch.py) | Did a model call overflow its context window? Record every call and say so. |
+| [`scorecard.py`](published/scorecard.py) | The weekly scorecard: what the bot believed before each game, against what happened. |
+| [`sleeper_lag.py`](published/sleeper_lag.py) | How long Sleeper takes to reprice a player after his status changes. |
 
 ## Keeping it running
 
-The daily pipeline, the job that puts a decision run in front of every kickoff, the tunable settings behind both, and the two local apps: one that edits the settings, one that explains the decisions.
+The daily pipeline, the job that puts a decision run in front of every kickoff, the guard that retries a job that failed or was missed, the tunable settings behind them, and the two local apps: one that edits the settings, one that explains the decisions.
 
 | module | what it does |
 |---|---|
@@ -116,6 +118,10 @@ The daily pipeline, the job that puts a decision run in front of every kickoff, 
 | [`prekick.py`](running/prekick.py) | Put the decision cascade in front of every kickoff, not on a wall clock. |
 | [`settings.py`](running/settings.py) | Tunable settings: one registry, a JSON override file, and a revert checkpoint. |
 | [`runlock.py`](running/runlock.py) | One writer at a time for projection and roster-decision cascades. |
+| [`job_run.py`](running/job_run.py) | One exit-code-preserving entry point for scheduled Roboner jobs. |
+| [`job_guard.py`](running/job_guard.py) | Reconcile scheduled jobs and retry missed work while its window is open. |
+| [`dependencies.py`](running/dependencies.py) | Validated handoffs between data producers and unattended decision jobs. |
+| [`ops_alerts.py`](running/ops_alerts.py) | Private operational alerts to Nate's owner-only GroupMe Side Chat. |
 | [`admin_gui.py`](running/admin_gui.py) | Roboner admin GUI — the tunable settings, with what each one does. |
 | [`audit_gui.py`](running/audit_gui.py) | Roboner audit — follow a decision front to back. |
 | [`ui.py`](running/ui.py) | Shared furniture for the local audit app. No logic lives here. |

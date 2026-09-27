@@ -93,7 +93,8 @@ def session(trigger: str, *, apply: bool = True, force: bool = False,
                 # still gets it: a half-finished write sequence is exactly the
                 # roster most likely to need repair.
                 if apply and (dirty or force) and (run or failed):
-                    result.update(_guarded(trigger, week, league_id, statuses))
+                    result.update(_guarded(trigger, week, league_id, statuses,
+                                           reoptimize=dirty))
         finally:
             # Popped after the repair, so its writes are attributed to the
             # session that caused them.
@@ -104,10 +105,20 @@ def deferred(trigger: str, *, apply: bool = True):
     return session(trigger, apply=apply, run=False)
 
 
-def _guarded(trigger, week, league_id, statuses) -> dict:
+def pending_write() -> bool:
+    """Whether a roster write has happened since the last check.
+
+    For callers that run ensure() themselves (the cascade's step, the pulse):
+    they pass it as `reoptimize`, so a write re-sets the lineup and a quiet
+    check does not.
+    """
+    return bool(_state["dirty"])
+
+
+def _guarded(trigger, week, league_id, statuses, reoptimize=False) -> dict:
     try:
         return ensure(week=week, league_id=league_id, apply=True,
-                      trigger=trigger, statuses=statuses)
+                      trigger=trigger, statuses=statuses, reoptimize=reoptimize)
     except Exception as e:
         out = {"status": "failed", "trigger": trigger,
                "error": f"{type(e).__name__}: {e}"}
@@ -117,7 +128,7 @@ def _guarded(trigger, week, league_id, statuses) -> dict:
 
 def ensure(week: int | None = None, league_id: str = LEAGUE_ID_2026,
            apply: bool = True, trigger: str = "",
-           statuses: dict | None = None) -> dict:
+           statuses: dict | None = None, reoptimize: bool = False) -> dict:
     """Take the roster to Sleeper-legal AND bot-legal, re-reading after each write.
 
     `statuses` is {player_id: designation} from a source fresher than the
@@ -130,6 +141,13 @@ def ensure(week: int | None = None, league_id: str = LEAGUE_ID_2026,
     single reset connection (07:13, 23 Sep 2026), which is twenty minutes of an
     unrepaired roster for nothing. Retrying is safe because every round re-reads
     the roster before it writes.
+
+    `reoptimize`: a roster write actually happened, so also run the lineup
+    optimizer once even when nothing is broken. A pickup that simply improves
+    this week's lineup otherwise sat on the bench until the next cascade.
+    lineup.run owns the churn threshold, the lock recheck, the frozen-roster
+    guard and the decision record -- none of that is repeated here. A quiet
+    check (no write) stays repair-only, so the pulse never reshuffles on its own.
     """
     import time
     import requests
@@ -142,7 +160,7 @@ def ensure(week: int | None = None, league_id: str = LEAGUE_ID_2026,
     try:
         for attempt in range(RETRIES + 1):
             try:
-                return _ensure(week, league_id, apply, trigger, statuses)
+                return _ensure(week, league_id, apply, trigger, statuses, reoptimize)
             except requests.exceptions.RequestException:
                 if attempt == RETRIES:
                     raise
@@ -153,7 +171,23 @@ def ensure(week: int | None = None, league_id: str = LEAGUE_ID_2026,
             _state["stack"].pop()
 
 
-def _ensure(week, league_id, apply, trigger, statuses) -> dict:
+def _reoptimize(week, league_id) -> dict:
+    """One lineup pass after a real write, with lineup.run's own guards."""
+    from robo import lineup
+    season.invalidate_live()
+    out = lineup.run(week=week, league_id=league_id, apply=True, verbose=False)
+    if out.get("applied"):
+        status = "applied"
+    elif out.get("write_blocked"):
+        status = "blocked: " + out["write_blocked"]
+    elif out.get("changed"):
+        status = f"held under the churn threshold ({out.get('gain', 0):+.1f})"
+    else:
+        status = "no change"
+    return {"kind": "reoptimize", "status": status, "gain": out.get("gain")}
+
+
+def _ensure(week, league_id, apply, trigger, statuses, reoptimize=False) -> dict:
     from robo import ir, lineup, moves
     from robo import sleeper_read as api
 
@@ -189,9 +223,11 @@ def _ensure(week, league_id, apply, trigger, statuses) -> dict:
             legal, plan, before = snapshot()
             issues = issues_of(legal, plan)
             if not any(issues.values()):
-                return _finish({"status": "repaired" if steps else "clear",
-                                "issues": issues, "steps": steps},
-                               trigger, week, apply)
+                out = {"status": "repaired" if steps else "clear",
+                       "issues": issues, "steps": steps}
+                if apply and reoptimize:
+                    out["lineup"] = _reoptimize(week, league_id)
+                return _finish(out, trigger, week, apply)
             if not apply:
                 return _finish({"status": "would_repair", "issues": issues,
                                 "steps": steps}, trigger, week, apply)
