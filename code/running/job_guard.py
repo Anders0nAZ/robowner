@@ -146,10 +146,15 @@ def _complete(job: str, due: float) -> bool:
     if rec.get("status") != "success" or float(rec.get("started") or 0) < due:
         return False
     if job == "newswatch":
+        # The LATER of the two. A pulse that stands down for live games or a
+        # pending cascade records only last_attempt; last_poll keeps the
+        # pre-game value, and reading it first called every Sunday pulse dead.
         try:
             state = json.loads((DATA / "news_watch.json").read_text(encoding="utf-8"))
-            return float(state.get("last_poll") or state.get("last_attempt") or 0) >= due
-        except (OSError, ValueError):
+            seen = max(float(state.get("last_poll") or 0),
+                       float(state.get("last_attempt") or 0))
+            return seen >= due
+        except (OSError, ValueError, TypeError):
             return False
     if job == "refresh":
         from robo.cascade import refresh_completed_today
@@ -241,7 +246,10 @@ def tick(*, now: datetime | None = None, repair: bool = True) -> dict:
         count = int(failure.get("count") or 0)
         if count >= MAX_ATTEMPTS:
             actions.append(f"{job}: gave up after {count} retries")
-            _alert(f"gave-up-{job}-{int(due)}",
+            # Keyed on the run that STARTED the streak, not today's due time:
+            # the pulse's due time moves every tick, and a key that moves with
+            # it escaped the throttle and posted every five minutes.
+            _alert(f"gave-up-{job}-{int(failure.get('due') or due)}",
                    f"Roboner retried {job} {count} times without a validated result "
                    f"and has stopped retrying it; it needs a look.")
             state["failures"][job] = failure
