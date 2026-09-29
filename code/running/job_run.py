@@ -12,6 +12,7 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime, timedelta
 
 from robo import DATA, ROOT
 
@@ -58,22 +59,53 @@ def _write(job: str, doc: dict) -> None:
 
 
 def paused() -> dict | None:
-    """The pause marker StopRoboner.bat writes, or None when automation runs."""
+    """The pause marker StopRoboner.bat / PauseRoboner.bat write, or None when
+    automation runs. A marker carrying `until` expires on its own: the first
+    reader past that time removes it, so a timed pause needs no second task to
+    end it and still ends if the PC was asleep at the time. RobonerWatchdog.ps1
+    reads the same file by the same rule."""
     try:
         doc = json.loads(PAUSE.read_text(encoding="utf-8"))
-        return doc if isinstance(doc, dict) else {"by": "unknown"}
     except FileNotFoundError:
         return None
     except (OSError, ValueError):
         # Present but unreadable still means somebody asked for a stop.
         return {"by": "unknown"}
+    if not isinstance(doc, dict):
+        return {"by": "unknown"}
+    until = doc.get("until")
+    if isinstance(until, (int, float)) and time.time() >= until:
+        PAUSE.unlink(missing_ok=True)
+        return None
+    return doc
 
 
-def pause(by: str) -> None:
+def parse_until(text: str, now: datetime | None = None) -> datetime:
+    """'1am', '1:30pm', '01:00' or '2026-09-29 01:00'. A bare time means its
+    next occurrence, so '1am' typed in the evening is tonight."""
+    now = now or datetime.now()
+    raw = text.strip()
+    try:
+        return datetime.strptime(raw, "%Y-%m-%d %H:%M")
+    except ValueError:
+        pass
+    compact = raw.lower().replace(" ", "")
+    for fmt in ("%I%p", "%I:%M%p", "%H:%M"):
+        try:
+            t = datetime.strptime(compact, fmt).time()
+        except ValueError:
+            continue
+        at = datetime.combine(now.date(), t)
+        return at if at > now else at + timedelta(days=1)
+    raise ValueError(f"cannot read {text!r} as a time (try 1am, 13:30 or 2026-09-29 01:00)")
+
+
+def pause(by: str, until: datetime | None = None) -> None:
+    doc = {"by": by, "at": time.time(), "at_iso": time.strftime("%Y-%m-%d %H:%M:%S")}
+    if until is not None:
+        doc.update(until=until.timestamp(), until_iso=until.strftime("%Y-%m-%d %H:%M"))
     PAUSE.parent.mkdir(parents=True, exist_ok=True)
-    PAUSE.write_text(json.dumps({"by": by, "at": time.time(),
-                                 "at_iso": time.strftime("%Y-%m-%d %H:%M:%S")}),
-                     encoding="utf-8")
+    PAUSE.write_text(json.dumps(doc), encoding="utf-8")
 
 
 def resume() -> None:
@@ -127,11 +159,21 @@ def main():
     ap.add_argument("job", nargs="?", choices=sorted(COMMANDS))
     ap.add_argument("--pause", metavar="BY",
                     help="stop every scheduled job and the job guard until --resume")
+    ap.add_argument("--until", metavar="WHEN",
+                    help="with --pause: resume on its own at this time (1am, 13:30, "
+                         "2026-09-29 01:00)")
     ap.add_argument("--resume", action="store_true")
     args = ap.parse_args()
+    if args.until and not args.pause:
+        ap.error("--until needs --pause")
     if args.pause:
-        pause(args.pause)
-        print("Roboner automation paused.")
+        try:
+            until = parse_until(args.until) if args.until else None
+        except ValueError as exc:
+            ap.error(str(exc))
+        pause(args.pause, until)
+        print("Roboner automation paused"
+              + (f" until {until:%a %d %b %H:%M}." if until else " until resumed."))
         return
     if args.resume:
         resume()
