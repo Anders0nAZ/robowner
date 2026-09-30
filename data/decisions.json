@@ -1340,5 +1340,47 @@
    "source": "Roboner NFL model, 462 players, 0.0h old, anchored on proj_2026_wk04_20260930T010200Z.json (per-game anchors, newest of 1; pre-game for every game, 465 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 51,
+  "ts": "2026-09-30T07:24:45+00:00",
+  "kind": "ir",
+  "title": "Roster unblocked",
+  "decision": "Activated Jaylen Wright, Caleb Douglas, Nico Collins; released Jaylen Wright (hold -0.0, the cheapest body we could cut); released Fernando Mendoza (hold -0.0, the cheapest body we could cut); released Denzel Boston (hold -0.0, the cheapest body we could cut).",
+  "rationale": "Jaylen Wright (Questionable), Caleb Douglas (Questionable), Nico Collins (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.",
+  "status": "final",
+  "data": {
+   "steps": [
+    {
+     "action": "activate",
+     "activate": [
+      "11643",
+      "13296",
+      "7569"
+     ],
+     "reserve": [],
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "11643",
+     "value": -0.0,
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "13269",
+     "value": -0.0,
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "13346",
+     "value": -0.0,
+     "landed": true
+    }
+   ],
+   "legal": true
+  }
  }
 ]
