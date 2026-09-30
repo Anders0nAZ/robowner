@@ -712,8 +712,6 @@ def _source_marker(step: str):
             len(d.get("players") or {}), out)
     if step == "scout":
         d = _read_json(DATA / "news_verdicts.json", {}) or {}
-        # COUNTS ONLY. The reasons quote injury reporting and, in one case, a
-        # named player's criminal charge; only a verdict's magnitude is public.
         return d.get("written"), "%d players judged" % len(d.get("verdicts", {}))
     return None, ""
 

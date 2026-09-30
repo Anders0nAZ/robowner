@@ -476,16 +476,8 @@ def _line(text: str, src: str = "") -> None:
 
 
 def explain(name: str = "", league_id: str = LEAGUE_ID_2026, limit: int = 1,
-            player_id: str | None = None, reasons: bool = False) -> None:
+            player_id: str | None = None) -> None:
     """Walk one player's rest-of-season number forward, stage by stage.
-
-    `reasons` OFF BY DEFAULT, and that default is the safe one. A scout reason
-    quotes the reporting it was formed from -- injuries, and in one case a named
-    player's criminal charge -- and this walk is reachable from skills.py, which
-    answers in the league chat. The magnitude of a verdict is publishable and
-    always shown; the sentence behind it is for the local audit app, which
-    passes reasons=True and is the same local/published split status.py draws
-    between report() and _scrub().
 
     READ IN THE ORDER THE MODEL RUNS. A season-long total is hard to sanity
     check by eye -- a stale projection or a dead playoff weighting still
@@ -512,10 +504,10 @@ def explain(name: str = "", league_id: str = LEAGUE_ID_2026, limit: int = 1,
         if not row:
             print(f"{api.player_name(players, pid)}: no remaining games")
             continue
-        _explain_one(pid, row, d, wk, sh, league_id, players, reasons=reasons)
+        _explain_one(pid, row, d, wk, sh, league_id, players)
 
 
-def _explain_one(pid, row, d, wk, sh, league_id, players, reasons=False) -> None:
+def _explain_one(pid, row, d, wk, sh, league_id, players) -> None:
     by = row.get("by_week") or {}
     weeks = sorted(int(w) for w in by)
     horizon = list(range(wk, last_week(league_id) + 1))
@@ -607,15 +599,6 @@ def _explain_one(pid, row, d, wk, sh, league_id, players, reasons=False) -> None
     print()
 
 
-def _verdict(pid: str) -> dict:
-    from robo import scout
-    try:
-        # The verdicts live one level down, under "verdicts" -- indexing the
-        # file dict by player id returned nothing for every player ever traced,
-        # so the news line has been silently blank since it was written.
-        return ((scout.load_verdicts() or {}).get("verdicts") or {}).get(str(pid)) or {}
-    except Exception:
-        return {}
 
 
 def _inheritance(row: dict, rec: dict, used: set) -> None:
@@ -680,7 +663,7 @@ def _sources(used: set) -> None:
 
 
 def trace(name: str = "", league_id: str = LEAGUE_ID_2026,
-          player_id: str | None = None, reasons: bool = False) -> str:
+          player_id: str | None = None) -> str:
     """The same walkthrough the CLI prints, returned as text.
 
     A five-line adapter over the print-based walk rather than a second renderer:
@@ -691,7 +674,7 @@ def trace(name: str = "", league_id: str = LEAGUE_ID_2026,
     import io
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        explain(name, league_id, player_id=player_id, reasons=reasons)
+        explain(name, league_id, player_id=player_id)
     return buf.getvalue()
 
 

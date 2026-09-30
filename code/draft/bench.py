@@ -415,11 +415,6 @@ def score(r: dict, roster: list[dict], board_by_id: dict, players: dict,
         tm = 1.0
     if abs(tm - 1.0) > 0.01:
         conditional *= tm
-        # ONLY the magnitude, never the verdict's reason text. These reasons
-        # quote reporting verbatim -- injuries, and in one case a named player's
-        # criminal charge -- and this string is published to the league's public
-        # decision log with every pick. The reasoning stays in the local file
-        # where it can be audited without republishing an allegation.
         why += ("; recent reporting on him is encouraging" if tm > 1.0
                 else "; recent reporting on him is a concern")
 
