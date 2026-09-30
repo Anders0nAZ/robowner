@@ -1382,5 +1382,29 @@
    ],
    "legal": true
   }
+ },
+ {
+  "id": 52,
+  "ts": "2026-09-30T07:24:48+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "No claims cleared. Unsuccessful: Ollie Gordon ($10, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:4:1790736264416606100",
+   "week": 4,
+   "claims": [
+    {
+     "transaction_id": "1410853793637101568",
+     "status": "failed",
+     "add": "Ollie Gordon",
+     "drop": "Fernando Mendoza",
+     "bid": 10,
+     "gain": 10.3,
+     "source": "newswatch"
+    }
+   ]
+  }
  }
 ]
