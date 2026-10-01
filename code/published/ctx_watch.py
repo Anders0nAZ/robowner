@@ -38,7 +38,9 @@ KEEP_ROWS = 20_000
 
 # The window each tag has baked in; a call to an unlisted tag is still logged
 # and still checked for truncation, just not for nearness.
-WINDOWS = {"qwen3.8:27b-mtp-48k-text": 49152, "qwen3.8:27b-mtp-96k": 98304}
+WINDOWS = {"qwen3.8:27b-mtp-48k-text": 49152, "qwen3.8:27b-mtp-64k-text": 65536,
+           "qwen3.8:27b-mtp-80k-text": 81920, "qwen3.8:27b-mtp-80k": 81920,
+           "qwen3.8:27b-mtp-96k": 98304}
 
 
 def _chars(messages, tools=None) -> int:
@@ -65,6 +67,11 @@ def record(caller: str, model: str, messages, response: dict,
            tools=None, window: int | None = None) -> str:
     """Log one call and return its verdict. Never raises."""
     try:
+        # The gate's model ladder can answer on a smaller rung than was asked
+        # for; the window that matters is the one that actually ran.
+        served = response.get("model") or model
+        if served != model and served in WINDOWS:
+            model, window = served, WINDOWS[served]
         window = window or WINDOWS.get(model)
         chars = _chars(messages, tools)
         prompt = response.get("prompt_eval_count")

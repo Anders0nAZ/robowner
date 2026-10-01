@@ -20,9 +20,9 @@ from datetime import datetime, timezone
 
 import requests
 
-from robo import DATA
+from robo import DATA, ROOT
 
-ARCHIVE_DB = r"C:\GroupMe Archive\groupme.db"
+ARCHIVE_DB = str(ROOT.parent / "groupme-archive" / "groupme.db")
 LEAGUE_GROUP = "RUReady Lives Again?"      # the ONLY archive group in scope
 DB = DATA / "chat_memory.db"
 VEC_DB = DATA / "chat_vectors.db"

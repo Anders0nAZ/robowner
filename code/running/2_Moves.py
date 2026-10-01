@@ -455,7 +455,7 @@ with tabs[4]:
     st.markdown("#### Stage 5: Qualitative LLM Dead-Heat Arbitration")
     st.caption(
         "Proposal 2B: When quantitative modeling yields near-zero difference (gain <= 1.5 pts or ROS diff <= 5.0 pts) in the same tier, "
-        "local Ollama (qwen3.8:27b-mtp-96k) arbitrates beat reporting to protect incumbents against lateral churn."
+        "local Ollama (qwen3.8:27b-mtp-80k) arbitrates beat reporting to protect incumbents against lateral churn."
     )
     arb_found = False
     for c in cands:

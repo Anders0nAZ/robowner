@@ -386,13 +386,15 @@ OLLAMA = "http://localhost:11434/api/chat"
 # machine-wide 32k, and Ollama drops the OLDEST tokens on overflow -- which is
 # the system prompt, i.e. every rule above about not guessing a date.
 #
-# 48k and text-only (C:\Users\Nate\qwen3.8-27b-mtp-48k-text.modelfile): same
-# weights, renderer, parser and sampling as the responder's -96k tag, measured
-# at 18,655 MiB against 21,669. A batch of four is ~9-12k tokens, and nothing
-# here sends an image. At 21.7 GB the model could not fit beside ~2.2 GB of
-# desktop apps plus the VRAM gate's 1 GB reserve, so every background batch was
-# refused and the queue sat undrained for hours with the card empty.
-LOCAL_MODEL = "qwen3.8:27b-mtp-48k-text"
+# 80k with vision (qwen3.8:27b-mtp-96k with num_ctx 81920), shared with the
+# responder and Qwen Code so one resident copy serves all three. Measured at
+# 21,182 MiB on 30 Sep 2026. A batch of four is ~9-12k tokens, and nothing here
+# sends an image. The margin is thin: at 21.7 GB (the old -96k) the model could
+# not fit beside ~2.2 GB of desktop apps plus the VRAM gate's 1 GB reserve, so
+# every background batch was refused and the queue sat undrained for hours. 80k
+# fits only because Chrome's hardware acceleration is off (~1.1 GB of apps) --
+# turn that back on and this is the first thing to check.
+LOCAL_MODEL = "qwen3.8:27b-mtp-80k"
 # Smaller than the draft version's six. Each player now carries ESPN's analyst
 # paragraph as well as the roto wire, and the model is thinking-by-default, so a
 # long request spends minutes reasoning before the first token of output.
@@ -496,12 +498,18 @@ class ModelUnavailableError(Exception):
 # under it costs one reload, which is the right trade against an image run.
 _last_call_at = 0.0
 _HOLD_WINDOW = 90
+# The gate's model ladder (X-Gate-Ladder: auto) may run a call on a smaller rung
+# of the same model (C:\VRAMMonitor\ladders.json), so the tag that is resident
+# is whatever Ollama answered with, not necessarily the one asked for.
+_last_served = None
+LADDER = {"X-Gate-Ladder": "auto"}
 
 
 def _release_if_ours(model: str) -> None:
     import requests
     if time.monotonic() - _last_call_at > _HOLD_WINDOW:
         return
+    model = _last_served or model
     try:
         # keep_alive 0 is ungated at VRAMMonitor: it frees VRAM, never takes it.
         requests.post(OLLAMA.replace("/api/chat", "/api/generate"),
@@ -523,7 +531,7 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
     and on 22 Sep three timeouts while ComfyUI shared the card spent all three
     retries on six players the model judged in 64s the next morning.
     """
-    global _last_call_at
+    global _last_call_at, _last_served
     import requests
     out = []
     for i in range(0, len(bundles), LOCAL_BATCH):
@@ -556,7 +564,8 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
                 "format": SCHEMA,
                 "messages": messages,
             }, headers={"X-Gate-Priority": gate_priority,
-                         "X-Gate-Wait": "5" if gate_priority == "background" else "120"},
+                         "X-Gate-Wait": "5" if gate_priority == "background" else "120",
+                         **LADDER},
                timeout=(5, timeout + (5 if gate_priority == "background" else 120)))
             if (r.status_code == 503
                     and r.headers.get("X-Gate-Reject") == "vram-busy"):
@@ -565,6 +574,7 @@ def judge(bundles: list[dict], model: str = LOCAL_MODEL,
             _last_call_at = time.monotonic()
             r.raise_for_status()
             body = r.json()
+            _last_served = body.get("model") or model
             ctx_watch.record("scout", model, messages, body)
             got = json.loads(body["message"]["content"]).get("verdicts", [])
         except VramBusyError:
@@ -1171,7 +1181,7 @@ REASONING: [1-3 sentences of crisp football rationale]
             "keep_alive": "1m",
             "messages": [{"role": "user", "content": prompt}],
             "options": {"temperature": 0.3},
-        }, timeout=timeout)
+        }, headers=LADDER, timeout=timeout)
         resp.raise_for_status()
         body = resp.json()
         ctx_watch.record("arbitration", LOCAL_MODEL,

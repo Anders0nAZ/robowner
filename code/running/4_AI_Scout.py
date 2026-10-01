@@ -1,7 +1,7 @@
 """AI & Scout Center — Qualitative LLM Arbitrations & Reporting Intelligence.
 
 Provides first-class auditing for all LLM-driven reasoning:
-  1. Dead-Heat Arbitrations: History of near-tie/dead-heat move proposals evaluated by local Ollama (qwen3.8:27b-mtp-96k).
+  1. Dead-Heat Arbitrations: History of near-tie/dead-heat move proposals evaluated by local Ollama (qwen3.8:27b-mtp-80k).
   2. Scout Prose Verdicts: Unredacted RotoWire/RotoBaller prose scouting and Codex/Qwen evaluations from data/news_verdicts.json.
   3. Scout Queue Backlog: Real-time monitoring of the rate-limited prose queue, priority tiers, and GPU drain cadence.
 """
@@ -41,7 +41,7 @@ with ai_tabs[0]:
     st.markdown("### Qualitative LLM Dead-Heat Arbitrations")
     st.caption(
         "Proposal 2B: When quantitative modeling shows a negligible delta (lineup gain <= 1.5 pts or ROS diff <= 5.0 pts) "
-        "between two players in the same quality tier, local Ollama (qwen3.8:27b-mtp-96k) evaluates qualitative beat reporting. "
+        "between two players in the same quality tier, local Ollama (qwen3.8:27b-mtp-80k) evaluates qualitative beat reporting. "
         "The incumbent is protected against lateral churn unless reporting demonstrates clear catalyst divergence."
     )
 

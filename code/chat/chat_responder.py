@@ -28,14 +28,14 @@ OLLAMA = "http://localhost:11434/api/chat"
 # the persona, the identity map, and the rules about what it may claim. No
 # error, just a bot that quietly forgets who it is.
 #
-# The same 48k text-only tag the scout uses, so the two share one resident
-# model instead of evicting each other (both cannot fit on 24 GB). The largest
-# measured prompt is ~10.8k tokens (three tool rounds); a full 150-message
-# week is ~18k. Nothing here sends the model an image.
-MODEL = "qwen3.8:27b-mtp-48k-text"
+# The same 80k vision tag the scout and Qwen Code use, so all three share one
+# resident model instead of evicting each other (two cannot fit on 24 GB). The
+# largest measured prompt is ~10.8k tokens (three tool rounds); a full
+# 150-message week is ~18k. Nothing here sends the model an image.
+MODEL = "qwen3.8:27b-mtp-80k"
 # Declared per request as well as baked into the tag. Belt and braces on this
 # project's most expensive gotcha, above. Keep this equal to the tag's value.
-NUM_CTX = 49152
+NUM_CTX = 81920
 TRIGGERS = ("roboner", "robert owner", "robowner", "robo owner", "the machine")
 MAX_REPLIES_PER_HOUR = 20
 # How much conversation goes into every prompt without the model asking for it.
@@ -414,7 +414,12 @@ def _chat(messages: list[dict], tools: list | None = None) -> dict:
                                     **({"tools": tools} if tools else {}),
                                     "keep_alive": KEEP_ALIVE,
                                     "options": {"num_ctx": NUM_CTX},
-                                    "stream": False}, timeout=240)
+                                    "stream": False},
+                      # The gate's model ladder: when the card can't hold the 80k
+                      # vision tag, run on a smaller rung of the same model (text
+                      # rungs only for a message without images). The gate also
+                      # rewrites num_ctx to the rung's own. C:\VRAMMonitor\ladders.json
+                      headers={"X-Gate-Ladder": "auto"}, timeout=240)
     r.raise_for_status()
     body = r.json()
     # Overflow is silent on Ollama; this only records whether it happened.
@@ -750,6 +755,47 @@ def generate_reply(chat_history: list[dict], addressed_msg: dict,
 CHANNELS = {"groupme": groupme, "sleeper": sleeper_chat, "draft": draft_chat}
 
 
+# --- focus away reply -----------------------------------------------------
+# During an image focus (set from the Local AI hub) the VRAM gate refuses LLM
+# calls so the GPU stays with ComfyUI. Rather than fail the batch, reply once in a
+# while with the gate's away text - which names when the focus ends - and mark
+# each addressed message handled so it is not re-answered later.
+GATE_FOCUS = "http://localhost:11434/_gate/focus"
+AWAY_EVERY_S = 600              # at most one away reply per channel per 10 minutes
+_away_sent: dict[str, float] = {}
+
+
+def _focus_away() -> str | None:
+    """The gate's away text while a focus blocks LLM calls, else None. Never raises:
+    an unreachable gate means no focus is known, and the normal path runs."""
+    try:
+        r = requests.get(GATE_FOCUS, timeout=2)
+        f = r.json() if r.ok else {}
+        return f.get("away") if f.get("blocks_llm") else None
+    except Exception:
+        return None
+
+
+def _focus_refusal(exc: Exception) -> str | None:
+    """Away text from a 503 the gate sent because a focus began mid-reply."""
+    resp = getattr(exc, "response", None)
+    if resp is None or resp.headers.get("X-Gate-Reject") != "focus":
+        return None
+    try:
+        return resp.json().get("error") or "I'm busy right now - back soon."
+    except ValueError:
+        return "I'm busy right now - back soon."
+
+
+def _answer_away(chan, channel: str, m: dict, away: str, verbose: bool) -> None:
+    if time.time() - _away_sent.get(channel, 0) >= AWAY_EVERY_S:
+        chan.post(away, reply_to=m.get("id"))
+        _away_sent[channel] = time.time()
+        if verbose:
+            print(f"[{channel}] away reply to {m.get('name')}: {away}")
+    _mark_replied(channel, m.get("id"))
+
+
 def cycle(channel: str = "groupme", verbose: bool = True) -> int:
     """Poll one channel and reply to anything that addressed us.
 
@@ -792,7 +838,18 @@ def cycle(channel: str = "groupme", verbose: bool = True) -> int:
                            else "hourly cap")
                     print(f"[{channel}] {why} reached; rest of the batch waits")
                 break
-            reply = generate_reply(history, m, platform=channel)
+            away = _focus_away()
+            if away:
+                _answer_away(chan, channel, m, away, verbose)
+                continue
+            try:
+                reply = generate_reply(history, m, platform=channel)
+            except requests.HTTPError as e:
+                away = _focus_refusal(e)
+                if not away:
+                    raise
+                _answer_away(chan, channel, m, away, verbose)
+                continue
             if reply:
                 body, image_url = split_media(reply)
                 chan.post(body, reply_to=m.get("id"), image_url=image_url)

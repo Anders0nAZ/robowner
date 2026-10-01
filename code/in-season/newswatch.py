@@ -44,6 +44,10 @@ NEWS_BATCH = 40
 CASCADE_GUARD_MIN = 5
 FULL_CASCADE_CLOCKS = ((7, 0), (9, 0), (16, 0))
 KICKOFF_STATUS_GRACE_MIN = 20
+# Local [start, end) where the pulse stands down and leaves the GPU to the GroupMe
+# archive's nightly sync (02:06, a few minutes of captioning on the same shared
+# 27B). Nothing league-side moves at 2 AM; the 03:03 pulse catches up.
+QUIET_WINDOW = ((2, 0), (3, 0))
 
 # BETTING LINES. The market moves on breaking news within minutes, so every
 # pulse re-reads ESPN's board (nflmodel/ingest/lines.py) for this week and the
@@ -302,6 +306,15 @@ def scheduled_cascade_pause_reason(now: float | None = None,
         # The shared writer lock still prevents actual overlap. Failure to read
         # future reservations is not grounds to disable the watcher all day.
         return ""
+    return ""
+
+
+def quiet_window_reason(now: float | None = None) -> str:
+    """The nightly slot reserved for the archive sync, or ``""``."""
+    here = datetime.fromtimestamp(time.time() if now is None else float(now)).astimezone()
+    (sh, sm), (eh, em) = QUIET_WINDOW
+    if (sh, sm) <= (here.hour, here.minute) < (eh, em):
+        return f"quiet window {sh:02d}:{sm:02d}-{eh:02d}:{em:02d} (archive sync)"
     return ""
 
 
@@ -1548,7 +1561,7 @@ def main():
         except Exception as e:
             lines = {"error": f"{type(e).__name__}: {e}", "moves": []}
         live = game_pause_reason()
-        reason = live or scheduled_cascade_pause_reason()
+        reason = live or scheduled_cascade_pause_reason() or quiet_window_reason()
         if reason:
             record_pause(reason)
             # During live games the defence stream alone may act, for defences

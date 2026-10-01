@@ -34,7 +34,7 @@ from robo import DATA, ROOT
 from robo.chat_memory import (DOC_PREFIX, EMBED_MODEL, OLLAMA, QUERY_PREFIX,
                               _blocked)
 
-ARCHIVE_ROOT = Path(r"C:\GroupMe Archive")
+ARCHIVE_ROOT = ROOT.parent / "groupme-archive"
 ARCHIVE_DB = ARCHIVE_ROOT / "groupme.db"
 DB = DATA / "media_pool.db"
 VEC_DB = DATA / "media_vectors.db"
