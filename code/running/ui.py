@@ -139,3 +139,63 @@ def pos_filter(st, rows, key="pos") -> list:
     picked = st.multiselect("Position", opts, default=[], key=f"{key}::pos",
                             help="Empty shows every position.")
     return [r for r in rows if not picked or r["pos"] in picked]
+
+
+def status_chip(status_text: str, kind: str = "neutral") -> str:
+    """Returns an HTML pill badge with high contrast for light and dark modes."""
+    kinds = {
+        "green": ("rgba(16, 185, 129, 0.18)", "#10b981", "#059669"),
+        "emerald": ("rgba(16, 185, 129, 0.18)", "#10b981", "#059669"),
+        "success": ("rgba(16, 185, 129, 0.18)", "#10b981", "#059669"),
+        "blue": ("rgba(14, 165, 233, 0.18)", "#0284c7", "#0284c7"),
+        "cyan": ("rgba(6, 182, 212, 0.18)", "#0891b2", "#0891b2"),
+        "info": ("rgba(14, 165, 233, 0.18)", "#0284c7", "#0284c7"),
+        "amber": ("rgba(245, 158, 11, 0.18)", "#d97706", "#d97706"),
+        "yellow": ("rgba(245, 158, 11, 0.18)", "#d97706", "#d97706"),
+        "warning": ("rgba(245, 158, 11, 0.18)", "#d97706", "#d97706"),
+        "red": ("rgba(239, 68, 68, 0.18)", "#dc2626", "#dc2626"),
+        "danger": ("rgba(239, 68, 68, 0.18)", "#dc2626", "#dc2626"),
+        "neutral": ("rgba(156, 163, 175, 0.18)", "#6b7280", "#4b5563"),
+        "gray": ("rgba(156, 163, 175, 0.18)", "#6b7280", "#4b5563"),
+    }
+    bg, border, fg = kinds.get(kind.lower(), kinds["neutral"])
+    return (
+        f"<span style='display: inline-flex; align-items: center; padding: 2px 10px; "
+        f"border-radius: 9999px; font-size: 0.8rem; font-weight: 600; line-height: 1.4; "
+        f"background-color: {bg}; border: 1px solid {border}; color: {fg}; white-space: nowrap;'>"
+        f"{status_text}</span>"
+    )
+
+
+def metric_card(label: str, value: str | int | float, delta: str | None = None,
+                help_text: str | None = None, color: str = "#29B5E8") -> str:
+    """Formatted HTML metric card with secondary context."""
+    delta_html = f"<div style='font-size: 0.8rem; opacity: 0.85; margin-top: 2px;'>{delta}</div>" if delta else ""
+    help_attr = f" title='{help_text}'" if help_text else ""
+    return (
+        f"<div{help_attr} style='padding: 10px 14px; border-radius: 8px; background: rgba(128,128,128,0.08); "
+        f"border-left: 4px solid {color}; margin-bottom: 8px; min-height: 72px;'>"
+        f"<div style='font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.05em; opacity: 0.75;'>{label}</div>"
+        f"<div style='font-size: 1.35rem; font-weight: 700; line-height: 1.2;'>{value}</div>"
+        f"{delta_html}"
+        f"</div>"
+    )
+
+
+def split_player_name(full_name: str, player_record: dict | None = None) -> tuple[str, str]:
+    """Split a full player name into (first_name, last_name).
+
+    Defers to Sleeper player metadata when present, otherwise uses a suffix-aware parser.
+    """
+    if player_record and player_record.get("last_name"):
+        return str(player_record.get("first_name") or ""), str(player_record.get("last_name") or "")
+    if not full_name:
+        return "", ""
+    parts = full_name.strip().split()
+    if len(parts) <= 1:
+        return full_name.strip(), full_name.strip()
+    suffixes = {"jr.", "jr", "sr.", "sr", "ii", "iii", "iv", "v"}
+    if len(parts) > 2 and parts[-1].lower() in suffixes:
+        return " ".join(parts[:-2]), f"{parts[-2]} {parts[-1]}"
+    return " ".join(parts[:-1]), parts[-1]
+

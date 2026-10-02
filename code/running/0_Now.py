@@ -7,6 +7,8 @@ actually did -- which is the only question this app exists to answer. The
 staleness is stated at the top instead of being hidden by a recomputation.
 """
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -136,9 +138,12 @@ if not run:
     st.stop()
 
 age = ui.fmt_age(run.get("at"))
+run_at = run.get("at")
+run_dt = datetime.fromtimestamp(float(run_at)).strftime("%b %d, %H:%M") if run_at else ""
+time_label = f"**{run_dt} ({age})**" if run_dt else f"**{age}**"
 trigger = ("news pulse" if run["kind"] == decision_audit.NEWS
            else f"scheduled `{run['mode']}` pass")
-st.caption(f"As of the {trigger} **{age}** · week {run.get('week')} · {run['outcome']}. "
+st.caption(f"As of the {trigger} {time_label} · week {run.get('week')} · {run['outcome']}. "
            "The pulse runs every twenty minutes; this page reports what that run decided "
            "rather than recomputing an answer of its own.")
 
@@ -381,13 +386,14 @@ try:
                 "gain": float(gain) if gain is not None else None,
                 "group": f"{gid} (max {cap})",
                 "tx_id": txid,
-                "submitted": ui.fmt_age(sub_at) if sub_at else "—",
+                "submitted_dt": datetime.fromtimestamp(float(sub_at)) if sub_at else None,
+                "submitted_age": ui.fmt_age(sub_at) if sub_at else "—",
                 "player_id": s.get("add_id"),
             })
         owned_rows.sort(key=lambda r: int(r["rung"].replace("#", "")))
         df_owned = pd.DataFrame(owned_rows)
         ev_owned = st.dataframe(
-            df_owned[["rung", "add", "drop", "bid", "gain", "group", "tx_id", "submitted"]],
+            df_owned[["rung", "add", "drop", "bid", "gain", "group", "tx_id", "submitted_dt", "submitted_age"]],
             use_container_width=True,
             hide_index=True,
             on_select="rerun",
@@ -401,7 +407,8 @@ try:
                 "gain": st.column_config.NumberColumn("Lineup Gain", format="%+.2f pts"),
                 "group": st.column_config.TextColumn("Portfolio Group", width="medium"),
                 "tx_id": st.column_config.TextColumn("Sleeper Tx ID", width="medium"),
-                "submitted": st.column_config.TextColumn("Submitted", width="small"),
+                "submitted_dt": st.column_config.DatetimeColumn("Submitted", format="MMM DD, HH:mm", width="medium"),
+                "submitted_age": st.column_config.TextColumn("Age", width="small"),
             }
         )
         ui_player_card.attach_player_selection(df_owned, ev_owned, id_col="player_id", week=run.get("week"))
@@ -452,8 +459,10 @@ try:
                     gain = float(spec.get("gain")) if spec.get("gain") is not None else None
                     detail = reason or str(e.get("result") or "")
 
+                e_ts = float(e.get("at") or 0)
                 hist_rows.append({
-                    "when": ui.fmt_age(e.get("at")),
+                    "when_dt": datetime.fromtimestamp(e_ts) if e_ts else None,
+                    "when_age": ui.fmt_age(e_ts) if e_ts else "—",
                     "action": kind,
                     "add": add,
                     "drop": drop,
@@ -466,14 +475,15 @@ try:
                 })
             df_hist = pd.DataFrame(hist_rows)
             ev_hist = st.dataframe(
-                df_hist[["when", "action", "add", "drop", "bid", "rung", "gain", "detail", "tx_id"]],
+                df_hist[["when_dt", "when_age", "action", "add", "drop", "bid", "rung", "gain", "detail", "tx_id"]],
                 use_container_width=True,
                 hide_index=True,
                 on_select="rerun",
                 selection_mode="single-row",
                 key="now_lifecycle_events_table",
                 column_config={
-                    "when": st.column_config.TextColumn("When", width="small"),
+                    "when_dt": st.column_config.DatetimeColumn("When", format="MMM DD, HH:mm", width="medium"),
+                    "when_age": st.column_config.TextColumn("Age", width="small"),
                     "action": st.column_config.TextColumn("Action", width="small"),
                     "add": st.column_config.TextColumn("Player Target", width="medium"),
                     "drop": st.column_config.TextColumn("Player Dropped", width="medium"),

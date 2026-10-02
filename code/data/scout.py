@@ -1197,9 +1197,8 @@ REASONING: [1-3 sentences of crisp football rationale]
 
         verdict = verdict_m.group(1).upper()
         confidence = float(conf_m.group(1)) if conf_m else 0.65
-        reason = reason_m.group(1).strip() if reason_m else content.strip()[:200]
+        reason = reason_m.group(1).strip() if reason_m else content.strip()
         reason = re.sub(r"<think>.*?</think>", "", reason, flags=re.DOTALL).strip()
-        reason = " ".join(reason.split()[:50])
 
         result = {
             "verdict": verdict,

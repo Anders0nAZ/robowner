@@ -17,6 +17,8 @@ presented as a recorded one.
 
 from __future__ import annotations
 
+from datetime import datetime
+
 import pandas as pd
 import streamlit as st
 
@@ -52,14 +54,17 @@ if not rows:
 weeks = sorted({r["week"] for r in rows if r.get("week")}, reverse=True)
 types = sorted({r["type"] for r in rows})
 origins = sorted({r["origin"] for r in rows})
-f = st.columns([1, 2, 2, 2])
-week = f[0].selectbox("Week", ["All"] + weeks)
-pick_types = f[1].multiselect("Type", types)
-pick_origins = f[2].multiselect("Initiated by", origins,
-                                help="The driver at the head of the path. "
-                                     "'direct command' is a scheduled task or a "
-                                     "hand-run module; the row's entry point says which.")
-who = f[3].text_input("Player", placeholder="name contains…")
+
+f_row1 = st.columns(2)
+week = f_row1[0].selectbox("Week", ["All"] + weeks)
+pick_types = f_row1[1].multiselect("Type", types)
+
+f_row2 = st.columns(2)
+pick_origins = f_row2[0].multiselect("Initiated by", origins,
+                                    help="The driver at the head of the path. "
+                                         "'direct command' is a scheduled task or a "
+                                         "hand-run module; the row's entry point says which.")
+who = f_row2[1].text_input("Player", placeholder="name contains…")
 
 shown = [r for r in rows
          if (week == "All" or r.get("week") == week)
@@ -76,7 +81,8 @@ m[2].metric("Drops", sum(len(r["drop_ids"]) for r in shown
 m[3].metric("Not made by the bot", sum(r["origin"] == transactions.NOT_BOT for r in shown))
 
 table = pd.DataFrame([{
-    "When": news_audit.local_time(r["when"]) if r["when"] else "—",
+    "When": datetime.fromtimestamp(float(r["when"])) if r.get("when") else None,
+    "Age": ui.fmt_age(r.get("when")),
     "Type": r["type"],
     "In": ", ".join(r["adds"]) or "—",
     "Out": ", ".join(r["drops"]) or "—",
@@ -90,9 +96,19 @@ table = pd.DataFrame([{
 } for r in shown])
 
 wanted = st.query_params.get("txn")
-event = st.dataframe(table, use_container_width=True, hide_index=True,
-                     on_select="rerun", selection_mode="single-row",
-                     column_config={"Why": st.column_config.TextColumn(width="large")})
+event = st.dataframe(
+    table,
+    use_container_width=True,
+    hide_index=True,
+    on_select="rerun",
+    selection_mode="single-row",
+    column_config={
+        "When": st.column_config.DatetimeColumn("When", format="MMM DD, HH:mm", width="medium",
+                                                help="When the transaction took place (click to sort chronologically)"),
+        "Age": st.column_config.TextColumn("Age", width="small", help="Recency of the transaction"),
+        "Why": st.column_config.TextColumn("Why", width="large"),
+    },
+)
 sel = getattr(getattr(event, "selection", None), "rows", None) or []
 chosen = shown[sel[0]] if sel else next(
     (r for r in shown if wanted and r.get("transaction_id") == wanted), None)
