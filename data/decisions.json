@@ -1484,5 +1484,20 @@
    "source": "Roboner NFL model, 462 players, 0.0h old, anchored on proj_2026_wk04_20260930T140610Z.json (per-game anchors, newest of 1; pre-game for every game, 466 players with a game)",
    "modelled": 16
   }
+ },
+ {
+  "id": 55,
+  "ts": "2026-10-02T15:23:28+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Caleb Douglas to injured reserve.",
+  "rationale": "designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "13296"
+   ],
+   "previous": []
+  }
  }
 ]
