@@ -1554,5 +1554,44 @@
    "source": "Roboner NFL model, 449 players, 0.0h old, anchored on proj_2026_wk04_20261002T232010Z.json (per-game anchors, newest of 2; pre-game for every game, 452 players with a game)",
    "modelled": 17
   }
+ },
+ {
+  "id": 58,
+  "ts": "2026-10-02T23:20:37+00:00",
+  "kind": "lineup",
+  "title": "Week 4 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Nico Collins; WR: Emeka Egbuka; TE: Isaiah Likely; FLEX: Tony Pollard; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Green Bay Packers",
+  "rationale": "Projected 131.8 points under league scoring from Roboner's NFL model means for 17 of 17 players, +0.5 versus the lineup as it stood. Bye-week and injured-out players are benched.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "12514",
+    "8131",
+    "5967",
+    "6804",
+    "11792",
+    "GB"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "12507",
+    "7569",
+    "5927",
+    "8131",
+    "5967",
+    "6804",
+    "11792",
+    "GB"
+   ],
+   "projected": 131.8,
+   "week": 4,
+   "source": "Roboner NFL model, 449 players, 0.0h old, anchored on proj_2026_wk04_20261002T232010Z.json (per-game anchors, newest of 2; pre-game for every game, 452 players with a game)",
+   "modelled": 17
+  }
  }
 ]
