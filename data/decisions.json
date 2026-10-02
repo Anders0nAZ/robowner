@@ -1499,5 +1499,21 @@
    ],
    "previous": []
   }
+ },
+ {
+  "id": 56,
+  "ts": "2026-10-02T15:23:58+00:00",
+  "kind": "free-agent",
+  "title": "Signed Zachariah Branch, released (open roster spot)",
+  "decision": "Zachariah Branch (WR) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 2.9 against 0.0 held, a gain of +2.9 in ros mode. bench, judged on the ceiling; +/- 0.6, ceiling 11.8; season totals 60.6 vs 0.0 (+60.6); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "13320",
+   "drop": null,
+   "mode": "ros",
+   "week": 4,
+   "gain": 2.9
+  }
  }
 ]
