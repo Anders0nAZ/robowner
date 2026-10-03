@@ -1728,5 +1728,21 @@
     "13296"
    ]
   }
+ },
+ {
+  "id": 63,
+  "ts": "2026-10-03T16:44:00+00:00",
+  "kind": "free-agent",
+  "title": "Signed Najee Harris, released (open roster spot)",
+  "decision": "Najee Harris (RB) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 12.2 against 0.0 held, a gain of +12.2 in ros mode. bench, judged on the ceiling; +/- 1.6, ceiling 54.3; season totals 90.8 vs 0.0 (+90.8); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "7528",
+   "drop": null,
+   "mode": "ros",
+   "week": 4,
+   "gain": 12.2
+  }
  }
 ]
