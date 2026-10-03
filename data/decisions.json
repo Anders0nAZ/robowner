@@ -1710,5 +1710,23 @@
    "source": "Roboner NFL model, 450 players, 0.0h old, anchored on proj_2026_wk04_20261003T164304Z.json (per-game anchors, newest of 2; pre-game for every game, 453 players with a game)",
    "modelled": 16
   }
+ },
+ {
+  "id": 62,
+  "ts": "2026-10-03T16:43:34+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Terry McLaurin to injured reserve.",
+  "rationale": "designated Doubtful, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "13296",
+    "5927"
+   ],
+   "previous": [
+    "13296"
+   ]
+  }
  }
 ]
