@@ -1744,5 +1744,35 @@
    "week": 4,
    "gain": 12.2
   }
+ },
+ {
+  "id": 64,
+  "ts": "2026-10-04T10:03:34+00:00",
+  "kind": "ir",
+  "title": "Roster unblocked",
+  "decision": "Activated Terry McLaurin; released Brenton Strange (hold 0.0, the cheapest body we could cut).",
+  "rationale": "Terry McLaurin (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.",
+  "status": "final",
+  "data": {
+   "steps": [
+    {
+     "action": "activate",
+     "activate": [
+      "5927"
+     ],
+     "reserve": [
+      "13296"
+     ],
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "9480",
+     "value": 0.0,
+     "landed": true
+    }
+   ],
+   "legal": true
+  }
  }
 ]
