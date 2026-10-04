@@ -1792,5 +1792,21 @@
     "13296"
    ]
   }
+ },
+ {
+  "id": 66,
+  "ts": "2026-10-04T12:25:00+00:00",
+  "kind": "free-agent",
+  "title": "Signed Malachi Fields, released (open roster spot)",
+  "decision": "Malachi Fields (WR) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 7.3 against 0.0 held, a gain of +7.3 in ros mode. bench, judged on the ceiling; +/- 1.0, ceiling 32.7; season totals 57.3 vs 0.0 (+57.3); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "13285",
+   "drop": null,
+   "mode": "ros",
+   "week": 4,
+   "gain": 7.3
+  }
  }
 ]
