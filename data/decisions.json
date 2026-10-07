@@ -1958,5 +1958,20 @@
    "week": 5,
    "gain": 41.3
   }
+ },
+ {
+  "id": 71,
+  "ts": "2026-10-07T14:03:22+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Terrance Ferguson to injured reserve.",
+  "rationale": "designated IR, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "12487"
+   ],
+   "previous": []
+  }
  }
 ]
