@@ -1808,5 +1808,40 @@
    "week": 4,
    "gain": 7.3
   }
+ },
+ {
+  "id": 67,
+  "ts": "2026-10-07T07:24:46+00:00",
+  "kind": "ir",
+  "title": "Roster unblocked",
+  "decision": "Activated Caleb Douglas, Terry McLaurin; released Tyson Bagent (hold 0.2, the cheapest body we could cut); released Najee Harris (hold 0.8, the cheapest body we could cut).",
+  "rationale": "Caleb Douglas (Questionable), Terry McLaurin (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.",
+  "status": "final",
+  "data": {
+   "steps": [
+    {
+     "action": "activate",
+     "activate": [
+      "13296",
+      "5927"
+     ],
+     "reserve": [],
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "11256",
+     "value": 0.2,
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "7528",
+     "value": 0.8,
+     "landed": true
+    }
+   ],
+   "legal": true
+  }
  }
 ]
