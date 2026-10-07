@@ -1843,5 +1843,65 @@
    ],
    "legal": true
   }
+ },
+ {
+  "id": 68,
+  "ts": "2026-10-07T07:24:50+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "Claimed Jacksonville Jaguars for $0, dropping Green Bay Packers. Unsuccessful: Cincinnati Bengals ($0, failed), New York Jets ($0, failed), Dallas Cowboys ($0, failed), Denver Broncos ($0, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:5:1791307442619678400",
+   "week": 5,
+   "claims": [
+    {
+     "transaction_id": "1413249496741130240",
+     "status": "failed",
+     "add": "Cincinnati Bengals",
+     "drop": "Green Bay Packers",
+     "bid": 0,
+     "gain": 4.36,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1413249499077287936",
+     "status": "completed",
+     "add": "Jacksonville Jaguars",
+     "drop": "Green Bay Packers",
+     "bid": 0,
+     "gain": 4.27,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1413249501187112960",
+     "status": "failed",
+     "add": "New York Jets",
+     "drop": "Green Bay Packers",
+     "bid": 0,
+     "gain": 4.11,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1413249503330349056",
+     "status": "failed",
+     "add": "Dallas Cowboys",
+     "drop": "Green Bay Packers",
+     "bid": 0,
+     "gain": 3.44,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1413249505599471616",
+     "status": "failed",
+     "add": "Denver Broncos",
+     "drop": "Green Bay Packers",
+     "bid": 0,
+     "gain": 3.44,
+     "source": "newswatch"
+    }
+   ]
+  }
  }
 ]
