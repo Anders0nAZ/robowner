@@ -1973,5 +1973,21 @@
    ],
    "previous": []
   }
+ },
+ {
+  "id": 72,
+  "ts": "2026-10-07T14:03:48+00:00",
+  "kind": "free-agent",
+  "title": "Signed Hunter Henry, released (open roster spot)",
+  "decision": "Hunter Henry (TE) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 4.7 against 0.0 held, a gain of +4.7 in ros mode. starting slot; +/- 0.2, ceiling 8.1; season totals 82.2 vs 0.0 (+82.2); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "3214",
+   "drop": null,
+   "mode": "ros",
+   "week": 5,
+   "gain": 4.7
+  }
  }
 ]
