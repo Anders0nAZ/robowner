@@ -1989,5 +1989,21 @@
    "week": 5,
    "gain": 4.7
   }
+ },
+ {
+  "id": 73,
+  "ts": "2026-10-07T14:44:00+00:00",
+  "kind": "free-agent",
+  "title": "Signed J.J. McCarthy, released Zachariah Branch",
+  "decision": "J.J. McCarthy (QB) in, Zachariah Branch out.",
+  "rationale": "Rest-of-season value 5.5 against 2.3 held, a gain of +5.5 in ros mode. bench, judged on the ceiling; +/- 0.9, ceiling 21.2; season totals 79.5 vs 56.8 (+22.8); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "11565",
+   "drop": "13320",
+   "mode": "ros",
+   "week": 5,
+   "gain": 5.5
+  }
  }
 ]
