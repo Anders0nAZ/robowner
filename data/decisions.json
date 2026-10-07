@@ -1942,5 +1942,21 @@
    "source": "Roboner NFL model, 439 players, 0.0h old, anchored on proj_2026_wk05_20261007T072420Z.json (per-game anchors, newest of 1; pre-game for every game, 440 players with a game)",
    "modelled": 17
   }
+ },
+ {
+  "id": 70,
+  "ts": "2026-10-07T14:00:34+00:00",
+  "kind": "free-agent",
+  "title": "Signed Terrance Ferguson, released Caleb Douglas",
+  "decision": "Terrance Ferguson (TE) in, Caleb Douglas out.",
+  "rationale": "Rest-of-season value 42.0 against 0.8 held, a gain of +41.3 in patch mode. fills an unfillable starting slot.",
+  "status": "final",
+  "data": {
+   "add": "12487",
+   "drop": "13296",
+   "mode": "patch",
+   "week": 5,
+   "gain": 41.3
+  }
  }
 ]
