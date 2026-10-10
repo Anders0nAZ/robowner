@@ -114,6 +114,7 @@ EMBED_TIMEOUT_S = 240
 def _embed(texts: list[str], prefix: str) -> list[list[float]]:
     r = requests.post(f"{OLLAMA}/api/embed",
                       json={"model": EMBED_MODEL, "input": [prefix + t for t in texts]},
+                      headers={"X-Gate-Client": "roboner", "X-Gate-Operation": "embed"},
                       timeout=EMBED_TIMEOUT_S)
     r.raise_for_status()
     return r.json()["embeddings"]

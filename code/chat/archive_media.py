@@ -244,6 +244,7 @@ def cdn_for(local_path: str) -> str | None:
 def _embed(texts: list[str], prefix: str) -> list[list[float]]:
     r = requests.post(f"{OLLAMA}/api/embed",
                       json={"model": EMBED_MODEL, "input": [prefix + t for t in texts]},
+                      headers={"X-Gate-Client": "roboner", "X-Gate-Operation": "embed"},
                       timeout=120)
     r.raise_for_status()
     return r.json()["embeddings"]

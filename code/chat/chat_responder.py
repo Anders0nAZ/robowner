@@ -419,7 +419,8 @@ def _chat(messages: list[dict], tools: list | None = None) -> dict:
                       # vision tag, run on a smaller rung of the same model (text
                       # rungs only for a message without images). The gate also
                       # rewrites num_ctx to the rung's own. C:\VRAMMonitor\ladders.json
-                      headers={"X-Gate-Ladder": "auto"}, timeout=240)
+                      headers={"X-Gate-Ladder": "auto", "X-Gate-Client": "roboner",
+                               "X-Gate-Operation": "chat"}, timeout=240)
     r.raise_for_status()
     body = r.json()
     # Overflow is silent on Ollama; this only records whether it happened.

@@ -502,7 +502,7 @@ _HOLD_WINDOW = 90
 # of the same model (C:\VRAMMonitor\ladders.json), so the tag that is resident
 # is whatever Ollama answered with, not necessarily the one asked for.
 _last_served = None
-LADDER = {"X-Gate-Ladder": "auto"}
+LADDER = {"X-Gate-Ladder": "auto", "X-Gate-Client": "roboner", "X-Gate-Operation": "scout"}
 
 
 def _release_if_ours(model: str) -> None:
@@ -513,7 +513,8 @@ def _release_if_ours(model: str) -> None:
     try:
         # keep_alive 0 is ungated at VRAMMonitor: it frees VRAM, never takes it.
         requests.post(OLLAMA.replace("/api/chat", "/api/generate"),
-                      json={"model": model, "keep_alive": 0}, timeout=10)
+                      json={"model": model, "keep_alive": 0}, timeout=10,
+                      headers={"X-Gate-Client": "roboner", "X-Gate-Operation": "release"})
         print(f"  released {model} for ComfyUI", flush=True)
     except Exception as e:
         print(f"  release of {model} failed: {str(e)[:80]}", flush=True)
