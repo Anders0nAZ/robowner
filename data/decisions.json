@@ -2236,5 +2236,44 @@
    "week": 6,
    "gain": 90.2
   }
+ },
+ {
+  "id": 81,
+  "ts": "2026-10-14T14:03:35+00:00",
+  "kind": "lineup",
+  "title": "Week 6 lineup set",
+  "decision": "QB: Jordan Love; RB: Jonathan Taylor; RB: Tony Pollard; WR: Nico Collins; WR: Terry McLaurin; TE: Isaiah Likely; FLEX: Omarion Hampton; SUPER_FLEX: Brock Purdy; K: Harrison Butker; DEF: Jacksonville Jaguars",
+  "rationale": "Projected 129.8 points under league scoring from Roboner's NFL model means for 15 of 17 players, +8.9 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Will Reichard (bye).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "6804",
+    "6813",
+    "5967",
+    "7569",
+    "5927",
+    "8131",
+    "12507",
+    "8183",
+    "4227",
+    "JAX"
+   ],
+   "previous": [
+    "6804",
+    "6813",
+    "5967",
+    "7569",
+    "5927",
+    "8131",
+    "12507",
+    "8183",
+    "11792",
+    "JAX"
+   ],
+   "projected": 129.8,
+   "week": 6,
+   "source": "Roboner NFL model, 407 players, 0.0h old, anchored on proj_2026_wk06_20261014T140301Z.json (per-game anchors, newest of 1; pre-game for every game, 405 players with a game)",
+   "modelled": 15
+  }
  }
 ]
