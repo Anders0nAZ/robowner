@@ -2275,5 +2275,29 @@
    "source": "Roboner NFL model, 407 players, 0.0h old, anchored on proj_2026_wk06_20261014T140301Z.json (per-game anchors, newest of 1; pre-game for every game, 405 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 82,
+  "ts": "2026-10-19T04:05:21+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "No claims cleared. Unsuccessful: Malik Washington ($26, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:6:1792306024634920700",
+   "week": 6,
+   "claims": [
+    {
+     "transaction_id": "1417437845248868352",
+     "status": "failed",
+     "add": "Malik Washington",
+     "drop": "Emeka Egbuka",
+     "bid": 26,
+     "gain": 31.5,
+     "source": "newswatch"
+    }
+   ]
+  }
  }
 ]
