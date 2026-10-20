@@ -2376,5 +2376,25 @@
     "12487"
    ]
   }
+ },
+ {
+  "id": 86,
+  "ts": "2026-10-20T04:26:41+00:00",
+  "kind": "lineup",
+  "title": "Week 7 lineup incomplete",
+  "decision": "Could not field a complete lineup: the lineup still starts Jacksonville Jaguars (bye).",
+  "rationale": "Checked after news pulse. Every repair available was tried: clearing the reserve, signing a free agent into the empty slot, and re-setting the lineup.",
+  "status": "final",
+  "data": {
+   "week": 7,
+   "issues": {
+    "frozen": false,
+    "holes": [],
+    "illegal": [
+     "Jacksonville Jaguars (bye)"
+    ]
+   },
+   "trigger": "news pulse"
+  }
  }
 ]
