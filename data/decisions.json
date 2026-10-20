@@ -2358,5 +2358,23 @@
    "source": "Roboner NFL model, 431 players, 0.0h old, anchored on proj_2026_wk07_20261020T042610Z.json (per-game anchors, newest of 1; pre-game for every game, 447 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 85,
+  "ts": "2026-10-20T04:26:32+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Terry McLaurin to injured reserve.",
+  "rationale": "designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "12487",
+    "5927"
+   ],
+   "previous": [
+    "12487"
+   ]
+  }
  }
 ]
