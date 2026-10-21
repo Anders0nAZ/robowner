@@ -2396,5 +2396,21 @@
    },
    "trigger": "news pulse"
   }
+ },
+ {
+  "id": 87,
+  "ts": "2026-10-21T07:57:07+00:00",
+  "kind": "free-agent",
+  "title": "Signed Malik Washington, released (open roster spot)",
+  "decision": "Malik Washington (WR) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 38.0 against 0.0 held, a gain of +38.0 in ros mode. starting slot; +/- 0.8, ceiling 46.7; season totals 120.0 vs 0.0 (+120.0); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "11610",
+   "drop": null,
+   "mode": "ros",
+   "week": 7,
+   "gain": 38.0
+  }
  }
 ]
