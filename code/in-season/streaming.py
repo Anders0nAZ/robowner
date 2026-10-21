@@ -242,6 +242,11 @@ def swap(week: int, ours: str, league_id=None, season_yr=None) -> dict:
         return {"gain": 0.0, "best": None, "mine": mine,
                 "why": f"hold {ours}: its game has locked", "locked": True}
     best = best_available(week, league_id, season_yr)
+    if mine is None and not (locks.get(ours) or {}).get("has_game"):
+        # A BYE IS A PRICED LINE: ZERO. The board only ranks teams that play, so
+        # a defence on bye has no row, and reading that as "unpriced" held a bye
+        # defence in the lineup all of week 7 2026 with twenty free ones playing.
+        mine = {"team": ours, "week": week, "pts": 0.0, "bye": True}
     if not best or not mine:
         return {"gain": 0.0, "best": best, "mine": mine,
                 "why": "no priced line for one side of the comparison"}

@@ -557,20 +557,55 @@ def _format_draft_slot(data: dict, why_m: dict = None) -> str:
     return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
 
 
+def _format_construction(data: dict) -> str:
+    """An unrepaired lineup: what is wrong, in words, and what was tried."""
+    issues = data.get("issues") or {}
+    problems = []
+    if issues.get("frozen"):
+        problems.append("Sleeper is refusing roster changes")
+    if issues.get("holes"):
+        problems.append("No one to start at " + ", ".join(map(str, issues["holes"])))
+    for bad in issues.get("illegal") or []:
+        problems.append("Starting " + str(bad))
+    rows = []
+    if data.get("week") is not None:
+        rows.append(f'<tr><th>Week</th><td>{html.escape(str(data["week"]))}</td></tr>')
+    rows.append('<tr><th>Problem</th><td>'
+                + ("<br>".join(html.escape(p) for p in problems) or "&mdash;")
+                + '</td></tr>')
+    if data.get("tried"):
+        rows.append('<tr><th>Tried</th><td>'
+                    + "<br>".join(html.escape(str(t)) for t in data["tried"])
+                    + '</td></tr>')
+    if data.get("trigger"):
+        rows.append(f'<tr><th>Trigger</th><td>{html.escape(str(data["trigger"]))}</td></tr>')
+    return f'<table class="data-table"><tbody>{"".join(rows)}</tbody></table>'
+
+
+def _is_player_ref(v) -> bool:
+    """Whether a generic data value names a player.
+
+    Sleeper ids are strings everywhere we record them. A bare int is a count, a
+    week or a round -- and the dump really does hold low numeric ids for retired
+    men, so `week: 7` used to render as Kurt Warner.
+    """
+    if not isinstance(v, str):
+        return False
+    return v in _get_players() or (v.isdigit() and len(v) >= 2)
+
+
 def _format_generic(data: dict) -> str:
     rows = []
-    players = _get_players()
     for k, v in data.items():
         if isinstance(v, list):
             items = []
             for item in v:
-                item_str = str(item)
-                if item_str in players or (item_str.isdigit() and len(item_str) >= 2):
-                    items.append(_format_player_html(item_str))
+                if _is_player_ref(item):
+                    items.append(_format_player_html(item))
                 else:
-                    items.append(html.escape(item_str))
+                    items.append(html.escape(str(item)))
             v_html = ", ".join(items)
-        elif isinstance(v, (int, str)) and (str(v) in players or (str(v).isdigit() and len(str(v)) >= 2)):
+        elif _is_player_ref(v):
             v_html = _format_player_html(v)
         elif isinstance(v, dict):
             v_html = " &middot; ".join(f"{html.escape(str(sub_k))}: {html.escape(str(sub_v))}" for sub_k, sub_v in v.items())
@@ -587,6 +622,8 @@ def format_data_html(kind: str, data: dict, rationale: str = "") -> str:
     why_m = _parse_why_metrics(kind, rationale)
     if kind == "lineup" and "starters" in data:
         body = _format_lineup(data, why_m)
+    elif kind == "lineup" and "issues" in data:
+        body = _format_construction(data)
     elif kind == "free-agent" and ("add" in data or "drop" in data):
         body = _format_free_agent(data, why_m)
     elif kind == "ir" and ("reserve" in data or "steps" in data):

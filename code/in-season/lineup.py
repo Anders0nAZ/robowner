@@ -350,6 +350,11 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
            "starters": starter_ids, "previous": current, "changed": changed,
            "pinned": sorted(pinned), "applied": False, "illegal": bad,
            "holes": [SLOTS[i] for i, p in enumerate(lineup) if not p],
+           # Filled, but only by a man who cannot score: the best the roster has
+           # is on bye or ruled out. A pinned slot is excluded -- its man is
+           # already playing and no signing could take his place.
+           "unstartable": [SLOTS[i] for i, p in enumerate(lineup)
+                           if p and not startable(p) and i not in pinned],
            "provenance": provenance, "modelled": modelled,
            "of_roster": len(cands)}
 

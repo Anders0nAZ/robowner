@@ -6,8 +6,8 @@ Two different rules have to hold at once, and they live in different modules:
     than ROSTER_MAX active (`ir.legality`, repaired by `ir.unblock`). Sleeper
     refuses every roster and lineup write until this holds.
   * BOT-legal -- every starting slot filled by a man who can play this week
-    (`lineup.run`'s `holes` and `illegal`, repaired by `moves` patch and then a
-    lineup write).
+    (`lineup.run`'s `holes`, `unstartable` and `illegal`, repaired by `moves`
+    patch and then a lineup write).
 
 A roster can pass the first and fail the second. On 23 Sep 2026 waivers settled
 at 00:07 with our new defence on the bench and nothing to start it; when Nico's
@@ -241,8 +241,12 @@ def _ensure(week, league_id, apply, trigger, statuses, reoptimize=False) -> dict
                 if not unblocked["legal"]:
                     break
             # Unblocking can itself change which slot is empty, so solve again.
+            # A slot the best man on the roster can only fill on a bye is as
+            # empty as one with nobody in it: week 7 2026 started our only
+            # defence through its bye, because this asked for holes alone and
+            # the optimizer had put the bye defence in the slot.
             _, plan, _ = snapshot()
-            if plan.get("holes"):
+            if plan.get("holes") or plan.get("unstartable"):
                 patched = moves.run("free", apply=True, mode="patch",
                                     league_id=league_id, verbose=False)
                 steps.append({"kind": "patch",
@@ -329,14 +333,44 @@ def _publish_unresolved(out: dict) -> None:
                     + ", ".join(out["issues"]["holes"]))
     if out["issues"]["illegal"] and not out["issues"]["holes"]:
         bits.append("the lineup still starts " + "; ".join(out["issues"]["illegal"]))
+    tried = [_tried(s) for s in out.get("steps") or []]
     record("lineup", f"Week {out['week']} lineup incomplete",
            "Could not field a complete lineup: " + "; ".join(bits) + ".",
-           "Checked after " + (out["trigger"] or "a roster change")
-           + ". Every repair available was tried: clearing the reserve, "
-             "signing a free agent into the empty slot, and re-setting the "
-             "lineup.",
+           "Checked after " + (out["trigger"] or "a roster change") + ". "
+           + ("Tried: " + "; ".join(t for t in tried if t) + "."
+              if any(tried) else "No repair was available to try."),
            data={"week": out["week"], "issues": out["issues"],
-                 "trigger": out["trigger"]})
+                 "trigger": out["trigger"],
+                 "tried": [t for t in tried if t]})
+
+
+def _tried(step: dict) -> str:
+    """One step of a repair, as what actually happened -- never what was meant to.
+
+    The message this replaced claimed every repair had been tried, signing
+    included, on a run that never reached the signing step.
+    """
+    kind = step.get("kind")
+    if kind == "unblock":
+        return ("cleared the reserve" if step.get("legal")
+                else "tried to clear the reserve, and Sleeper still refused")
+    if kind == "patch":
+        signed = step.get("submitted") or []
+        if signed:
+            return "signed " + ", ".join(
+                (f"{s.get('add')}" + (f" for {s['drop']}" if s.get("drop") else ""))
+                if isinstance(s, dict) else str(s)
+                for s in signed)
+        if step.get("gated") or step.get("control_block"):
+            return "a free-agent signing was held back"
+        return "found no free agent to sign"
+    if kind == "lineup":
+        if step.get("applied"):
+            return "re-set the lineup"
+        if step.get("blocked"):
+            return "the lineup write was refused"
+        return "re-ran the lineup, which had no better legal option"
+    return ""
 
 
 def last() -> dict:
