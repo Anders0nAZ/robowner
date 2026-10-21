@@ -2412,5 +2412,44 @@
    "week": 7,
    "gain": 38.0
   }
+ },
+ {
+  "id": 88,
+  "ts": "2026-10-21T08:00:43+00:00",
+  "kind": "lineup",
+  "title": "Week 7 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Nico Collins; WR: Malik Washington; TE: Isaiah Likely; FLEX: Emeka Egbuka; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Jacksonville Jaguars",
+  "rationale": "Projected 134.6 points under league scoring from Roboner's NFL model means for 16 of 17 players, +4.8 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Jacksonville Jaguars (bye).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "12514",
+    "6804",
+    "11792",
+    "JAX"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "12514",
+    "8131",
+    "3214",
+    "6804",
+    "11792",
+    "JAX"
+   ],
+   "projected": 134.6,
+   "week": 7,
+   "source": "Roboner NFL model, 420 players, 0.1h old, anchored on proj_2026_wk07_20261021T075624Z.json (per-game anchors, newest of 1; pre-game for every game, 420 players with a game)",
+   "modelled": 16
+  }
  }
 ]
