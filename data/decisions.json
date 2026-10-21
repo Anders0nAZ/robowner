@@ -2451,5 +2451,21 @@
    "source": "Roboner NFL model, 420 players, 0.1h old, anchored on proj_2026_wk07_20261021T075624Z.json (per-game anchors, newest of 1; pre-game for every game, 420 players with a game)",
    "modelled": 16
   }
+ },
+ {
+  "id": 89,
+  "ts": "2026-10-21T14:01:32+00:00",
+  "kind": "free-agent",
+  "title": "Signed Denver Broncos, released Jacksonville Jaguars",
+  "decision": "Denver Broncos (DEF) in, Jacksonville Jaguars out.",
+  "rationale": "Rest-of-season value 9.8 against 0.0 held, a gain of +9.8 in stream mode. DEN 9.85 against JAX 0.00 on this week's lines.",
+  "status": "final",
+  "data": {
+   "add": "DEN",
+   "drop": "JAX",
+   "mode": "stream",
+   "week": 7,
+   "gain": 9.85
+  }
  }
 ]
