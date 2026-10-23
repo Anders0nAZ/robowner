@@ -2506,5 +2506,28 @@
    "source": "Roboner NFL model, 420 players, 0.0h old, anchored on proj_2026_wk07_20261021T140108Z.json (per-game anchors, newest of 1; pre-game for every game, 420 players with a game)",
    "modelled": 16
   }
+ },
+ {
+  "id": 91,
+  "ts": "2026-10-23T17:35:45+00:00",
+  "kind": "lineup",
+  "title": "Week 7 lineup incomplete",
+  "decision": "Could not field a complete lineup: the lineup still starts Emeka Egbuka (Out).",
+  "rationale": "Checked after news pulse. Tried: the lineup write was refused.",
+  "status": "final",
+  "data": {
+   "week": 7,
+   "issues": {
+    "frozen": false,
+    "holes": [],
+    "illegal": [
+     "Emeka Egbuka (Out)"
+    ]
+   },
+   "trigger": "news pulse",
+   "tried": [
+    "the lineup write was refused"
+   ]
+  }
  }
 ]
