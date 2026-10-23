@@ -2565,5 +2565,21 @@
     "5927"
    ]
   }
+ },
+ {
+  "id": 94,
+  "ts": "2026-10-23T23:33:51+00:00",
+  "kind": "free-agent",
+  "title": "Signed Michael Mayer, released (open roster spot)",
+  "decision": "Michael Mayer (TE) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 4.3 against 0.0 held, a gain of +4.3 in ros mode. bench, judged on the ceiling; +/- 0.6, ceiling 17.2; season totals 53.2 vs 0.0 (+53.2); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "9482",
+   "drop": null,
+   "mode": "ros",
+   "week": 7,
+   "gain": 4.3
+  }
  }
 ]
