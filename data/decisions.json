@@ -2529,5 +2529,21 @@
     "the lineup write was refused"
    ]
   }
+ },
+ {
+  "id": 92,
+  "ts": "2026-10-23T23:03:14+00:00",
+  "kind": "free-agent",
+  "title": "Signed Tre' Harris, released Harrison Butker",
+  "decision": "Tre' Harris (WR) in, Harrison Butker out.",
+  "rationale": "Rest-of-season value 85.5 against 0.0 held, a gain of +85.5 in patch mode. fills an unfillable starting slot.",
+  "status": "final",
+  "data": {
+   "add": "12509",
+   "drop": "4227",
+   "mode": "patch",
+   "week": 7,
+   "gain": 85.5
+  }
  }
 ]
