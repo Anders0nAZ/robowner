@@ -2545,5 +2545,25 @@
    "week": 7,
    "gain": 85.5
   }
+ },
+ {
+  "id": 93,
+  "ts": "2026-10-23T23:33:25+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Tre' Harris to injured reserve.",
+  "rationale": "designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "12487",
+    "5927",
+    "12509"
+   ],
+   "previous": [
+    "12487",
+    "5927"
+   ]
+  }
  }
 ]
