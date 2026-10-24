@@ -2581,5 +2581,21 @@
    "week": 7,
    "gain": 4.3
   }
+ },
+ {
+  "id": 95,
+  "ts": "2026-10-24T14:02:30+00:00",
+  "kind": "free-agent",
+  "title": "Signed Antonio Williams, released Justice Hill",
+  "decision": "Antonio Williams (WR) in, Justice Hill out.",
+  "rationale": "Rest-of-season value 63.0 against 2.0 held, a gain of +61.0 in patch mode. fills an unfillable starting slot.",
+  "status": "final",
+  "data": {
+   "add": "13301",
+   "drop": "5995",
+   "mode": "patch",
+   "week": 7,
+   "gain": 61.0
+  }
  }
 ]
