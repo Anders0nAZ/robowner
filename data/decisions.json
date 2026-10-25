@@ -2597,5 +2597,44 @@
    "week": 7,
    "gain": 61.0
   }
+ },
+ {
+  "id": 96,
+  "ts": "2026-10-25T16:54:48+00:00",
+  "kind": "lineup",
+  "title": "Week 7 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Nico Collins; WR: Malik Washington; TE: Isaiah Likely; FLEX: Michael Mayer; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Denver Broncos",
+  "rationale": "Projected 135.6 points under league scoring from Roboner's NFL model means for 14 of 17 players, +6.0 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Emeka Egbuka (Out).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "9482",
+    "6804",
+    "11792",
+    "DEN"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "12514",
+    "6804",
+    "11792",
+    "DEN"
+   ],
+   "projected": 135.6,
+   "week": 7,
+   "source": "Roboner NFL model, 395 players, 0.1h old, anchored on proj_2026_wk07_20261025T165007Z.json (per-game anchors, newest of 3; pre-game for every game, 394 players with a game)",
+   "modelled": 14
+  }
  }
 ]
