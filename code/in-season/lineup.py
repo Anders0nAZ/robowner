@@ -247,6 +247,22 @@ def pin_locked(cands: list[dict], current: list[str]) -> dict[int, dict]:
     return out
 
 
+def unpinned_locked(cands: list[dict], current: list[str]) -> set[str]:
+    """Bench players whose game has kicked off: they cannot be moved IN either.
+
+    pin_locked() holds a locked starter where he is; this is the other half.
+    Left in the pool, a locked bench man is promoted by the optimizer, the
+    write-boundary lock check refuses the whole lineup, and nothing else in it
+    lands either -- for three days in 2026 week 7 a Thursday-played Hunter
+    Henry kept an Out Emeka Egbuka in the FLEX.
+    """
+    if not RESPECT_LOCKS:
+        return set()
+    starting = set(current[:len(SLOTS)])
+    return {c["player_id"] for c in cands
+            if c["locked"] and c["player_id"] not in starting}
+
+
 def illegal_starters(current: list[str], cands: list[dict]) -> list[str]:
     """Names in the CURRENT lineup that should not be starting at all.
 
@@ -339,7 +355,9 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
     current = [p for p in (roster.get("starters") or [])]
     cur_total, bad, pinned = score_current(current, cands)
     cur_total = round(cur_total, 1)
-    lineup, total = optimize(cands, pinned)
+    frozen_bench = unpinned_locked(cands, current)
+    lineup, total = optimize([c for c in cands
+                              if c["player_id"] not in frozen_bench], pinned)
 
     starter_ids = [p["player_id"] if p else "0" for p in lineup]
     gain = round(total - cur_total, 1)
