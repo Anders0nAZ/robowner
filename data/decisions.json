@@ -2769,5 +2769,44 @@
     "re-ran the lineup, which had no better legal option"
    ]
   }
+ },
+ {
+  "id": 101,
+  "ts": "2026-10-30T16:56:30+00:00",
+  "kind": "lineup",
+  "title": "Week 8 lineup set",
+  "decision": "QB: Jordan Love; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Antonio Williams; TE: Michael Mayer; FLEX: Omarion Hampton; SUPER_FLEX: Samaje Perine; K: Will Reichard; DEF: Denver Broncos",
+  "rationale": "Projected 108.5 points under league scoring from Roboner's NFL model means for 11 of 17 players, +14.0 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Emeka Egbuka (Out), Brock Purdy (bye); 1 slot(s) had already kicked off and were left alone.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "6804",
+    "6813",
+    "5967",
+    "11610",
+    "13301",
+    "9482",
+    "12507",
+    "4147",
+    "11792",
+    "DEN"
+   ],
+   "previous": [
+    "6804",
+    "6813",
+    "5967",
+    "11610",
+    "12514",
+    "9482",
+    "12507",
+    "8183",
+    "11792",
+    "DEN"
+   ],
+   "projected": 108.5,
+   "week": 8,
+   "source": "Roboner NFL model, 424 players, 0.0h old, anchored on proj_2026_wk08_20261030T165611Z.json (per-game anchors, newest of 2; pre-game for every game, 428 players with a game)",
+   "modelled": 11
+  }
  }
 ]
