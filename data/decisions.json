@@ -2828,5 +2828,21 @@
     "5927"
    ]
   }
+ },
+ {
+  "id": 103,
+  "ts": "2026-10-30T16:57:12+00:00",
+  "kind": "free-agent",
+  "title": "Signed Shedeur Sanders, released (open roster spot)",
+  "decision": "Shedeur Sanders (QB) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 3.7 against 0.0 held, a gain of +3.7 in ros mode. bench, judged on the ceiling; +/- 0.3, ceiling 9.1; season totals 67.5 vs 0.0 (+67.5); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "12524",
+   "drop": null,
+   "mode": "ros",
+   "week": 8,
+   "gain": 3.7
+  }
  }
 ]
