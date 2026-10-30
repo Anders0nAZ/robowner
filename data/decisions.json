@@ -2636,5 +2636,36 @@
    "source": "Roboner NFL model, 395 players, 0.1h old, anchored on proj_2026_wk07_20261025T165007Z.json (per-game anchors, newest of 3; pre-game for every game, 394 players with a game)",
    "modelled": 14
   }
+ },
+ {
+  "id": 97,
+  "ts": "2026-10-30T01:51:34+00:00",
+  "kind": "ir",
+  "title": "Roster unblocked",
+  "decision": "Activated Tre' Harris; released Hunter Henry (hold 0.0, the cheapest body we could cut).",
+  "rationale": "Tre' Harris (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.",
+  "status": "final",
+  "data": {
+   "steps": [
+    {
+     "action": "activate",
+     "activate": [
+      "12509"
+     ],
+     "reserve": [
+      "12487",
+      "5927"
+     ],
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "3214",
+     "value": 0.0,
+     "landed": true
+    }
+   ],
+   "legal": true
+  }
  }
 ]
