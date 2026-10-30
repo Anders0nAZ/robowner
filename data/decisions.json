@@ -2745,5 +2745,29 @@
    "source": "Roboner NFL model, 427 players, 0.0h old, anchored on proj_2026_wk08_20261030T015113Z.json (per-game anchors, newest of 2; pre-game for every game, 431 players with a game)",
    "modelled": 12
   }
+ },
+ {
+  "id": 100,
+  "ts": "2026-10-30T01:51:53+00:00",
+  "kind": "lineup",
+  "title": "Week 8 lineup incomplete",
+  "decision": "Could not field a complete lineup: the lineup still starts Brock Purdy (bye).",
+  "rationale": "Checked after cascade. Tried: found no free agent to sign; re-ran the lineup, which had no better legal option.",
+  "status": "final",
+  "data": {
+   "week": 8,
+   "issues": {
+    "frozen": false,
+    "holes": [],
+    "illegal": [
+     "Brock Purdy (bye)"
+    ]
+   },
+   "trigger": "cascade",
+   "tried": [
+    "found no free agent to sign",
+    "re-ran the lineup, which had no better legal option"
+   ]
+  }
  }
 ]
