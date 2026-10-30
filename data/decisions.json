@@ -2808,5 +2808,25 @@
    "source": "Roboner NFL model, 424 players, 0.0h old, anchored on proj_2026_wk08_20261030T165611Z.json (per-game anchors, newest of 2; pre-game for every game, 428 players with a game)",
    "modelled": 11
   }
+ },
+ {
+  "id": 102,
+  "ts": "2026-10-30T16:56:34+00:00",
+  "kind": "ir",
+  "title": "Injured reserve updated",
+  "decision": "Moved Emeka Egbuka to injured reserve.",
+  "rationale": "designated Out, which this league allows on reserve; parking him frees an active slot. That leaves 1 active roster spot(s) open, which the next waiver or free-agent run may spend. Reserving and signing stay separate decisions: this one is bookkeeping and cannot be wrong, the other is a valuation and can be.",
+  "status": "final",
+  "data": {
+   "reserve": [
+    "12487",
+    "5927",
+    "12514"
+   ],
+   "previous": [
+    "12487",
+    "5927"
+   ]
+  }
  }
 ]
