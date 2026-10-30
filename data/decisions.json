@@ -2667,5 +2667,44 @@
    ],
    "legal": true
   }
+ },
+ {
+  "id": 98,
+  "ts": "2026-10-30T01:51:38+00:00",
+  "kind": "lineup",
+  "title": "Week 8 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Emeka Egbuka; TE: Michael Mayer; FLEX: Omarion Hampton; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Denver Broncos",
+  "rationale": "Projected 100.9 points under league scoring from Roboner's NFL model means for 12 of 17 players, +19.1 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Brock Purdy (bye), Nico Collins (bye), Isaiah Likely (bye); 1 slot(s) had already kicked off and were left alone.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "12514",
+    "9482",
+    "12507",
+    "6804",
+    "11792",
+    "DEN"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "9482",
+    "6804",
+    "11792",
+    "DEN"
+   ],
+   "projected": 100.9,
+   "week": 8,
+   "source": "Roboner NFL model, 427 players, 0.0h old, anchored on proj_2026_wk08_20261030T015113Z.json (per-game anchors, newest of 2; pre-game for every game, 431 players with a game)",
+   "modelled": 12
+  }
  }
 ]
