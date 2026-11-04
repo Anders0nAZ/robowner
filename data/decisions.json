@@ -2914,5 +2914,44 @@
    "source": "Roboner NFL model, 448 players, 0.0h old, anchored on proj_2026_wk09_20261104T142858Z.json (per-game anchors, newest of 1; pre-game for every game, 449 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 106,
+  "ts": "2026-11-04T14:29:28+00:00",
+  "kind": "lineup",
+  "title": "Week 9 lineup set",
+  "decision": "QB: Jordan Love; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Emeka Egbuka; SUPER_FLEX: Brock Purdy; K: Will Reichard; DEF: Denver Broncos",
+  "rationale": "Projected 129.0 points under league scoring from Roboner's NFL model means for 15 of 17 players, +33.0 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Tony Pollard (bye).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "6804",
+    "6813",
+    "12507",
+    "11610",
+    "7569",
+    "8131",
+    "12514",
+    "8183",
+    "11792",
+    "DEN"
+   ],
+   "previous": [
+    "6804",
+    "6813",
+    "5967",
+    "11610",
+    "13301",
+    "9482",
+    "12507",
+    "4147",
+    "11792",
+    "DEN"
+   ],
+   "projected": 129.0,
+   "week": 9,
+   "source": "Roboner NFL model, 448 players, 0.0h old, anchored on proj_2026_wk09_20261104T142858Z.json (per-game anchors, newest of 1; pre-game for every game, 449 players with a game)",
+   "modelled": 15
+  }
  }
 ]
