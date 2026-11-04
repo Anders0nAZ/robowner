@@ -2844,5 +2844,36 @@
    "week": 8,
    "gain": 3.7
   }
+ },
+ {
+  "id": 104,
+  "ts": "2026-11-04T14:29:17+00:00",
+  "kind": "ir",
+  "title": "Roster unblocked",
+  "decision": "Activated Emeka Egbuka; released Tre' Harris (hold 0.1, the cheapest body we could cut).",
+  "rationale": "Emeka Egbuka (Questionable) on IR without an IR-eligible designation. Sleeper refuses every roster and lineup change while a man sits on reserve without an IR-eligible designation, so this is resolved before anything else runs. Activating put the roster over the 17-man limit, and each cut was the cheapest man to lose, re-priced after the one before it.",
+  "status": "final",
+  "data": {
+   "steps": [
+    {
+     "action": "activate",
+     "activate": [
+      "12514"
+     ],
+     "reserve": [
+      "12487",
+      "5927"
+     ],
+     "landed": true
+    },
+    {
+     "action": "drop",
+     "drop": "12509",
+     "value": 0.1,
+     "landed": true
+    }
+   ],
+   "legal": true
+  }
  }
 ]
