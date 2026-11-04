@@ -92,7 +92,8 @@ def standings(league_id: str = LEAGUE_ID_2026) -> dict:
             "wins": int(st.get("wins") or 0), "losses": int(st.get("losses") or 0),
             "ties": int(st.get("ties") or 0),
             "fpts": float(st.get("fpts") or 0) + float(st.get("fpts_decimal") or 0) / 100.0,
-            "owner_id": r.get("owner_id"), "players": r.get("players") or []}
+            "owner_id": r.get("owner_id"), "players": r.get("players") or [],
+            "starters": r.get("starters") or []}
     return out
 
 
@@ -137,7 +138,10 @@ def strength(weeks: list[int], league_id: str = LEAGUE_ID_2026) -> dict:
         for w in weeks:
             cands, _ = lineup.project_roster(r["players"], season.SEASON, w,
                                              players, league_id)
-            _, total = lineup.optimize(cands)
+            if w == season.current_week():
+                _, total, _ = lineup.fieldable(cands, r["starters"])
+            else:
+                _, total = lineup.optimize(cands)
             per_week[w] = total
         out[rid] = per_week
     return out

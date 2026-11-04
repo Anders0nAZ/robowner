@@ -261,7 +261,7 @@ def _unfillable(ids: list[str], ctx: dict) -> int:
     from robo import lineup
     cands, _ = lineup.project_roster(ids, season.SEASON, ctx["week"],
                                      ctx["players"], ctx["league_id"])
-    filled, _ = lineup.optimize(cands)
+    filled, _, _ = lineup.fieldable(cands, ctx["roster"].get("starters") or [])
     return sum(1 for p in filled if not p or not lineup.startable(p))
 
 

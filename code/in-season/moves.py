@@ -457,12 +457,19 @@ def holes(ctx: dict) -> list[dict]:
         try:
             cands, _ = lineup.project_roster(ids, season.SEASON, w,
                                              ctx["players"], ctx["league_id"])
-            filled, _ = lineup.optimize(cands)
+            pinned = {}
+            if w == ctx["week"]:
+                filled, _, pinned = lineup.fieldable(
+                    cands, ctx["roster"].get("starters") or [])
+            else:
+                filled, _ = lineup.optimize(cands)
         except Exception:
             continue
         empty = [lineup.SLOTS[i] for i, p in enumerate(filled) if not p]
+        # A pinned slot's man has already kicked off: no signing can replace
+        # him, so it is not a hole a patch could fill (as in lineup.run).
         unstartable = [lineup.SLOTS[i] for i, p in enumerate(filled)
-                       if p and not lineup.startable(p)]
+                       if p and not lineup.startable(p) and i not in pinned]
         if w != ctx["week"]:
             # A KICKER OR DEFENCE BYE IS NOT WORTH PRE-EMPTING. Three weeks of
             # lookahead is right where the wire turns over and a replacement may
@@ -693,18 +700,43 @@ def _expected_table(ctx: dict) -> dict:
     return ctx["_expected_table"]
 
 
-def _skill_lineup_fillable(table: dict, active_ids: set[str], week: int) -> bool:
-    """Can the eight skill slots be filled from available players this week?"""
+def _current_locks(ctx: dict) -> tuple[dict[int, str], set[str]]:
+    """This week's kickoff locks: (skill slot -> locked starter, locked bench).
+
+    The same two halves as lineup.fieldable(): a starter whose game began holds
+    his slot, and a bench man whose game began can cover nothing.
+    """
+    if not lineup.RESPECT_LOCKS:
+        return {}, set()
+    live = season.week_points(ctx["week"], season.SEASON, ctx["league_id"])
+    locked = {pid for pid, row in live.items() if (row or {}).get("locked")}
+    starters = [str(p) for p in (ctx["roster"].get("starters") or [])]
+    pinned = {i: pid for i, pid in enumerate(starters[:8]) if pid in locked}
+    return pinned, locked - set(starters[:len(lineup.SLOTS)])
+
+
+def _skill_lineup_fillable(table: dict, active_ids: set[str], week: int,
+                           pinned: dict[int, str] | None = None,
+                           frozen: set[str] = frozenset()) -> bool:
+    """Can the eight skill slots be filled from available players this week?
+
+    `pinned` and `frozen` are this week's kickoff locks (_current_locks): a
+    pinned starter keeps his slot whatever his availability, and a frozen bench
+    man is no cover at all.
+    """
     slots = lineup.SLOTS[:8]
     rows = table.get("players") or {}
+    held = {i: pid for i, pid in (pinned or {}).items() if pid in active_ids}
     pool = []
     for pid in active_ids:
+        if pid in frozen or pid in held.values():
+            continue
         row = rows.get(pid)
         cell = (row or {}).get("by_week", {}).get(str(week))
         if not row or not cell or float(cell.get("a", 1.0)) <= 0:
             continue
         pool.append((pid, row.get("pos")))
-    masks = {0}
+    masks = {sum(1 << i for i in held)}
     for _, pos in pool:
         nxt = set(masks)
         for mask in masks:
@@ -798,7 +830,8 @@ def _coverage_after(ctx: dict, add_id: str | list | set | tuple,
     horizon = max((int(w) for w in (table.get("weights") or {}) if str(w).isdigit()),
                   default=ctx["week"])
     for w in range(ctx["week"], min(horizon, ctx["week"] + 3) + 1):
-        fillable = _skill_lineup_fillable(table, active, w)
+        locks = _current_locks(ctx) if w == ctx["week"] else ({}, set())
+        fillable = _skill_lineup_fillable(table, active, w, *locks)
         audit["weeks"].append({"week": w, "skill_lineup_fillable": fillable})
         if not fillable:
             return finish(False, f"cannot fill all skill lineup slots in week {w}")

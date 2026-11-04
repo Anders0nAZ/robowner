@@ -263,6 +263,24 @@ def unpinned_locked(cands: list[dict], current: list[str]) -> set[str]:
             if c["locked"] and c["player_id"] not in starting}
 
 
+def fieldable(cands: list[dict],
+              current: list[str]) -> tuple[list, float, dict[int, dict]]:
+    """The best lineup Sleeper will actually accept this week, kickoffs included.
+
+    Locked starters stay where they are and locked bench men stay benched.
+    Every current-week lineup question -- the one we set, a hole check, a drop
+    that must not open a slot, a team's strength this week -- goes through
+    here; a future week has no locks and optimize() alone is right.
+    Returns (lineup, total, pinned).
+    """
+    current = list(current or [])
+    pinned = pin_locked(cands, current)
+    frozen_bench = unpinned_locked(cands, current)
+    filled, total = optimize([c for c in cands
+                              if c["player_id"] not in frozen_bench], pinned)
+    return filled, total, pinned
+
+
 def illegal_starters(current: list[str], cands: list[dict]) -> list[str]:
     """Names in the CURRENT lineup that should not be starting at all.
 
@@ -353,11 +371,9 @@ def run(week: int | None = None, season_yr: str = season.SEASON,
     cands, provenance = project_roster(active, season_yr, week, players_map,
                                        league_id)
     current = [p for p in (roster.get("starters") or [])]
-    cur_total, bad, pinned = score_current(current, cands)
+    cur_total, bad, _ = score_current(current, cands)
     cur_total = round(cur_total, 1)
-    frozen_bench = unpinned_locked(cands, current)
-    lineup, total = optimize([c for c in cands
-                              if c["player_id"] not in frozen_bench], pinned)
+    lineup, total, pinned = fieldable(cands, current)
 
     starter_ids = [p["player_id"] if p else "0" for p in lineup]
     gain = round(total - cur_total, 1)
