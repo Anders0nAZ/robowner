@@ -49,6 +49,7 @@ audited and cannot be quietly hand-authored.
 import hashlib
 import json
 import re
+import tempfile
 import time
 from datetime import datetime
 from email.utils import parsedate_to_datetime
@@ -653,9 +654,31 @@ def _publish(out: dict, changed: list[dict], writer: str) -> None:
     news_verdicts_history.jsonl after the atomic publish. The append never
     raises: losing a history row is better than failing a publish.
     """
-    tmp = VERDICTS.with_suffix(".json.tmp")
-    tmp.write_text(json.dumps(out, indent=1), encoding="utf-8")
-    tmp.replace(VERDICTS)
+    # Readers on Windows can briefly deny rename/delete sharing. Keep the old
+    # file intact, retry only that transient failure, and never share a temp
+    # filename with another invocation.
+    tmp = None
+    try:
+        with tempfile.NamedTemporaryFile(mode="w", encoding="utf-8", delete=False,
+                                         dir=VERDICTS.parent,
+                                         prefix="." + VERDICTS.name + ".", suffix=".tmp") as fh:
+            tmp = Path(fh.name)
+            fh.write(json.dumps(out, indent=1))
+        delays = (0.05, 0.1, 0.2, 0.4, 0.8)
+        for attempt in range(len(delays) + 1):
+            try:
+                tmp.replace(VERDICTS)
+                break
+            except PermissionError:
+                if attempt == len(delays):
+                    raise
+                time.sleep(delays[attempt])
+    finally:
+        if tmp is not None:
+            try:
+                tmp.unlink(missing_ok=True)
+            except OSError:
+                pass
     try:
         now = time.time()
         with history_path().open("a", encoding="utf-8") as fh:

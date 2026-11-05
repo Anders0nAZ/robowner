@@ -25,7 +25,17 @@ class RunBusy(RuntimeError):
 def pid_alive(pid: int) -> bool:
     """Whether a lock owner still exists; permission errors mean it does."""
     try:
-        os.kill(int(pid), 0)
+        pid = int(pid)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    if pid <= 0 or pid > 0xFFFFFFFF:
+        return False
+    if os.name == "nt":
+        # On Windows signal 0 is CTRL_C_EVENT, not a harmless existence test.
+        # Query a process handle without sending any signal or console event.
+        return _windows_pid_alive(pid)
+    try:
+        os.kill(pid, 0)
     except ProcessLookupError:
         return False
     except PermissionError:
@@ -33,6 +43,33 @@ def pid_alive(pid: int) -> bool:
     except (OSError, TypeError, ValueError):
         return False
     return True
+
+
+def _windows_pid_alive(pid: int) -> bool:
+    import ctypes
+    from ctypes import wintypes
+
+    try:
+        kernel = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel.OpenProcess.argtypes = [wintypes.DWORD, wintypes.BOOL, wintypes.DWORD]
+        kernel.OpenProcess.restype = wintypes.HANDLE
+        kernel.GetExitCodeProcess.argtypes = [wintypes.HANDLE, ctypes.POINTER(wintypes.DWORD)]
+        kernel.GetExitCodeProcess.restype = wintypes.BOOL
+        kernel.CloseHandle.argtypes = [wintypes.HANDLE]
+        kernel.CloseHandle.restype = wintypes.BOOL
+        handle = kernel.OpenProcess(0x1000, False, pid)  # QUERY_LIMITED_INFORMATION
+        if not handle:
+            # Invalid PID is dead; denied/unknown access must preserve the lock.
+            return ctypes.get_last_error() != 87  # ERROR_INVALID_PARAMETER
+        try:
+            code = wintypes.DWORD()
+            if not kernel.GetExitCodeProcess(handle, ctypes.byref(code)):
+                return True
+            return code.value == 259  # STILL_ACTIVE
+        finally:
+            kernel.CloseHandle(handle)
+    except OSError:
+        return True
 
 
 class DecisionRun:
