@@ -2953,5 +2953,44 @@
    "source": "Roboner NFL model, 448 players, 0.0h old, anchored on proj_2026_wk09_20261104T142858Z.json (per-game anchors, newest of 1; pre-game for every game, 449 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 107,
+  "ts": "2026-11-06T23:02:42+00:00",
+  "kind": "lineup",
+  "title": "Week 9 lineup set",
+  "decision": "QB: Jordan Love; RB: Jonathan Taylor; RB: Omarion Hampton; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Antonio Williams; SUPER_FLEX: Brock Purdy; K: Will Reichard; DEF: Denver Broncos",
+  "rationale": "Projected 128.2 points under league scoring from Roboner's NFL model means for 16 of 17 players, +0.5 versus the lineup as it stood. Bye-week and injured-out players are benched.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "6804",
+    "6813",
+    "12507",
+    "11610",
+    "7569",
+    "8131",
+    "13301",
+    "8183",
+    "11792",
+    "DEN"
+   ],
+   "previous": [
+    "6804",
+    "6813",
+    "12507",
+    "11610",
+    "7569",
+    "8131",
+    "12514",
+    "8183",
+    "11792",
+    "DEN"
+   ],
+   "projected": 128.2,
+   "week": 9,
+   "source": "Roboner NFL model, 427 players, 0.0h old, anchored on proj_2026_wk09_20261106T230220Z.json (per-game anchors, newest of 2; pre-game for every game, 433 players with a game)",
+   "modelled": 16
+  }
  }
 ]
