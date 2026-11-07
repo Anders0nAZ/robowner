@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import subprocess
 import time
@@ -29,6 +30,7 @@ from robo import job_run, ops_alerts
 from robo.runlock import pid_alive
 
 STATE = DATA / "job_guard_state.json"
+HUB_STATE = ROOT.parent / "hub" / "state.json"
 TASK_XML = ROOT / "ops" / "inseason-tasks"
 TASKS = (
     "RobonerAutostart", "RobonerWatchdog", "RobonerJobGuard",
@@ -170,6 +172,22 @@ def _alert(key: str, message: str, tier: str = ops_alerts.ACTION) -> None:
         print(f"Side Chat alert failed: {type(exc).__name__}: {exc}", flush=True)
 
 
+def _focus_paused(now: float) -> set[str]:
+    """Only a live image-focus record can explain a task being disabled."""
+    try:
+        focus = json.loads(HUB_STATE.read_text(encoding="utf-8")).get("focus")
+        if not isinstance(focus, dict) or focus.get("mode") != "image":
+            return set()
+        until = focus.get("until")
+        tasks = focus.get("tasks_disabled")
+        if (type(until) not in (int, float) or not math.isfinite(until)
+                or until <= now or not isinstance(tasks, list)):
+            return set()
+        return {name for name in tasks if isinstance(name, str)}
+    except (OSError, ValueError, AttributeError):
+        return set()
+
+
 def tick(*, now: datetime | None = None, repair: bool = True) -> dict:
     now = now or datetime.now()
     state = _read()
@@ -211,13 +229,16 @@ def tick(*, now: datetime | None = None, repair: bool = True) -> dict:
         elif task_state.lower() == "disabled":
             disabled.add(name)
             actions.append(f"{name}: disabled, left alone")
+    # Do not remember intentional pauses as alerted: if restoration fails, the
+    # next tick after focus ends must still report the disabled task.
+    unexpected = disabled - _focus_paused(now.timestamp())
     # Once per task being switched off, not every tick it stays off: a disable
     # is usually deliberate, and saying so again every six hours is noise.
-    for name in sorted(disabled - set(state.get("disabled") or [])):
+    for name in sorted(unexpected - set(state.get("disabled") or [])):
         _alert(f"disabled-{name}",
                f"{name} is disabled, so it will not run. Re-enable it if that was not "
                f"intended; StopRoboner.bat is the way to pause everything.")
-    state["disabled"] = sorted(disabled)
+    state["disabled"] = sorted(unexpected)
     for job, task in JOB_TASK.items():
         if task in disabled:
             continue
