@@ -3070,5 +3070,29 @@
    "source": "Roboner NFL model, 429 players, 0.0h old, anchored on proj_2026_wk10_20261110T053312Z.json (per-game anchors, newest of 1; pre-game for every game, 447 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 110,
+  "ts": "2026-11-10T05:35:31+00:00",
+  "kind": "lineup",
+  "title": "Week 10 lineup incomplete",
+  "decision": "Could not field a complete lineup: the lineup still starts Denver Broncos (bye).",
+  "rationale": "Checked after news pulse. Tried: found no free agent to sign; re-ran the lineup, which had no better legal option.",
+  "status": "final",
+  "data": {
+   "week": 10,
+   "issues": {
+    "frozen": false,
+    "holes": [],
+    "illegal": [
+     "Denver Broncos (bye)"
+    ]
+   },
+   "trigger": "news pulse",
+   "tried": [
+    "found no free agent to sign",
+    "re-ran the lineup, which had no better legal option"
+   ]
+  }
  }
 ]
