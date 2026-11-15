@@ -3133,5 +3133,65 @@
    "source": "model artifact is 106.9h old (limit 30h)",
    "modelled": 0
   }
+ },
+ {
+  "id": 112,
+  "ts": "2026-11-15T17:54:42+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "Claimed Indianapolis Colts for $0, dropping Denver Broncos. Unsuccessful: Green Bay Packers ($0, failed), New York Giants ($0, failed), Buffalo Bills ($0, failed), Miami Dolphins ($0, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:10:1794382231717347500",
+   "week": 10,
+   "claims": [
+    {
+     "transaction_id": "1426146089211293696",
+     "status": "completed",
+     "add": "Indianapolis Colts",
+     "drop": "Denver Broncos",
+     "bid": 0,
+     "gain": 10.85,
+     "source": "weekly"
+    },
+    {
+     "transaction_id": "1426146091996291072",
+     "status": "failed",
+     "add": "Green Bay Packers",
+     "drop": "Denver Broncos",
+     "bid": 0,
+     "gain": 10.2,
+     "source": "weekly"
+    },
+    {
+     "transaction_id": "1426146094286401536",
+     "status": "failed",
+     "add": "New York Giants",
+     "drop": "Denver Broncos",
+     "bid": 0,
+     "gain": 9.85,
+     "source": "weekly"
+    },
+    {
+     "transaction_id": "1426146096706510848",
+     "status": "failed",
+     "add": "Buffalo Bills",
+     "drop": "Denver Broncos",
+     "bid": 0,
+     "gain": 8.97,
+     "source": "weekly"
+    },
+    {
+     "transaction_id": "1426146098921103360",
+     "status": "failed",
+     "add": "Miami Dolphins",
+     "drop": "Denver Broncos",
+     "bid": 0,
+     "gain": 8.97,
+     "source": "weekly"
+    }
+   ]
+  }
  }
 ]
