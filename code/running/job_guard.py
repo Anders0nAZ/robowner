@@ -55,6 +55,10 @@ NEWSWATCH_GRACE_MIN = 50
 RETRY_MINUTES = (5, 15, 30)
 MAX_ATTEMPTS = 3
 SCHEDULER_MISSES_ALERT = 3
+# Every pause now expires (job_run.PAUSE_DEFAULT_H / PAUSE_MAX_H). One still in
+# force after this long was asked for on purpose, and in season that is an ACTION
+# alert naming when it ends, repeated by ops_alerts' per-key cooldown.
+PAUSE_ALERT_AFTER_H = 2.0
 PS_TASKS = (
     "Get-ScheduledTask | Where-Object { $_.TaskName -like 'Roboner*' } | "
     "ForEach-Object { [pscustomobject]@{name=$_.TaskName; state=[string]$_.State} } | "
@@ -188,6 +192,40 @@ def _focus_paused(now: float) -> set[str]:
         return set()
 
 
+def _in_season() -> bool:
+    """Regular season or playoffs. Unknown counts as in season: fail loud."""
+    try:
+        from robo import sleeper_read as api
+        return (api.nfl_state() or {}).get("season_type") in ("regular", "post")
+    except Exception:
+        return True
+
+
+def _pause_alert(held: dict, now: float) -> bool:
+    """A PAUSE IS SILENT, AND THAT IS HOW IT LASTED FOUR DAYS. Every job exits 0
+    with "automation paused", the responder heartbeat stays green, and this guard
+    used to record "paused" and return. 11 Nov 2026 01:26 a hub restart left a
+    StopRoboner.bat marker behind and nothing ran until a human found an empty DEF
+    slot at Sunday kickoff. Every pause now expires on its own; one still standing
+    past PAUSE_ALERT_AFTER_H alerts, and ops_alerts repeats it per its cooldown."""
+    if not isinstance(held, dict):
+        return False
+    at = held.get("at")
+    age_h = ((now - float(at)) / 3600.0
+             if isinstance(at, (int, float)) and math.isfinite(at) else None)
+    if age_h is not None and age_h < PAUSE_ALERT_AFTER_H:
+        return False
+    if not _in_season():
+        return False
+    since = held.get("at_iso") or "an unknown time"
+    ends = held.get("until_iso") or "its expiry"
+    _alert("automation-paused",
+           f"Roboner automation has been paused since {since} (by {held.get('by') or 'unknown'}) "
+           f"and resumes on its own at {ends}. Until then no lineup, waiver, moves or news "
+           "job runs. ResumeRoboner.bat ends it now.")
+    return True
+
+
 def tick(*, now: datetime | None = None, repair: bool = True) -> dict:
     now = now or datetime.now()
     state = _read()
@@ -196,6 +234,7 @@ def tick(*, now: datetime | None = None, repair: bool = True) -> dict:
     held = job_run.paused()
     if held:
         state.update(status="paused", paused=held, actions=[])
+        state["pause_alerted"] = _pause_alert(held, now.timestamp())
         _write(state)
         return state
     state.pop("paused", None)

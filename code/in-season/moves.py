@@ -2500,6 +2500,18 @@ def _plan_defence_claims(ctx: dict) -> dict | None:
     mine_rows = [row for row in board
                  if row["team"] in held
                  and not (locks.get(row["team"]) or {}).get("locked")]
+    # A BYE IS A PRICED LINE: ZERO, the same rule as streaming.swap(). The board
+    # only ranks teams that play, so a held defence on bye has no row; without
+    # this the planner saw no incumbent and filed no claim at all -- week 10
+    # 2026 went to waivers holding Denver on bye with Baltimore +11 on the wire.
+    if board:
+        on_board = {row["team"] for row in board}
+        for team in held:
+            lock = locks.get(team) or {}
+            if team not in on_board and not lock.get("has_game") \
+                    and not lock.get("locked"):
+                mine_rows.append({"team": team, "week": ctx["week"],
+                                  "pts": 0.0, "bye": True})
     if not mine_rows:
         return None
     # If two defences are temporarily rostered, replace the weaker unlocked one.

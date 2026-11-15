@@ -153,8 +153,18 @@ def _in_play_this_season() -> set[str]:
     """
     from robo import model_proj
     weeks, _why = model_proj.horizon_projections()
+    # THE CURRENT-WEEK ARTIFACT IS THE FRESHER OPINION, so it counts too. The
+    # horizon is rebuilt once a day; the weekly export is refreshed through the
+    # day. Kyle McCord was named Miami's starter on Tuesday 10 Nov 2026 at
+    # 15:08, after that morning's horizon, and the weekly model had him at 12.6
+    # -- but membership read only the horizon, so he was outside the pool on
+    # waiver night and no channel could claim him.
+    current, _why = model_proj.load()
+    blocks = list((weeks or {}).values())
+    if current and str(current.get("season")) == str(model_proj.season.SEASON):
+        blocks.append(current.get("players") or {})
     return {str(pid)
-            for block in (weeks or {}).values()
+            for block in blocks
             for pid, row in (block or {}).items()
             if float((row or {}).get("mean") or 0) > 0}
 

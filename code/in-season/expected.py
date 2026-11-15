@@ -195,6 +195,19 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         absorb_w = min(1.0, rw.get("absorbs") or 0.0)
         lead_pts = (ahead_w or {}).get(w, 0.0)
         base1 = ((baselines.get(pid) or {}).get(str(w), p1))
+        # A HEALTHY MAN'S BASELINE CANNOT EXCEED WHAT HE IS PROJECTED NOW. The
+        # baseline is his own volume in a healthy room, refreshed only while he
+        # and his lead are both fully available -- so a value captured in the
+        # window where Sleeper had already moved the job but the lead was not
+        # yet designated freezes the moment the lead goes on IR. Tanner McKee
+        # held 16.3/wk that way from week 6 on, as QB3 behind a starter Sleeper
+        # projects. With the lead out his current number is an upper bound on
+        # his healthy-room share, so a higher baseline is stale. Only when he is
+        # himself available: an injured man's Sleeper number is already
+        # discounted, and `a` below discounts it again.
+        base_stale = None
+        if a >= 0.999 and base1 > p1:
+            base_stale, base1 = base1, p1
         lead_healthy = ((baselines.get(rw.get("lead_id")) or {}).get(
             str(w), lead_pts)) if rw.get("lead_id") else lead_pts
         p2 = lead_healthy * absorb_w
@@ -217,6 +230,8 @@ def raw_series(pid: str, pos: str, team: str, rates: dict, player: dict,
         out[w] = round(v, 3)
         # The REALISED chance the door opened, not the nominal constant.
         detail[w] = {"a": round(a, 3), "s1": round(base1, 3),
+                     **({"s1_stale_baseline": round(base_stale, 3)}
+                        if base_stale is not None else {}),
                      "provider": round(p1, 3),
                      "s2": round(p2, 3), "miss": round(p_open, 4),
                      # Carried per week so the simulator can rebuild the

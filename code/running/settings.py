@@ -710,6 +710,19 @@ REGISTRY: list[S] = [
       "veteran; at 2 it hoards lottery tickets it will never start. Only affects "
       "drops -- an add is always judged on what a man is worth now.",
       bounds=(0.0, 3.0)),
+    S(ROSTER, "robo.ros", "STALE_FILL", bool,
+      "Re-allocate later-week volume Sleeper still credits to a player who left or is hurt.",
+      "Sleeper refreshes this week fast and later weeks slowly, so a new starter "
+      "(trade, injury) keeps his backup number for weeks 11+ while the departed "
+      "man keeps the job on paper. On, that stranded volume goes back to the "
+      "room's current players, shrunk and capped at each man's current-week "
+      "level. Off, later weeks are Sleeper's as published."),
+    S(ROSTER, "robo.ros", "STALE_FILL_SHRINK", float,
+      "Fraction of stranded later-week volume handed back to the room.",
+      "Lower is more conservative. 0 is the same as STALE_FILL off; 1 hands "
+      "back everything the absent man was projected for, up to each recipient's "
+      "current-week level.",
+      bounds=(0.0, 1.0)),
     S(ROSTER, "robo.returns", "MIN_EVENTS", int,
       "Spells a body part needs before it gets its own return curve.",
       "Same discipline as roles.MIN_EVENTS. Below this the curve is noise and "

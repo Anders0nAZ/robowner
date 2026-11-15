@@ -75,6 +75,21 @@ MAX_ABSORB = 1.0
 # rest-of-season number from two days ago is a stale one.
 MAX_AGE_H = 20.0
 
+# STALE LATER WEEKS. Sleeper refreshes the current week through the day and the
+# weeks after it on a slower cycle, so a mid-season change leaves next week's
+# volume credited to a man who has left (traded, released) or cannot play
+# (injured) while the man now doing the job keeps his backup number. Week 10
+# 2026: Cousins traded to MIN still carried LV's 18.8 in week 11 while Mendoza
+# read 0; Downs and Allen still carried IND's receivers. STALE_FILL hands that
+# stranded volume back to the room, shrunk by STALE_FILL_SHRINK and never past a
+# man's own current-week level. Off = Sleeper's later weeks as published.
+STALE_FILL = True       # Nate enabled 2026-11-11 ahead of review bb14454e
+STALE_FILL_SHRINK = 0.75
+STALE_FILL_POSITIONS = ("QB", "RB", "WR", "TE")
+# A recipient listed as one of these cannot take a job this week.
+STALE_FILL_UNAVAILABLE = ("IR", "Out", "PUP", "PUP-R", "PUP-P", "NFI", "NFI-R",
+                          "NFI-A", "Sus", "SUS", "Doubtful", "COV")
+
 # Column the per-line source tags start at in a trace. Every printed value says
 # which file it came from, because the point of a trace is to send you to the
 # right file when a number looks wrong -- a trailing block that lists the files
@@ -154,6 +169,112 @@ def week_weights(week: int, league_id: str = LEAGUE_ID_2026,
 
 # --------------------------------------------------------------------- rates
 
+def _stale_fill(out: dict, detail: dict, sources: dict, tags: dict,
+                week: int, players: dict) -> dict:
+    """Re-allocate later-week volume Sleeper still credits to an absent man.
+
+    For every future week and every (team, position) room:
+
+      stranded = sum over HOLDERS of his week-w points x P(he is absent in w)
+      gap(r)   = max(0, r's current-week points - r's week-w points)
+      fill     = SHRINK x min(stranded, sum of gaps), split in proportion to gap
+
+    A HOLDER is a man whose week-w row Sleeper tags with this team but who is
+    no longer on it (traded, released: absent with certainty) or who carries an
+    injury designation (absent with 1 - A(w) from expected.availability, the
+    same return model that prices every injured man -- IR minimums, ESPN dates,
+    out for the season). A healthy man still on the team is never a holder.
+
+    A RECIPIENT is on the team now, at that position, not designated out, and
+    plays both this week and week w. Conservative by construction: nobody is
+    lifted past his own current-week number, the room never gains more than was
+    stranded, and the total is shrunk. A room on bye this week, or with no
+    current-week gap, gets nothing. Holders' own numbers are left as published.
+
+    Mutates out/detail/sources in place; returns {pid: {w: added}} for the record.
+    """
+    if not STALE_FILL:
+        return {}
+    from robo import expected  # lazy: expected imports this module
+
+    absent_cache: dict = {}
+
+    def p_absent(pid: str, team: str, w: int) -> float:
+        p = players.get(pid) or {}
+        if (p.get("team") or None) != team:
+            return 1.0
+        if not p.get("injury_status"):
+            return 0.0
+        if pid not in absent_cache:
+            try:
+                a_by, _meta = expected.availability(pid, p, out.get(pid) or {}, week)
+            except Exception:
+                a_by = None                    # unknown: strand nothing
+            absent_cache[pid] = a_by
+        a_by = absent_cache[pid]
+        if a_by is None:
+            return 0.0
+        return max(0.0, min(1.0, 1.0 - float(a_by.get(w, 1.0))))
+
+    added: dict = {}
+    for w in sorted(tags):
+        if w <= week:
+            continue
+        rooms: dict = {}
+        for pid, team in (tags.get(w) or {}).items():
+            pos = (players.get(pid) or {}).get("position")
+            if team and pos in STALE_FILL_POSITIONS and w in (out.get(pid) or {}):
+                rooms.setdefault((team, pos), []).append(pid)
+        for (team, pos), tagged in sorted(rooms.items()):
+            holders = []
+            for pid in tagged:
+                pa = p_absent(pid, team, w)
+                pts = float(out[pid][w] or 0.0)
+                if pa > 0 and pts > 0:
+                    holders.append((pid, round(pts, 3), round(pa, 3)))
+            stranded = sum(pts * pa for _pid, pts, pa in holders)
+            if stranded <= 0:
+                continue
+            gaps = {}
+            for pid in tagged:
+                p = players.get(pid) or {}
+                if (p.get("team") or None) != team or \
+                        p.get("injury_status") in STALE_FILL_UNAVAILABLE:
+                    continue
+                series = out.get(pid) or {}
+                cw = series.get(week)
+                if cw is None or w not in series:
+                    continue
+                gap = float(cw) - float(series[w] or 0.0)
+                if gap > 0:
+                    gaps[pid] = gap
+            total_gap = sum(gaps.values())
+            if total_gap <= 0:
+                continue
+            fill = STALE_FILL_SHRINK * min(stranded, total_gap)
+            for pid, gap in sorted(gaps.items()):
+                add = round(fill * gap / total_gap, 3)
+                if add <= 0:
+                    continue
+                d = detail[pid][w]
+                d["stale_fill"] = {
+                    "before": d["pts"], "added": add,
+                    "room": f"{team} {pos}", "stranded": round(stranded, 3),
+                    "room_gap": round(total_gap, 3), "shrink": STALE_FILL_SHRINK,
+                    "current_week": round(float(out[pid][week]), 3),
+                    "holders": [{"player_id": h, "pts": pts, "p_absent": pa,
+                                 "why": ("left the team"
+                                         if ((players.get(h) or {}).get("team") or None) != team
+                                         else f"injured ({(players.get(h) or {}).get('injury_status')})")}
+                                for h, pts, pa in holders]}
+                d["pts"] = round(float(d["pts"]) + add, 3)
+                d["src"] = f"{d.get('src')}+stale-fill"
+                out[pid][w] = d["pts"]
+                sources.setdefault(pid, []).append("stale-fill")
+                added.setdefault(pid, {})[w] = add
+    return added
+
+
 def _def_rate(team: str, week: int, season_yr, fallback: float,
               record: dict | None = None) -> tuple[float, str]:
     """A defence's week, from the market where it is priced."""
@@ -210,6 +331,9 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
         pass
 
     out, sources, detail = {}, {}, {}
+    # The team Sleeper's row for that week is filed under, which for a later
+    # week can still be the team a man has left -- _stale_fill reads it.
+    tags: dict = {}
     weeks = list(range(week, last_week(league_id) + 1))
     for w in weeks:
         wp = season.week_points(w, yr, league_id)
@@ -217,6 +341,7 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
         for pid, v in wp.items():
             if not v.get("has_game"):
                 continue
+            tags.setdefault(w, {})[pid] = v.get("team")
             p = players.get(pid) or {}
             pos = p.get("position") or "DEF"
             d = {"opp": v.get("opponent")}
@@ -271,6 +396,13 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
             sources.setdefault(pid, [])
             sources[pid] = ["model"] + sources[pid][1:]
 
+    # AFTER the current week is final, because each recipient's ceiling is his
+    # own current-week number. See _stale_fill.
+    try:
+        stale = _stale_fill(out, detail, sources, tags, week, players)
+    except Exception as e:                      # never lose the whole spine
+        stale = {"_error": f"{type(e).__name__}: {e}"}
+
     # One label per player describing the WHOLE series. Recording only the first
     # week's source said "vegas" for a defence that is market-priced in week 1
     # and on a season-average fallback from week 7 -- which is the opposite of
@@ -284,7 +416,7 @@ def weekly_rates(week: int, season_yr=None, league_id: str = LEAGUE_ID_2026,
         record.update({"weeks": weeks, "provenance": prov,
                        "horizon_provenance": hprov,
                        "board_rows": len(board), "model_players": len(mp),
-                       "scoring_keys": len(sc)})
+                       "scoring_keys": len(sc), "stale_fill": stale})
     return {"rates": out, "sources": label, "detail": detail,
             "provenance": prov, "weeks": weeks}
 

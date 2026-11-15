@@ -51,7 +51,19 @@ WAIVER_CLEAR_DAYS = 1    # how long a dropped player sits on waivers
 MOVABLE_GAME_STATUS = "pre_game"
 PHOENIX = (ZoneInfo("America/Phoenix") if ZoneInfo is not None
            else timezone(timedelta(hours=-7)))
+# SLEEPER RUNS WEEKLY WAIVERS AT 03:00 EASTERN, not Phoenix. Every settlement
+# this league has recorded lands there: 00:07 Phoenix on 23 Sep and 7 Oct 2026
+# (EDT) and 01:08 on 11 Nov (EST). The hour was right and the zone was not, so
+# the fallback ran two to three hours late. Days are still Phoenix days.
+WAIVER_TZ = (ZoneInfo("America/New_York") if ZoneInfo is not None
+             else timezone(timedelta(hours=-5)))
 WEEKLY_FALLBACK_HOUR = 3
+
+
+def _waiver_time(day: datetime) -> float:
+    """03:00 in WAIVER_TZ on the calendar date of `day`."""
+    return datetime(day.year, day.month, day.day, WEEKLY_FALLBACK_HOUR,
+                    tzinfo=WAIVER_TZ).timestamp()
 
 # Which injury designations this league lets us park on reserve. Read from the
 # league's own reserve_allow_* flags rather than hardcoded, because they are
@@ -321,7 +333,7 @@ def _game_timestamp(row: dict, schedule_by_id: dict) -> float | None:
 
 
 def _weekly_fallback(game_at: float | None, now: float) -> float:
-    """The first Wednesday 03:00 Phoenix after the DAY the relevant game was played.
+    """The first Wednesday 03:00 Eastern after the DAY the relevant game was played.
 
     COMPUTED FROM THE GAME'S DAY, NOT ITS CLOCK, because the feed's `date` is a
     calendar date with no kickoff time -- it parses to midnight, which is
@@ -335,8 +347,7 @@ def _weekly_fallback(game_at: float | None, now: float) -> float:
     base = datetime.fromtimestamp(game_at if game_at is not None else now, PHOENIX)
     day = base.replace(hour=0, minute=0, second=0, microsecond=0)
     days = (2 - day.weekday()) % 7 or 7
-    return (day + timedelta(days=days)).replace(
-        hour=WEEKLY_FALLBACK_HOUR).timestamp()
+    return _waiver_time(day + timedelta(days=days))
 
 
 def _transaction_rows(league_id: str, week: int) -> list[dict]:
@@ -439,7 +450,7 @@ def transaction_eligibility(player_id: str,
                     if game_at and ts >= game_at and ts <= c["now"]]
         unlock = min(observed) if observed else fallback
         basis = "observed completed waiver transaction" if observed else \
-                "Wednesday 03:00 Phoenix fallback"
+                "Wednesday 03:00 Eastern fallback"
         if c["now"] < unlock:
             return {"player_id": pid, "roster_movement": roster_state,
                     "acquisition": "weekly_waiver", "week": game_week,
@@ -465,21 +476,20 @@ def transaction_states(player_ids,
 
 
 def next_waiver_run(now: float | None = None) -> float:
-    """The next weekly waiver settlement at or after `now`, Phoenix.
+    """The next weekly waiver settlement at or after `now` (03:00 Eastern).
 
     A DIFFERENT QUESTION FROM `_weekly_fallback`, which is asked of a GAME and
     therefore rolls a Wednesday kickoff to the FOLLOWING Wednesday. Asked of the
-    clock, today's pending run is the answer: at 01:00 on a Wednesday the 03:00
-    run has not happened yet, and `or 7` there would push it a week out.
+    clock, today's pending run is the answer: before 03:00 Eastern on a
+    Wednesday the run has not happened yet, and `or 7` there would push it a
+    week out.
     """
     stamp = time.time() if now is None else float(now)
-    base = datetime.fromtimestamp(stamp, PHOENIX)
-    target = (base.replace(hour=WEEKLY_FALLBACK_HOUR, minute=0, second=0,
-                           microsecond=0)
-              + timedelta(days=(2 - base.weekday()) % 7))
-    if target.timestamp() < stamp:
-        target += timedelta(days=7)
-    return target.timestamp()
+    base = datetime.fromtimestamp(stamp, WAIVER_TZ)
+    target = _waiver_time(base + timedelta(days=(2 - base.weekday()) % 7))
+    if target < stamp:
+        target = _waiver_time(base + timedelta(days=(2 - base.weekday()) % 7 + 7))
+    return target
 
 
 def _first_game_day(season: str = SEASON) -> dict[int, float]:
@@ -518,7 +528,7 @@ def settlement_week(league_id: str = LEAGUE_ID_2026, *,
     current = current_week() if week is None else int(week)
     settles = float(settles_at) if settles_at else next_waiver_run(stamp)
     basis = ("unlock read from the live waiver pool" if settles_at
-             else "next weekly waiver run (Wednesday 03:00 Phoenix)")
+             else "next weekly waiver run (Wednesday 03:00 Eastern)")
     day = (datetime.fromtimestamp(settles, PHOENIX)
            .replace(hour=0, minute=0, second=0, microsecond=0).timestamp())
     first = _first_game_day()
