@@ -3094,5 +3094,44 @@
     "re-ran the lineup, which had no better legal option"
    ]
   }
+ },
+ {
+  "id": 111,
+  "ts": "2026-11-15T17:54:38+00:00",
+  "kind": "lineup",
+  "title": "Week 10 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Nico Collins; WR: Malik Washington; TE: Isaiah Likely; FLEX: Omarion Hampton; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Indianapolis Colts",
+  "rationale": "Projected 129.2 points under league scoring from Sleeper's weekly projections, +10.4 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had empty slot; 1 slot(s) had already kicked off and were left alone.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "IND"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "0"
+   ],
+   "projected": 129.2,
+   "week": 10,
+   "source": "model artifact is 106.9h old (limit 30h)",
+   "modelled": 0
+  }
  }
 ]
