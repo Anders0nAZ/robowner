@@ -3193,5 +3193,44 @@
     }
    ]
   }
+ },
+ {
+  "id": 113,
+  "ts": "2026-11-17T05:33:25+00:00",
+  "kind": "lineup",
+  "title": "Week 11 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Emeka Egbuka; SUPER_FLEX: Omarion Hampton; K: Will Reichard; DEF: Indianapolis Colts",
+  "rationale": "Projected 114.0 points under league scoring from Roboner's NFL model means for 15 of 17 players, +8.9 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Jordan Love (bye).",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12514",
+    "12507",
+    "11792",
+    "IND"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "7569",
+    "11610",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "IND"
+   ],
+   "projected": 114.0,
+   "week": 11,
+   "source": "Roboner NFL model, 408 players, 0.0h old, anchored on proj_2026_wk11_20261117T053308Z.json (per-game anchors, newest of 1; pre-game for every game, 425 players with a game)",
+   "modelled": 15
+  }
  }
 ]
