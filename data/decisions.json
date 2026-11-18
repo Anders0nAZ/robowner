@@ -3232,5 +3232,65 @@
    "source": "Roboner NFL model, 408 players, 0.0h old, anchored on proj_2026_wk11_20261117T053308Z.json (per-game anchors, newest of 1; pre-game for every game, 425 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 114,
+  "ts": "2026-11-18T08:34:12+00:00",
+  "kind": "waiver",
+  "title": "Waivers settled",
+  "decision": "Claimed Detroit Lions for $1, dropping Indianapolis Colts. Unsuccessful: Los Angeles Chargers ($0, failed), San Francisco 49ers ($0, failed), New York Jets ($0, failed), Dallas Cowboys ($0, failed).",
+  "rationale": "Sleeper confirmed the outcomes; claim targets and bids stayed private while the portfolio was pending.",
+  "status": "final",
+  "data": {
+   "publication_key": "waiver-settlement:11:1794961618754049100",
+   "week": 11,
+   "claims": [
+    {
+     "transaction_id": "1428576220492091392",
+     "status": "completed",
+     "add": "Detroit Lions",
+     "drop": "Indianapolis Colts",
+     "bid": 1,
+     "gain": 5.61,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1428576222769586176",
+     "status": "failed",
+     "add": "Los Angeles Chargers",
+     "drop": "Indianapolis Colts",
+     "bid": 0,
+     "gain": 5.44,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1428576225512673280",
+     "status": "failed",
+     "add": "San Francisco 49ers",
+     "drop": "Indianapolis Colts",
+     "bid": 0,
+     "gain": 4.08,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1428576227928588288",
+     "status": "failed",
+     "add": "New York Jets",
+     "drop": "Indianapolis Colts",
+     "bid": 0,
+     "gain": 3.01,
+     "source": "newswatch"
+    },
+    {
+     "transaction_id": "1428576230659080192",
+     "status": "failed",
+     "add": "Dallas Cowboys",
+     "drop": "Indianapolis Colts",
+     "bid": 0,
+     "gain": 2.59,
+     "source": "newswatch"
+    }
+   ]
+  }
  }
 ]
