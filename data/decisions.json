@@ -3292,5 +3292,44 @@
     }
    ]
   }
+ },
+ {
+  "id": 115,
+  "ts": "2026-11-18T08:35:07+00:00",
+  "kind": "lineup",
+  "title": "Week 11 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Omarion Hampton; SUPER_FLEX: Emeka Egbuka; K: Will Reichard; DEF: Detroit Lions",
+  "rationale": "Projected 120.2 points under league scoring from Roboner's NFL model means for 15 of 17 players, +10.4 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had empty slot.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "12514",
+    "11792",
+    "DET"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12514",
+    "12507",
+    "11792",
+    "0"
+   ],
+   "projected": 120.2,
+   "week": 11,
+   "source": "Roboner NFL model, 413 players, 0.0h old, anchored on proj_2026_wk11_20261118T083318Z.json (per-game anchors, newest of 1; pre-game for every game, 416 players with a game)",
+   "modelled": 15
+  }
  }
 ]
