@@ -3409,5 +3409,44 @@
    "source": "Roboner NFL model, 403 players, 0.0h old, anchored on proj_2026_wk11_20261122T175006Z.json (per-game anchors, newest of 2; pre-game for every game, 404 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 118,
+  "ts": "2026-11-24T05:33:28+00:00",
+  "kind": "lineup",
+  "title": "Week 12 lineup set",
+  "decision": "QB: Brock Purdy; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Omarion Hampton; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Detroit Lions",
+  "rationale": "Projected 128.8 points under league scoring from Roboner's NFL model means for 16 of 17 players, +15.0 versus the lineup as it stood. Bye-week and injured-out players are benched.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "DET"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "9482",
+    "11792",
+    "DET"
+   ],
+   "projected": 128.8,
+   "week": 12,
+   "source": "Roboner NFL model, 498 players, 0.0h old, anchored on proj_2026_wk12_20261124T053307Z.json (per-game anchors, newest of 1; pre-game for every game, 523 players with a game)",
+   "modelled": 16
+  }
  }
 ]
