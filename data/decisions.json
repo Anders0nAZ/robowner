@@ -3448,5 +3448,21 @@
    "source": "Roboner NFL model, 498 players, 0.0h old, anchored on proj_2026_wk12_20261124T053307Z.json (per-game anchors, newest of 1; pre-game for every game, 523 players with a game)",
    "modelled": 16
   }
+ },
+ {
+  "id": 119,
+  "ts": "2026-11-25T08:33:45+00:00",
+  "kind": "free-agent",
+  "title": "Signed Cleveland Browns, released Detroit Lions",
+  "decision": "Cleveland Browns (DEF) in, Detroit Lions out.",
+  "rationale": "Rest-of-season value 10.7 against 4.8 held, a gain of +5.9 in stream mode. CLE 10.68 against DET 4.76 on this week's lines.",
+  "status": "final",
+  "data": {
+   "add": "CLE",
+   "drop": "DET",
+   "mode": "stream",
+   "week": 12,
+   "gain": 5.92
+  }
  }
 ]
