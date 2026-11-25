@@ -214,7 +214,8 @@ def _stale_fill(out: dict, detail: dict, sources: dict, tags: dict,
         a_by = absent_cache[pid]
         if a_by is None:
             return 0.0
-        return max(0.0, min(1.0, 1.0 - float(a_by.get(w, 1.0))))
+        a_w = a_by.get(w, 1.0)
+        return max(0.0, min(1.0, 1.0 - float(1.0 if a_w is None else a_w)))
 
     added: dict = {}
     for w in sorted(tags):
@@ -235,8 +236,11 @@ def _stale_fill(out: dict, detail: dict, sources: dict, tags: dict,
             stranded = sum(pts * pa for _pid, pts, pa in holders)
             if stranded <= 0:
                 continue
+            holder_ids = {h for h, _pts, _pa in holders}
             gaps = {}
             for pid in tagged:
+                if pid in holder_ids:
+                    continue
                 p = players.get(pid) or {}
                 if (p.get("team") or None) != team or \
                         p.get("injury_status") in STALE_FILL_UNAVAILABLE:
