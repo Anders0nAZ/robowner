@@ -3601,5 +3601,21 @@
     "5927"
    ]
   }
+ },
+ {
+  "id": 124,
+  "ts": "2026-11-27T23:35:09+00:00",
+  "kind": "free-agent",
+  "title": "Signed Devin Duvernay, released (open roster spot)",
+  "decision": "Devin Duvernay (WR) in, (open roster spot) out.",
+  "rationale": "Rest-of-season value 3.4 against 0.0 held, a gain of +3.4 in ros mode. starting slot; +/- 0.4, ceiling 14.0; season totals 33.5 vs 0.0 (+33.5); the lineup-marginal figure decides.",
+  "status": "final",
+  "data": {
+   "add": "6847",
+   "drop": null,
+   "mode": "ros",
+   "week": 12,
+   "gain": 3.4
+  }
  }
 ]
