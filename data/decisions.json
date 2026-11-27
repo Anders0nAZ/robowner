@@ -3542,5 +3542,44 @@
    "source": "Roboner NFL model, 466 players, 0.0h old, anchored on proj_2026_wk12_20261127T230213Z.json (per-game anchors, newest of 6; pre-game for every game, 474 players with a game)",
    "modelled": 15
   }
+ },
+ {
+  "id": 122,
+  "ts": "2026-11-27T23:02:46+00:00",
+  "kind": "lineup",
+  "title": "Week 12 lineup set",
+  "decision": "QB: Shedeur Sanders; RB: Jonathan Taylor; RB: Tony Pollard; WR: Malik Washington; WR: Nico Collins; TE: Isaiah Likely; FLEX: Omarion Hampton; SUPER_FLEX: Jordan Love; K: Will Reichard; DEF: Cleveland Browns",
+  "rationale": "Projected 114.4 points under league scoring from Roboner's NFL model means for 15 of 17 players, +0.0 versus the lineup as it stood. Bye-week and injured-out players are benched, which the previous lineup was not: it had Brock Purdy (Out); 1 slot(s) had already kicked off and were left alone.",
+  "status": "final",
+  "data": {
+   "starters": [
+    "12524",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "CLE"
+   ],
+   "previous": [
+    "8183",
+    "6813",
+    "5967",
+    "11610",
+    "7569",
+    "8131",
+    "12507",
+    "6804",
+    "11792",
+    "CLE"
+   ],
+   "projected": 114.4,
+   "week": 12,
+   "source": "Roboner NFL model, 466 players, 0.0h old, anchored on proj_2026_wk12_20261127T230213Z.json (per-game anchors, newest of 6; pre-game for every game, 474 players with a game)",
+   "modelled": 15
+  }
  }
 ]
